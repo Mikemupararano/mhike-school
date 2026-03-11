@@ -13,5 +13,10 @@ class Settings(BaseSettings):
     celery_broker_url: str
     celery_result_backend: str
 
+    # NEW: bootstrap admin
+    bootstrap_admin_enabled: bool = False
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
+
 
 settings = Settings()
