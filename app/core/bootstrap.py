@@ -12,37 +12,45 @@ async def bootstrap_admin(
     password: str | None,
 ) -> None:
     """
-    Creates an admin user ONLY if:
-    - bootstrapping is enabled
-    - no admin exists
-    - email/password provided
+    Ensure the configured admin user exists.
+
+    Behaviour:
+    - If bootstrapping disabled → do nothing
+    - If email/password missing → do nothing
+    - If user with this email exists → promote to admin
+    - If user does not exist → create admin
     """
-    if not enabled:
-        return
-    if not email or not password:
+
+    if not enabled or not email or not password:
         return
 
-    # Is there already an admin?
-    res = await db.execute(select(User).where(User.role == "admin"))
-    admin = res.scalar_one_or_none()
-    if admin:
-        return
+    # Check if the configured admin email already exists
+    res = await db.execute(select(User).where(User.email == email))
+    user = res.scalars().first()
 
-    # If user exists with same email, promote to admin (safe & convenient)
-    ures = await db.execute(select(User).where(User.email == email))
-    user = ures.scalar_one_or_none()
+    # Promote existing user to admin
     if user:
-        user.role = "admin"
+        updated = False
+
+        if user.role != "admin":
+            user.role = "admin"
+            updated = True
+
         if not user.hashed_password:
             user.hashed_password = hash_password(password)
-        await db.commit()
+            updated = True
+
+        if updated:
+            await db.commit()
+
         return
 
-    # Otherwise create new admin
+    # Otherwise create new admin user
     admin_user = User(
         email=email,
         hashed_password=hash_password(password),
         role="admin",
     )
+
     db.add(admin_user)
     await db.commit()
