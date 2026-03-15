@@ -158,7 +158,7 @@ Production hosting
 Mike Thomas
 
 GitHub
-https://github.com/Mikemupararano
+https://github.com/Mikemupararano/mhike-school/
 
 
 ## License

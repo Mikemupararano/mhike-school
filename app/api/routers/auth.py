@@ -28,8 +28,9 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
 async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(User).where(User.email == payload.email))
     user = res.scalar_one_or_none()
+
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token(subject=user.email)
-    return TokenOut(access_token=token)
+    return TokenOut(access_token=token, token_type="bearer")

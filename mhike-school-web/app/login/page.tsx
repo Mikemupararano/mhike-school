@@ -14,101 +14,169 @@ export default function LoginPage() {
 
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
-    async function onSubmit(e: React.FormEvent) {
+    async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         setError("");
+
+        const trimmedEmail = email.trim();
+        const trimmedPassword = password.trim();
+
+        if (!trimmedEmail || !trimmedPassword) {
+            setError("Please enter your email and password.");
+            return;
+        }
+
         setLoading(true);
 
         try {
             const res = await apiPost<TokenOut>("/auth/login", {
-                email,
-                password,
+                email: trimmedEmail,
+                password: trimmedPassword,
             });
 
+            if (!res.access_token) {
+                throw new Error("No access token returned from the server.");
+            }
+
             setToken(res.access_token);
-            router.push("/dashboard");
-        } catch (err: any) {
-            setError(err?.message ?? "Login failed");
+            router.replace("/dashboard");
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Login failed";
+
+            if (message.includes("401")) {
+                setError("Invalid email or password.");
+            } else {
+                setError(message || "Login failed. Please try again.");
+            }
         } finally {
             setLoading(false);
         }
     }
 
     return (
-        <main style={{ maxWidth: 420, margin: "0 auto", padding: 24 }}>
-            <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 6 }}>
-                Mhike School
-            </h1>
-
-            <p style={{ color: "#6B7280", marginTop: 0 }}>
-                Login to your dashboard
-            </p>
-
-            {error && (
-                <div
+        <main
+            style={{
+                minHeight: "100vh",
+                display: "grid",
+                placeItems: "start center",
+                padding: "48px 24px",
+            }}
+        >
+            <div style={{ width: "100%", maxWidth: 460 }}>
+                <h1
                     style={{
-                        marginTop: 12,
-                        padding: 12,
-                        borderRadius: 12,
-                        background: "#FEF2F2",
-                        color: "#991B1B",
-                    }}
-                >
-                    {error}
-                </div>
-            )}
-
-            <form onSubmit={onSubmit} style={{ marginTop: 14, display: "grid", gap: 10 }}>
-                <input
-                    type="email"
-                    placeholder="Email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    style={{
-                        padding: 12,
-                        borderRadius: 12,
-                        border: "1px solid #E5E7EB",
-                    }}
-                />
-
-                <input
-                    type="password"
-                    placeholder="Password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    style={{
-                        padding: 12,
-                        borderRadius: 12,
-                        border: "1px solid #E5E7EB",
-                    }}
-                />
-
-                <button
-                    type="submit"
-                    disabled={loading}
-                    style={{
-                        padding: 12,
-                        borderRadius: 12,
-                        border: "1px solid #E5E7EB",
-                        background: "#111827",
-                        color: "white",
+                        fontSize: 28,
                         fontWeight: 800,
-                        cursor: "pointer",
+                        margin: 0,
+                        color: "#111827",
                     }}
                 >
-                    {loading ? "Signing in..." : "Login"}
-                </button>
-            </form>
+                    Mhike School
+                </h1>
 
-            <p style={{ color: "#6B7280", marginTop: 12, fontSize: 13 }}>
-                Create users in FastAPI Swagger at <code>/docs</code>, then log in here.
-            </p>
+                <p
+                    style={{
+                        marginTop: 8,
+                        marginBottom: 24,
+                        color: "#6B7280",
+                        fontSize: 15,
+                    }}
+                >
+                    Login to your dashboard
+                </p>
+
+                <form onSubmit={onSubmit}>
+                    <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="Email"
+                        autoComplete="email"
+                        disabled={loading}
+                        required
+                        style={{
+                            width: "100%",
+                            padding: "14px 16px",
+                            borderRadius: 16,
+                            border: "1px solid #E5E7EB",
+                            outline: "none",
+                            marginBottom: 12,
+                            fontSize: 16,
+                            background: "white",
+                            boxSizing: "border-box",
+                        }}
+                    />
+
+                    <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Password"
+                        autoComplete="current-password"
+                        disabled={loading}
+                        required
+                        style={{
+                            width: "100%",
+                            padding: "14px 16px",
+                            borderRadius: 16,
+                            border: "1px solid #E5E7EB",
+                            outline: "none",
+                            marginBottom: 12,
+                            fontSize: 16,
+                            background: "white",
+                            boxSizing: "border-box",
+                        }}
+                    />
+
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                            width: "100%",
+                            padding: "14px 16px",
+                            borderRadius: 16,
+                            border: "1px solid #111827",
+                            background: loading ? "#374151" : "#0F172A",
+                            color: "white",
+                            fontWeight: 800,
+                            fontSize: 16,
+                            cursor: loading ? "not-allowed" : "pointer",
+                            opacity: loading ? 0.85 : 1,
+                        }}
+                    >
+                        {loading ? "Signing in..." : "Login"}
+                    </button>
+                </form>
+
+                {error && (
+                    <div
+                        style={{
+                            marginTop: 14,
+                            padding: "12px 14px",
+                            borderRadius: 12,
+                            background: "#FEF2F2",
+                            color: "#991B1B",
+                            fontSize: 14,
+                        }}
+                    >
+                        {error}
+                    </div>
+                )}
+
+                <p
+                    style={{
+                        marginTop: 16,
+                        color: "#6B7280",
+                        fontSize: 14,
+                        lineHeight: 1.5,
+                    }}
+                >
+                    Use your student account to sign in.
+                </p>
+            </div>
         </main>
     );
 }

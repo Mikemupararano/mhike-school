@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -8,10 +10,26 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 
 
+API_PREFIX = "/api/v1"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with AsyncSessionLocal() as db:
+        await bootstrap_admin(
+            db=db,
+            enabled=settings.bootstrap_admin_enabled,
+            email=settings.bootstrap_admin_email,
+            password=settings.bootstrap_admin_password,
+        )
+    yield
+
+
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    swagger_ui_parameters={"persistAuthorization": True},
+    lifespan=lifespan,
+    swagger_ui_parameters={"persistAuthorization": False},
 )
 
 
@@ -26,16 +44,15 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    openapi_schema.setdefault("components", {})
-    openapi_schema["components"]["securitySchemes"] = {
-        "BearerAuth": {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": "JWT",
-        }
+    components = openapi_schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
     }
-    openapi_schema["security"] = [{"BearerAuth": []}]
 
+    openapi_schema["security"] = [{"BearerAuth": []}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
@@ -44,26 +61,23 @@ app.openapi = custom_openapi
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(api_router)
-
-
-@app.on_event("startup")
-async def on_startup():
-    async with AsyncSessionLocal() as db:
-        await bootstrap_admin(
-            db=db,
-            enabled=settings.bootstrap_admin_enabled,
-            email=settings.bootstrap_admin_email,
-            password=settings.bootstrap_admin_password,
-        )
+app.include_router(api_router, prefix=API_PREFIX)
 
 
 @app.get("/", tags=["root"])
-def root():
-    return {"app": settings.app_name, "status": "ok"}
+async def root():
+    return {
+        "app": settings.app_name,
+        "status": "ok",
+        "docs": "/docs",
+        "api_prefix": API_PREFIX,
+    }

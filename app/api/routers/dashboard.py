@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, literal
 
-from app.db.session import get_db
 from app.api.deps import require_role
-from app.models import Course, Module, Lesson, Progress, Enrollment, User
-from app.schemas.dashboard import DashboardMeOut, CourseProgressOut, NextLessonOut
+from app.db.session import get_db
+from app.models import Course, Enrollment, Lesson, Module, Progress, User
+from app.schemas.dashboard import CourseProgressOut, DashboardMeOut, NextLessonOut
 
-router = APIRouter()
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("/courses/{course_id}/progress")
@@ -26,9 +26,8 @@ async def course_progress(
         if not enr.scalar_one_or_none():
             raise HTTPException(status_code=403, detail="Not enrolled in this course")
 
-    # course exists?
-    cres = await db.execute(select(Course).where(Course.id == course_id))
-    course = cres.scalar_one_or_none()
+    course_res = await db.execute(select(Course).where(Course.id == course_id))
+    course = course_res.scalar_one_or_none()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
@@ -46,7 +45,7 @@ async def course_progress(
         .where(
             Module.course_id == course_id,
             Progress.student_id == student.id,
-            Progress.completed == True,
+            Progress.completed.is_(True),
         )
     )
     completed = (await db.execute(completed_q)).scalar_one()
@@ -67,7 +66,6 @@ async def dashboard_me(
     db: AsyncSession = Depends(get_db),
     student: User = Depends(require_role("student", "admin")),
 ):
-    # Find enrolled courses (admin can view their own "enrollments" too; for admin dashboards you'd build another endpoint)
     enroll_q = (
         select(Course)
         .join(Enrollment, Enrollment.course_id == Course.id)
@@ -80,7 +78,6 @@ async def dashboard_me(
     total_completed_all_courses = 0
 
     for course in enrolled_courses:
-        # total lessons in course
         total_q = (
             select(func.count(Lesson.id))
             .join(Module, Lesson.module_id == Module.id)
@@ -88,7 +85,6 @@ async def dashboard_me(
         )
         total_lessons = (await db.execute(total_q)).scalar_one()
 
-        # completed lessons in course
         completed_q = (
             select(func.count(Progress.id))
             .join(Lesson, Progress.lesson_id == Lesson.id)
@@ -96,7 +92,7 @@ async def dashboard_me(
             .where(
                 Module.course_id == course.id,
                 Progress.student_id == student.id,
-                Progress.completed == True,
+                Progress.completed.is_(True),
             )
         )
         completed_lessons = (await db.execute(completed_q)).scalar_one()
@@ -108,8 +104,6 @@ async def dashboard_me(
             else round((completed_lessons / total_lessons) * 100, 2)
         )
 
-        # Next lesson = first lesson in course that is NOT completed
-        # Logic: list lessons ordered; left join progress; pick first where progress is null OR completed=false
         next_lesson_q = (
             select(Lesson.id, Lesson.title)
             .join(Module, Lesson.module_id == Module.id)
@@ -120,7 +114,6 @@ async def dashboard_me(
 
         next_lesson: NextLessonOut | None = None
         if lessons:
-            # fetch completed lesson ids for this course in one go
             completed_ids_q = (
                 select(Lesson.id)
                 .join(Module, Lesson.module_id == Module.id)
@@ -128,7 +121,7 @@ async def dashboard_me(
                 .where(
                     Module.course_id == course.id,
                     Progress.student_id == student.id,
-                    Progress.completed == True,
+                    Progress.completed.is_(True),
                 )
             )
             completed_ids = set((await db.execute(completed_ids_q)).scalars().all())
