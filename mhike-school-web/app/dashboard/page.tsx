@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet, clearToken, getToken } from "@/lib/api";
 
@@ -45,6 +45,7 @@ function ProgressBar({ value }: { value: number }) {
                     height: "100%",
                     background: "linear-gradient(90deg, #3B82F6, #2563EB)",
                     borderRadius: 999,
+                    transition: "width 250ms ease",
                 }}
             />
         </div>
@@ -65,11 +66,18 @@ function StatCard({
                 border: "1px solid #E5E7EB",
                 borderRadius: 18,
                 padding: 18,
-                boxShadow: "0 6px 18px rgba(15, 23, 42, 0.04)",
+                boxShadow: "0 6px 16px rgba(0, 0, 0, 0.05)",
             }}
         >
             <div style={{ color: "#6B7280", fontSize: 13 }}>{label}</div>
-            <div style={{ fontSize: 34, fontWeight: 800, marginTop: 8, color: "#111827" }}>
+            <div
+                style={{
+                    fontSize: 34,
+                    fontWeight: 800,
+                    marginTop: 8,
+                    color: "#111827",
+                }}
+            >
                 {value}
             </div>
         </div>
@@ -114,10 +122,12 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
+    const progressSectionRef = useRef<HTMLDivElement | null>(null);
     const studentName = "John";
 
     const stats = useMemo(() => {
         if (!data) return null;
+
         return {
             enrolled: data.enrolled_courses,
             completed: data.total_lessons_completed,
@@ -149,6 +159,7 @@ export default function DashboardPage() {
         } catch (err: unknown) {
             const message =
                 err instanceof Error ? err.message : "Failed to load dashboard";
+
             setError(message);
             setData(null);
 
@@ -164,6 +175,13 @@ export default function DashboardPage() {
     function handleLogout() {
         clearToken();
         router.replace("/login");
+    }
+
+    function scrollToProgress() {
+        progressSectionRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+        });
     }
 
     useEffect(() => {
@@ -207,6 +225,34 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            padding: "8px 12px",
+                            borderRadius: 999,
+                            background: "rgba(255,255,255,0.12)",
+                            border: "1px solid rgba(255,255,255,0.18)",
+                        }}
+                    >
+                        <div
+                            style={{
+                                width: 30,
+                                height: 30,
+                                borderRadius: "50%",
+                                background: "#DBEAFE",
+                                color: "#1D4ED8",
+                                display: "grid",
+                                placeItems: "center",
+                                fontWeight: 900,
+                            }}
+                        >
+                            {studentName.charAt(0)}
+                        </div>
+                        <span style={{ fontWeight: 700 }}>{studentName}</span>
+                    </div>
+
                     <button
                         onClick={() => void loadDashboard()}
                         style={{
@@ -221,6 +267,7 @@ export default function DashboardPage() {
                     >
                         Refresh
                     </button>
+
                     <button
                         onClick={handleLogout}
                         style={{
@@ -244,7 +291,7 @@ export default function DashboardPage() {
                         background: "linear-gradient(120deg, #1D4ED8, #60A5FA)",
                         borderRadius: 28,
                         color: "white",
-                        padding: "32px 36px",
+                        padding: "24px 30px",
                         display: "grid",
                         gridTemplateColumns: "1.4fr 1fr",
                         gap: 24,
@@ -264,17 +311,21 @@ export default function DashboardPage() {
                         >
                             Welcome back, {studentName}!
                         </h1>
+
                         <p style={{ fontSize: 18, margin: 0, opacity: 0.95 }}>
                             Continue your learning journey and stay on top of your progress.
                         </p>
 
-                        <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
+                        <div
+                            style={{
+                                display: "flex",
+                                gap: 12,
+                                marginTop: 24,
+                                flexWrap: "wrap",
+                            }}
+                        >
                             <button
-                                onClick={() => {
-                                    if (featuredCourse?.next_lesson) {
-                                        router.push(`/lessons/${featuredCourse.next_lesson.lesson_id}`);
-                                    }
-                                }}
+                                onClick={scrollToProgress}
                                 style={{
                                     padding: "14px 20px",
                                     borderRadius: 14,
@@ -282,11 +333,10 @@ export default function DashboardPage() {
                                     background: "white",
                                     color: "#1D4ED8",
                                     fontWeight: 800,
-                                    cursor: featuredCourse?.next_lesson ? "pointer" : "default",
-                                    opacity: featuredCourse?.next_lesson ? 1 : 0.7,
+                                    cursor: "pointer",
                                 }}
                             >
-                                {featuredCourse?.next_lesson ? "Resume Course" : "View Progress"}
+                                View Progress
                             </button>
 
                             <button
@@ -308,7 +358,7 @@ export default function DashboardPage() {
 
                     <div
                         style={{
-                            minHeight: 220,
+                            minHeight: 190,
                             borderRadius: 24,
                             background:
                                 "radial-gradient(circle at top right, rgba(255,255,255,0.35), rgba(255,255,255,0.08))",
@@ -344,7 +394,10 @@ export default function DashboardPage() {
                         gap: 18,
                     }}
                 >
-                    <StatCard label="Courses enrolled" value={stats?.enrolled ?? (loading ? "…" : 0)} />
+                    <StatCard
+                        label="Courses enrolled"
+                        value={stats?.enrolled ?? (loading ? "…" : 0)}
+                    />
                     <StatCard
                         label="Lessons completed"
                         value={stats?.completed ?? (loading ? "…" : 0)}
@@ -376,118 +429,161 @@ export default function DashboardPage() {
 
                             {!loading && data && data.courses.length > 0 && (
                                 <div style={{ display: "grid", gap: 16 }}>
-                                    {data.courses.map((course) => (
-                                        <div
-                                            key={course.course_id}
-                                            style={{
-                                                border: "1px solid #E5E7EB",
-                                                borderRadius: 18,
-                                                padding: 16,
-                                                background: "#F9FAFB",
-                                            }}
-                                        >
+                                    {data.courses.map((course) => {
+                                        const isComplete =
+                                            !course.next_lesson || course.progress_percent >= 100;
+
+                                        return (
                                             <div
+                                                key={course.course_id}
+                                                onClick={() => router.push(`/courses/${course.course_id}`)}
                                                 style={{
-                                                    display: "flex",
-                                                    justifyContent: "space-between",
-                                                    gap: 12,
-                                                    alignItems: "start",
+                                                    border: "1px solid #E5E7EB",
+                                                    borderRadius: 18,
+                                                    padding: 20,
+                                                    background: "#F9FAFB",
+                                                    cursor: "pointer",
                                                 }}
                                             >
-                                                <div>
-                                                    <div style={{ fontSize: 22, fontWeight: 800 }}>{course.title}</div>
-                                                    <div style={{ color: "#6B7280", marginTop: 6 }}>
-                                                        {course.completed_lessons}/{course.total_lessons} lessons •{" "}
-                                                        {course.progress_percent}%
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        justifyContent: "space-between",
+                                                        gap: 12,
+                                                        alignItems: "start",
+                                                    }}
+                                                >
+                                                    <div>
+                                                        <div
+                                                            style={{
+                                                                fontSize: 22,
+                                                                fontWeight: 900,
+                                                                color: "#111827",
+                                                            }}
+                                                        >
+                                                            {course.title}
+                                                        </div>
+                                                        <div style={{ color: "#6B7280", marginTop: 6 }}>
+                                                            {course.completed_lessons}/{course.total_lessons} lessons •{" "}
+                                                            {course.progress_percent}%
+                                                        </div>
                                                     </div>
+
+                                                    <span
+                                                        style={{
+                                                            fontSize: 12,
+                                                            padding: "6px 10px",
+                                                            borderRadius: 999,
+                                                            background: course.published ? "#DCFCE7" : "#FEF3C7",
+                                                            color: course.published ? "#166534" : "#92400E",
+                                                            fontWeight: 800,
+                                                        }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        {course.published ? "Published" : "Draft"}
+                                                    </span>
                                                 </div>
 
-                                                <span
-                                                    style={{
-                                                        fontSize: 12,
-                                                        padding: "6px 10px",
-                                                        borderRadius: 999,
-                                                        background: course.published ? "#DCFCE7" : "#FEF3C7",
-                                                        color: course.published ? "#166534" : "#92400E",
-                                                        fontWeight: 800,
-                                                    }}
-                                                >
-                                                    {course.published ? "Published" : "Draft"}
-                                                </span>
-                                            </div>
-
-                                            <div style={{ marginTop: 14 }}>
-                                                <ProgressBar value={course.progress_percent} />
-                                            </div>
-
-                                            <div
-                                                style={{
-                                                    marginTop: 14,
-                                                    display: "flex",
-                                                    justifyContent: "space-between",
-                                                    alignItems: "center",
-                                                    gap: 12,
-                                                }}
-                                            >
-                                                <div style={{ color: "#4B5563", fontSize: 14 }}>
-                                                    {course.next_lesson ? (
-                                                        <>
-                                                            Next lesson: <b>{course.next_lesson.title}</b>
-                                                        </>
-                                                    ) : (
-                                                        <>All lessons completed 🎉</>
-                                                    )}
+                                                <div style={{ marginTop: 14 }}>
+                                                    <ProgressBar value={course.progress_percent} />
                                                 </div>
 
-                                                <button
-                                                    disabled={!course.next_lesson}
-                                                    onClick={() => {
-                                                        if (course.next_lesson) {
-                                                            router.push(`/lessons/${course.next_lesson.lesson_id}`);
-                                                        }
-                                                    }}
+                                                <div
                                                     style={{
-                                                        padding: "10px 14px",
-                                                        borderRadius: 12,
-                                                        border: "none",
-                                                        background: course.next_lesson ? "#2563EB" : "#E5E7EB",
-                                                        color: course.next_lesson ? "white" : "#6B7280",
-                                                        fontWeight: 800,
-                                                        cursor: course.next_lesson ? "pointer" : "not-allowed",
+                                                        marginTop: 14,
+                                                        display: "flex",
+                                                        justifyContent: "space-between",
+                                                        alignItems: "center",
+                                                        gap: 12,
                                                     }}
                                                 >
-                                                    Continue
-                                                </button>
+                                                    <div style={{ color: "#4B5563", fontSize: 14 }}>
+                                                        {course.next_lesson ? (
+                                                            <>
+                                                                Next lesson: <b>{course.next_lesson.title}</b>
+                                                            </>
+                                                        ) : (
+                                                            <>All lessons completed 🎉</>
+                                                        )}
+                                                    </div>
+
+                                                    <button
+                                                        disabled={isComplete}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (course.next_lesson) {
+                                                                router.push(`/lessons/${course.next_lesson.lesson_id}`);
+                                                            }
+                                                        }}
+                                                        style={{
+                                                            padding: "10px 14px",
+                                                            borderRadius: 12,
+                                                            border: "none",
+                                                            background: isComplete ? "#E5E7EB" : "#2563EB",
+                                                            color: isComplete ? "#6B7280" : "white",
+                                                            fontWeight: 800,
+                                                            cursor: isComplete ? "not-allowed" : "pointer",
+                                                        }}
+                                                    >
+                                                        Continue
+                                                    </button>
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </Panel>
 
                         <Panel title="Quick Links">
                             <div style={{ display: "grid", gap: 12 }}>
-                                {[
-                                    "My Profile",
-                                    "Discussions",
-                                    "Support Center",
-                                ].map((label) => (
-                                    <button
-                                        key={label}
-                                        style={{
-                                            padding: "16px 18px",
-                                            borderRadius: 14,
-                                            border: "1px solid #DBEAFE",
-                                            background: "linear-gradient(90deg, #3B82F6, #2563EB)",
-                                            color: "white",
-                                            fontWeight: 700,
-                                            textAlign: "left",
-                                            cursor: "pointer",
-                                        }}
-                                    >
-                                        {label}
-                                    </button>
-                                ))}
+                                <button
+                                    onClick={() => router.push("/profile")}
+                                    style={{
+                                        padding: "16px 18px",
+                                        borderRadius: 14,
+                                        border: "1px solid #DBEAFE",
+                                        background: "linear-gradient(90deg, #3B82F6, #2563EB)",
+                                        color: "white",
+                                        fontWeight: 700,
+                                        textAlign: "left",
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    My Profile
+                                </button>
+
+                                <button
+                                    onClick={() => router.push("/discussions")}
+                                    style={{
+                                        padding: "16px 18px",
+                                        borderRadius: 14,
+                                        border: "1px solid #DBEAFE",
+                                        background: "linear-gradient(90deg, #3B82F6, #2563EB)",
+                                        color: "white",
+                                        fontWeight: 700,
+                                        textAlign: "left",
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    Discussions
+                                </button>
+
+                                <button
+                                    onClick={() => router.push("/support")}
+                                    style={{
+                                        padding: "16px 18px",
+                                        borderRadius: 14,
+                                        border: "1px solid #DBEAFE",
+                                        background: "linear-gradient(90deg, #3B82F6, #2563EB)",
+                                        color: "white",
+                                        fontWeight: 700,
+                                        textAlign: "left",
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    Support Center
+                                </button>
                             </div>
                         </Panel>
                     </div>
@@ -499,6 +595,7 @@ export default function DashboardPage() {
                             </div>
                             <div style={{ marginTop: 8, color: "#6B7280" }}>Due this week</div>
                             <button
+                                onClick={() => router.push("/assignments")}
                                 style={{
                                     marginTop: 16,
                                     padding: "12px 16px",
@@ -514,53 +611,60 @@ export default function DashboardPage() {
                             </button>
                         </Panel>
 
-                        <Panel title="Course Progress">
-                            {loading && <div style={{ color: "#6B7280" }}>Loading progress...</div>}
+                        <div ref={progressSectionRef}>
+                            <Panel title="Course Progress">
+                                {loading && <div style={{ color: "#6B7280" }}>Loading progress...</div>}
 
-                            {!loading && data && (
-                                <div style={{ display: "grid", gap: 16 }}>
-                                    {data.courses.slice(0, 3).map((course) => (
-                                        <div key={course.course_id}>
-                                            <div
-                                                style={{
-                                                    display: "flex",
-                                                    justifyContent: "space-between",
-                                                    fontSize: 14,
-                                                    marginBottom: 8,
-                                                }}
-                                            >
-                                                <span>{course.title}</span>
-                                                <b>{course.progress_percent}%</b>
+                                {!loading && data && (
+                                    <div style={{ display: "grid", gap: 16 }}>
+                                        {data.courses.slice(0, 3).map((course) => (
+                                            <div key={course.course_id}>
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        justifyContent: "space-between",
+                                                        fontSize: 14,
+                                                        marginBottom: 8,
+                                                    }}
+                                                >
+                                                    <span>{course.title}</span>
+                                                    <b>{course.progress_percent}%</b>
+                                                </div>
+                                                <ProgressBar value={course.progress_percent} />
                                             </div>
-                                            <ProgressBar value={course.progress_percent} />
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </Panel>
+                                        ))}
+                                    </div>
+                                )}
+                            </Panel>
+                        </div>
                     </div>
 
                     <div style={{ display: "grid", gap: 18 }}>
                         <Panel title="Latest Announcement">
-                            <div
+                            <button
+                                onClick={() => router.push("/announcements")}
                                 style={{
+                                    width: "100%",
                                     background: "#F9FAFB",
                                     borderRadius: 14,
                                     padding: 14,
                                     color: "#374151",
+                                    border: "1px solid #E5E7EB",
+                                    textAlign: "left",
+                                    cursor: "pointer",
                                 }}
                             >
                                 Live Q&amp;A session tomorrow at 3 PM. Don&apos;t miss it.
-                            </div>
+                            </button>
                         </Panel>
 
                         <Panel title="Recent Activity">
                             <div style={{ display: "grid", gap: 14 }}>
                                 {[
-                                    "Scored 85% on Quiz 2",
-                                    "Submitted assignment",
-                                    "Enrolled in Physics",
-                                ].map((item) => (
+                                    ["Scored 85% on Quiz 2", "+120 XP"],
+                                    ["Submitted assignment", "+80 XP"],
+                                    ["Enrolled in Physics", "+40 XP"],
+                                ].map(([item, xp]) => (
                                     <div
                                         key={item}
                                         style={{
@@ -572,7 +676,7 @@ export default function DashboardPage() {
                                         }}
                                     >
                                         <span style={{ color: "#374151" }}>{item}</span>
-                                        <b style={{ color: "#111827" }}>+ XP</b>
+                                        <b style={{ color: "#111827" }}>{xp}</b>
                                     </div>
                                 ))}
                             </div>
@@ -585,21 +689,26 @@ export default function DashboardPage() {
                                     ["2", "Alex T.", "1100 XP"],
                                     ["3", "You", "980 XP"],
                                 ].map(([rank, name, score]) => (
-                                    <div
+                                    <button
                                         key={rank}
+                                        onClick={() => router.push("/leaderboard")}
                                         style={{
                                             display: "grid",
                                             gridTemplateColumns: "36px 1fr auto",
                                             gap: 12,
                                             alignItems: "center",
                                             paddingBottom: 10,
+                                            border: "none",
+                                            background: "transparent",
                                             borderBottom: "1px solid #F3F4F6",
+                                            cursor: "pointer",
+                                            textAlign: "left",
                                         }}
                                     >
                                         <div style={{ fontWeight: 900, color: "#2563EB" }}>{rank}</div>
                                         <div>{name}</div>
                                         <div style={{ fontWeight: 800 }}>{score}</div>
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         </Panel>
