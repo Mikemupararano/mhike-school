@@ -7,7 +7,7 @@ from app.db.session import get_db
 from app.models import Course, Enrollment, Lesson, Module, Progress, User
 from app.schemas.dashboard import CourseProgressOut, DashboardMeOut, NextLessonOut
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter()
 
 
 @router.get("/courses/{course_id}/progress")

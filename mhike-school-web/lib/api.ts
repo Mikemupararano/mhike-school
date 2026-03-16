@@ -24,11 +24,13 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string, token?: string): Promise<T> {
+    const authToken = token ?? getToken();
+
     const res = await fetch(`${API_BASE_URL}${path}`, {
         method: "GET",
         headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         },
         cache: "no-store",
     });
@@ -37,11 +39,13 @@ export async function apiGet<T>(path: string, token?: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body: unknown, token?: string): Promise<T> {
+    const authToken = token ?? getToken();
+
     const res = await fetch(`${API_BASE_URL}${path}`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         },
         body: JSON.stringify(body),
         cache: "no-store",
