@@ -20,6 +20,11 @@ type LessonListItem = {
     published?: boolean;
 };
 
+type ProgressItem = {
+    lesson_id: number;
+    completed: boolean;
+};
+
 export default function LessonPage() {
     const router = useRouter();
     const params = useParams<{ lessonId: string }>();
@@ -27,6 +32,7 @@ export default function LessonPage() {
 
     const [lesson, setLesson] = useState<LessonOut | null>(null);
     const [lessons, setLessons] = useState<LessonListItem[]>([]);
+    const [completedLessonIds, setCompletedLessonIds] = useState<Set<number>>(new Set());
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState("");
@@ -47,18 +53,24 @@ export default function LessonPage() {
             const lessonRes = await apiGet<LessonOut>(`/lessons/${lessonId}`, token);
             setLesson(lessonRes);
 
-            const listRes = await apiGet<LessonListItem[]>(
-                `/modules/${lessonRes.module_id}/lessons`,
-                token
-            );
+            const [listRes, progressRes] = await Promise.all([
+                apiGet<LessonListItem[]>(`/modules/${lessonRes.module_id}/lessons`, token),
+                apiGet<ProgressItem[]>("/me/progress", token),
+            ]);
 
             const sortedLessons = [...listRes].sort((a, b) => a.order - b.order);
             setLessons(sortedLessons);
+
+            const completedIds = new Set(
+                progressRes.filter((item) => item.completed).map((item) => item.lesson_id)
+            );
+            setCompletedLessonIds(completedIds);
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Failed to load lesson";
             setError(msg);
             setLesson(null);
             setLessons([]);
+            setCompletedLessonIds(new Set());
 
             if (msg.includes("401") || msg.includes("403")) {
                 router.replace("/login");
@@ -80,6 +92,13 @@ export default function LessonPage() {
             setMessage("");
 
             await apiPost(`/lessons/${lessonId}/progress`, {}, token);
+
+            setCompletedLessonIds((prev) => {
+                const next = new Set(prev);
+                next.add(lessonId);
+                return next;
+            });
+
             setMessage("Lesson marked as complete.");
         } catch (err: unknown) {
             setMessage(err instanceof Error ? err.message : "Failed to update progress");
@@ -109,14 +128,14 @@ export default function LessonPage() {
             style={{
                 minHeight: "100vh",
                 background: "#F3F6FB",
-                padding: 24,
+                padding: "32px 24px",
             }}
         >
-            <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+            <div style={{ maxWidth: 1400, margin: "0 auto" }}>
                 <button
                     onClick={() => router.push("/dashboard")}
                     style={{
-                        marginBottom: 16,
+                        marginBottom: 20,
                         padding: "10px 14px",
                         borderRadius: 10,
                         border: "1px solid #E5E7EB",
@@ -149,8 +168,8 @@ export default function LessonPage() {
                     <div
                         style={{
                             display: "grid",
-                            gridTemplateColumns: "320px 1fr",
-                            gap: 20,
+                            gridTemplateColumns: "360px 1fr",
+                            gap: 24,
                             alignItems: "start",
                         }}
                     >
@@ -183,6 +202,7 @@ export default function LessonPage() {
                             <div style={{ display: "grid", gap: 10 }}>
                                 {lessons.map((item, index) => {
                                     const isCurrent = item.id === lesson.id;
+                                    const isCompleted = completedLessonIds.has(item.id);
 
                                     return (
                                         <button
@@ -193,25 +213,51 @@ export default function LessonPage() {
                                                 padding: "14px 14px",
                                                 borderRadius: 14,
                                                 border: isCurrent ? "1px solid #2563EB" : "1px solid #E5E7EB",
-                                                background: isCurrent ? "#EFF6FF" : "white",
+                                                background: isCurrent ? "#EFF6FF" : isCompleted ? "#ECFDF5" : "white",
                                                 textAlign: "left",
                                                 cursor: "pointer",
                                             }}
                                         >
                                             <div
                                                 style={{
-                                                    fontSize: 12,
-                                                    color: isCurrent ? "#2563EB" : "#6B7280",
-                                                    fontWeight: 800,
+                                                    display: "flex",
+                                                    justifyContent: "space-between",
+                                                    alignItems: "center",
+                                                    gap: 8,
                                                 }}
                                             >
-                                                Lesson {index + 1}
+                                                <div
+                                                    style={{
+                                                        fontSize: 12,
+                                                        color: isCurrent ? "#2563EB" : "#6B7280",
+                                                        fontWeight: 800,
+                                                    }}
+                                                >
+                                                    Lesson {index + 1}
+                                                </div>
+
+                                                {isCompleted && (
+                                                    <span
+                                                        style={{
+                                                            fontSize: 11,
+                                                            fontWeight: 800,
+                                                            color: "#166534",
+                                                            background: "#DCFCE7",
+                                                            padding: "4px 8px",
+                                                            borderRadius: 999,
+                                                        }}
+                                                    >
+                                                        Completed
+                                                    </span>
+                                                )}
                                             </div>
+
                                             <div
                                                 style={{
                                                     marginTop: 4,
                                                     fontWeight: isCurrent ? 800 : 700,
                                                     color: "#111827",
+                                                    lineHeight: 1.4,
                                                 }}
                                             >
                                                 {item.title}
@@ -227,33 +273,34 @@ export default function LessonPage() {
                                 background: "white",
                                 border: "1px solid #E5E7EB",
                                 borderRadius: 18,
-                                padding: 24,
+                                padding: 28,
                                 boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
                             }}
                         >
                             <h1
                                 style={{
-                                    fontSize: 36,
+                                    fontSize: 40,
                                     fontWeight: 900,
-                                    margin: "0 0 8px 0",
+                                    margin: "0 0 10px 0",
                                     color: "#111827",
+                                    lineHeight: 1.1,
                                 }}
                             >
                                 {lesson.title}
                             </h1>
 
-                            <div style={{ color: "#6B7280", marginBottom: 18 }}>
+                            <div style={{ color: "#6B7280", marginBottom: 20, fontSize: 15 }}>
                                 Lesson {lesson.order} • Type: {lesson.content_type}
                             </div>
 
                             <div
                                 style={{
-                                    minHeight: 260,
+                                    minHeight: 320,
                                     borderRadius: 16,
                                     background: "#EFF6FF",
                                     display: "grid",
                                     placeItems: "center",
-                                    padding: 20,
+                                    padding: 28,
                                 }}
                             >
                                 {lesson.content_type === "video" ? (
@@ -266,10 +313,12 @@ export default function LessonPage() {
                                     <div
                                         style={{
                                             color: "#374151",
-                                            lineHeight: 1.8,
+                                            lineHeight: 1.9,
                                             width: "100%",
+                                            maxWidth: 900,
+                                            margin: "0 auto",
                                             whiteSpace: "pre-wrap",
-                                            fontSize: 16,
+                                            fontSize: 18,
                                         }}
                                     >
                                         {lesson.content || "No content available for this lesson yet."}
@@ -279,7 +328,7 @@ export default function LessonPage() {
 
                             <div
                                 style={{
-                                    marginTop: 18,
+                                    marginTop: 20,
                                     display: "flex",
                                     gap: 12,
                                     flexWrap: "wrap",
@@ -287,19 +336,26 @@ export default function LessonPage() {
                             >
                                 <button
                                     onClick={markComplete}
-                                    disabled={saving}
+                                    disabled={saving || completedLessonIds.has(lesson.id)}
                                     style={{
                                         padding: "12px 16px",
                                         borderRadius: 12,
                                         border: "none",
-                                        background: "#2563EB",
-                                        color: "white",
+                                        background: completedLessonIds.has(lesson.id) ? "#E5E7EB" : "#2563EB",
+                                        color: completedLessonIds.has(lesson.id) ? "#6B7280" : "white",
                                         fontWeight: 800,
-                                        cursor: saving ? "not-allowed" : "pointer",
+                                        cursor:
+                                            saving || completedLessonIds.has(lesson.id)
+                                                ? "not-allowed"
+                                                : "pointer",
                                         opacity: saving ? 0.75 : 1,
                                     }}
                                 >
-                                    {saving ? "Saving..." : "Mark Lesson Complete"}
+                                    {completedLessonIds.has(lesson.id)
+                                        ? "Completed"
+                                        : saving
+                                            ? "Saving..."
+                                            : "Mark Lesson Complete"}
                                 </button>
 
                                 <button
