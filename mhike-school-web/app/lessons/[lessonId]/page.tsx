@@ -8,7 +8,14 @@ type LessonOut = {
     id: number;
     title: string;
     content: string;
-    content_type: string; // "text" | "video" (or others later)
+    content_type: string;
+    order: number;
+    module_id: number;
+};
+
+type LessonListItem = {
+    id: number;
+    title: string;
     order: number;
 };
 
@@ -18,6 +25,7 @@ export default function LessonPage() {
     const lessonId = Number(params.lessonId);
 
     const [lesson, setLesson] = useState<LessonOut | null>(null);
+    const [lessons, setLessons] = useState<LessonListItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState("");
@@ -33,12 +41,21 @@ export default function LessonPage() {
         try {
             setLoading(true);
             setError("");
+            setMessage("");
 
-            const res = await apiGet<LessonOut>(`/lessons/${lessonId}`, token);
-            setLesson(res);
+            const lessonRes = await apiGet<LessonOut>(`/lessons/${lessonId}`, token);
+            setLesson(lessonRes);
+
+            const listRes = await apiGet<LessonListItem[]>(
+                `/modules/${lessonRes.module_id}/lessons`,
+                token
+            );
+            setLessons(listRes);
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Failed to load lesson";
             setError(msg);
+            setLesson(null);
+            setLessons([]);
 
             if (msg.includes("401") || msg.includes("403")) {
                 router.replace("/login");
@@ -69,9 +86,16 @@ export default function LessonPage() {
     }
 
     useEffect(() => {
-        if (!lessonId) return;
+        if (!lessonId || Number.isNaN(lessonId)) return;
         void loadLesson();
     }, [lessonId]);
+
+    const currentIndex = lessons.findIndex((l) => l.id === lesson?.id);
+    const prevLesson = currentIndex > 0 ? lessons[currentIndex - 1] : null;
+    const nextLesson =
+        currentIndex >= 0 && currentIndex < lessons.length - 1
+            ? lessons[currentIndex + 1]
+            : null;
 
     return (
         <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
@@ -120,7 +144,6 @@ export default function LessonPage() {
                             padding: 20,
                         }}
                     >
-                        {/* Content Renderer */}
                         <div
                             style={{
                                 minHeight: 220,
@@ -143,6 +166,7 @@ export default function LessonPage() {
                                         color: "#374151",
                                         lineHeight: 1.6,
                                         width: "100%",
+                                        whiteSpace: "pre-wrap",
                                     }}
                                 >
                                     {lesson.content}
@@ -181,6 +205,46 @@ export default function LessonPage() {
                                 {message}
                             </div>
                         )}
+
+                        <div
+                            style={{
+                                marginTop: 24,
+                                display: "flex",
+                                justifyContent: "space-between",
+                                gap: 12,
+                            }}
+                        >
+                            <button
+                                disabled={!prevLesson}
+                                onClick={() => prevLesson && router.push(`/lessons/${prevLesson.id}`)}
+                                style={{
+                                    padding: "12px 16px",
+                                    borderRadius: 12,
+                                    border: "1px solid #E5E7EB",
+                                    background: prevLesson ? "white" : "#F3F4F6",
+                                    color: "#111827",
+                                    cursor: prevLesson ? "pointer" : "not-allowed",
+                                }}
+                            >
+                                ← Previous
+                            </button>
+
+                            <button
+                                disabled={!nextLesson}
+                                onClick={() => nextLesson && router.push(`/lessons/${nextLesson.id}`)}
+                                style={{
+                                    padding: "12px 16px",
+                                    borderRadius: 12,
+                                    border: "none",
+                                    background: nextLesson ? "#2563EB" : "#E5E7EB",
+                                    color: nextLesson ? "white" : "#6B7280",
+                                    fontWeight: 800,
+                                    cursor: nextLesson ? "pointer" : "not-allowed",
+                                }}
+                            >
+                                Next →
+                            </button>
+                        </div>
                     </section>
                 </>
             )}

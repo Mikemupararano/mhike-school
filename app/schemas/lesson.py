@@ -3,17 +3,17 @@ from pydantic import BaseModel
 
 class LessonCreate(BaseModel):
     title: str
-    content_type: str = "text"  # text/video/pdf/link
+    content_type: str = "text"  # text | video | pdf | link
     content: str | None = None
     order: int = 1
 
 
 class LessonOut(BaseModel):
     id: int
-    module_id: int
+    module_id: int  # ✅ REQUIRED for frontend navigation
     title: str
     content_type: str
-    content: str | None
+    content: str | None = None
     order: int
 
     class Config:
