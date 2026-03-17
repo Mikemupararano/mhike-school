@@ -1,16 +1,52 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { apiPost, getToken } from "@/lib/api";
+import { apiGet, apiPost, getToken } from "@/lib/api";
+
+type LessonOut = {
+    id: number;
+    title: string;
+    content: string;
+    content_type: string; // "text" | "video" (or others later)
+    order: number;
+};
 
 export default function LessonPage() {
     const router = useRouter();
     const params = useParams<{ lessonId: string }>();
     const lessonId = Number(params.lessonId);
 
-    const [loading, setLoading] = useState(false);
+    const [lesson, setLesson] = useState<LessonOut | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState("");
+    const [error, setError] = useState("");
+
+    async function loadLesson() {
+        const token = getToken();
+        if (!token) {
+            router.replace("/login");
+            return;
+        }
+
+        try {
+            setLoading(true);
+            setError("");
+
+            const res = await apiGet<LessonOut>(`/lessons/${lessonId}`, token);
+            setLesson(res);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to load lesson";
+            setError(msg);
+
+            if (msg.includes("401") || msg.includes("403")) {
+                router.replace("/login");
+            }
+        } finally {
+            setLoading(false);
+        }
+    }
 
     async function markComplete() {
         const token = getToken();
@@ -20,7 +56,7 @@ export default function LessonPage() {
         }
 
         try {
-            setLoading(true);
+            setSaving(true);
             setMessage("");
 
             await apiPost(`/lessons/${lessonId}/progress`, {}, token);
@@ -28,9 +64,14 @@ export default function LessonPage() {
         } catch (err: unknown) {
             setMessage(err instanceof Error ? err.message : "Failed to update progress");
         } finally {
-            setLoading(false);
+            setSaving(false);
         }
     }
+
+    useEffect(() => {
+        if (!lessonId) return;
+        void loadLesson();
+    }, [lessonId]);
 
     return (
         <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
@@ -48,72 +89,101 @@ export default function LessonPage() {
                 ← Back to Dashboard
             </button>
 
-            <h1 style={{ fontSize: 32, fontWeight: 900, marginBottom: 8 }}>
-                Lesson {lessonId}
-            </h1>
-            <p style={{ color: "#6B7280", marginTop: 0 }}>
-                Lesson content page placeholder.
-            </p>
+            {loading && <div>Loading lesson...</div>}
 
-            <section
-                style={{
-                    marginTop: 20,
-                    background: "white",
-                    border: "1px solid #E5E7EB",
-                    borderRadius: 18,
-                    padding: 20,
-                }}
-            >
+            {error && (
                 <div
                     style={{
-                        minHeight: 220,
-                        borderRadius: 16,
-                        background: "#EFF6FF",
-                        display: "grid",
-                        placeItems: "center",
-                        fontSize: 60,
-                    }}
-                >
-                    🎥
-                </div>
-
-                <div style={{ marginTop: 18, color: "#374151", lineHeight: 1.6 }}>
-                    This is where your lesson video, lesson notes, text content, or downloadable
-                    resources will appear.
-                </div>
-
-                <button
-                    onClick={markComplete}
-                    disabled={loading}
-                    style={{
-                        marginTop: 18,
-                        padding: "12px 16px",
+                        marginBottom: 16,
+                        padding: 12,
                         borderRadius: 12,
-                        border: "none",
-                        background: "#2563EB",
-                        color: "white",
-                        fontWeight: 800,
-                        cursor: loading ? "not-allowed" : "pointer",
-                        opacity: loading ? 0.75 : 1,
+                        background: "#FEF2F2",
+                        color: "#991B1B",
                     }}
                 >
-                    {loading ? "Saving..." : "Mark Lesson Complete"}
-                </button>
+                    {error}
+                </div>
+            )}
 
-                {message && (
-                    <div
+            {!loading && lesson && (
+                <>
+                    <h1 style={{ fontSize: 32, fontWeight: 900, marginBottom: 8 }}>
+                        {lesson.title}
+                    </h1>
+
+                    <section
                         style={{
-                            marginTop: 14,
-                            padding: 12,
-                            borderRadius: 12,
-                            background: "#F9FAFB",
+                            marginTop: 20,
+                            background: "white",
                             border: "1px solid #E5E7EB",
+                            borderRadius: 18,
+                            padding: 20,
                         }}
                     >
-                        {message}
-                    </div>
-                )}
-            </section>
+                        {/* Content Renderer */}
+                        <div
+                            style={{
+                                minHeight: 220,
+                                borderRadius: 16,
+                                background: "#EFF6FF",
+                                display: "grid",
+                                placeItems: "center",
+                                padding: 16,
+                            }}
+                        >
+                            {lesson.content_type === "video" ? (
+                                <video
+                                    src={lesson.content}
+                                    controls
+                                    style={{ width: "100%", borderRadius: 12 }}
+                                />
+                            ) : (
+                                <div
+                                    style={{
+                                        color: "#374151",
+                                        lineHeight: 1.6,
+                                        width: "100%",
+                                    }}
+                                >
+                                    {lesson.content}
+                                </div>
+                            )}
+                        </div>
+
+                        <button
+                            onClick={markComplete}
+                            disabled={saving}
+                            style={{
+                                marginTop: 18,
+                                padding: "12px 16px",
+                                borderRadius: 12,
+                                border: "none",
+                                background: "#2563EB",
+                                color: "white",
+                                fontWeight: 800,
+                                cursor: saving ? "not-allowed" : "pointer",
+                                opacity: saving ? 0.75 : 1,
+                            }}
+                        >
+                            {saving ? "Saving..." : "Mark Lesson Complete"}
+                        </button>
+
+                        {message && (
+                            <div
+                                style={{
+                                    marginTop: 14,
+                                    padding: 12,
+                                    borderRadius: 12,
+                                    background: "#F9FAFB",
+                                    border: "1px solid #E5E7EB",
+                                }}
+                            >
+                                {message}
+                            </div>
+                        )}
+                    </section>
+                </>
+            )}
         </main>
     );
 }
