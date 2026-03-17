@@ -1,18 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
 from app.api.deps import require_role
-from app.models import Module, Lesson, Course, User
+from app.db.session import get_db
+from app.models import Course, Lesson, Module, User
 from app.schemas.lesson import LessonCreate, LessonOut
 
 router = APIRouter()
 
 
-# ----------------------------
-# CREATE LESSON
-# ----------------------------
 @router.post("/modules/{module_id}/lessons", response_model=LessonOut)
 async def create_lesson(
     module_id: int,
@@ -20,19 +17,16 @@ async def create_lesson(
     db: AsyncSession = Depends(get_db),
     teacher: User = Depends(require_role("teacher", "admin")),
 ):
-    # Check module exists
     res = await db.execute(select(Module).where(Module.id == module_id))
     module = res.scalar_one_or_none()
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
 
-    # Check course exists
     cres = await db.execute(select(Course).where(Course.id == module.course_id))
     course = cres.scalar_one_or_none()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    # Ownership check (teacher must own course unless admin)
     if teacher.role != "admin" and course.teacher_id != teacher.id:
         raise HTTPException(status_code=403, detail="Not your course")
 
@@ -43,24 +37,18 @@ async def create_lesson(
         content=payload.content,
         order=payload.order,
     )
-
     db.add(lesson)
     await db.commit()
     await db.refresh(lesson)
-
     return lesson
 
 
-# ----------------------------
-# LIST LESSONS IN MODULE
-# ----------------------------
 @router.get("/modules/{module_id}/lessons", response_model=list[LessonOut])
 async def list_lessons(
     module_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role("student", "teacher", "admin")),
 ):
-    # Optional: ensure module exists (good practice)
     res = await db.execute(select(Module).where(Module.id == module_id))
     module = res.scalar_one_or_none()
     if not module:
@@ -69,14 +57,10 @@ async def list_lessons(
     lessons_res = await db.execute(
         select(Lesson).where(Lesson.module_id == module_id).order_by(Lesson.order)
     )
-
     return list(lessons_res.scalars().all())
 
 
-# ----------------------------
-# GET SINGLE LESSON
-# ----------------------------
-@router.get("/{lesson_id}", response_model=LessonOut)
+@router.get("/lessons/{lesson_id}", response_model=LessonOut)
 async def get_lesson(
     lesson_id: int,
     db: AsyncSession = Depends(get_db),
