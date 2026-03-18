@@ -80,6 +80,22 @@ export default function LessonPage() {
         }
     }
 
+    useEffect(() => {
+        if (!lessonId || Number.isNaN(lessonId)) return;
+        void loadLesson();
+    }, [lessonId]);
+
+    const currentIndex = useMemo(
+        () => lessons.findIndex((l) => l.id === lesson?.id),
+        [lessons, lesson]
+    );
+
+    const prevLesson = currentIndex > 0 ? lessons[currentIndex - 1] : null;
+    const nextLesson =
+        currentIndex >= 0 && currentIndex < lessons.length - 1
+            ? lessons[currentIndex + 1]
+            : null;
+
     async function markComplete() {
         const token = getToken();
         if (!token) {
@@ -99,29 +115,20 @@ export default function LessonPage() {
                 return next;
             });
 
-            setMessage("Lesson marked as complete.");
+            if (nextLesson) {
+                setMessage("Lesson completed. Moving to the next lesson...");
+                setTimeout(() => {
+                    router.push(`/lessons/${nextLesson.id}`);
+                }, 900);
+            } else {
+                setMessage("Lesson marked as complete. You have finished this module.");
+            }
         } catch (err: unknown) {
             setMessage(err instanceof Error ? err.message : "Failed to update progress");
         } finally {
             setSaving(false);
         }
     }
-
-    useEffect(() => {
-        if (!lessonId || Number.isNaN(lessonId)) return;
-        void loadLesson();
-    }, [lessonId]);
-
-    const currentIndex = useMemo(
-        () => lessons.findIndex((l) => l.id === lesson?.id),
-        [lessons, lesson]
-    );
-
-    const prevLesson = currentIndex > 0 ? lessons[currentIndex - 1] : null;
-    const nextLesson =
-        currentIndex >= 0 && currentIndex < lessons.length - 1
-            ? lessons[currentIndex + 1]
-            : null;
 
     return (
         <main
