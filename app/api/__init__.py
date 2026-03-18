@@ -7,17 +7,25 @@ from app.api.routers.modules import router as modules_router
 from app.api.routers.lessons import router as lessons_router
 from app.api.routers.progress import router as progress_router
 from app.api.routers.dashboard import router as dashboard_router
+from app.api.routers.quiz import router as quiz_router  # ✅ ADD THIS
 
-api_router = APIRouter(prefix="/api/v1")
+# NOTE:
+# main.py already adds "/api/v1"
+# so DO NOT duplicate it here
+api_router = APIRouter()
 
+# Core routes
 api_router.include_router(health_router, prefix="/health", tags=["health"])
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(courses_router, prefix="/courses", tags=["courses"])
 
-# learning structure
+# Learning structure
 api_router.include_router(modules_router, tags=["modules"])
 api_router.include_router(lessons_router, tags=["lessons"])
 api_router.include_router(progress_router, tags=["progress"])
 
-# dashboard
+# Quiz system ✅
+api_router.include_router(quiz_router, tags=["quiz"])
+
+# Dashboard
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
