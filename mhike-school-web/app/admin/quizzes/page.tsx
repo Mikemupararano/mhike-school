@@ -101,6 +101,10 @@ export default function AdminQuizzesPage() {
     const [loadingQuiz, setLoadingQuiz] = useState(false);
     const [savingQuestion, setSavingQuestion] = useState(false);
     const [savingOptionForQuestionId, setSavingOptionForQuestionId] = useState<number | null>(null);
+    const [editingQuestionId, setEditingQuestionId] = useState<number | null>(null);
+    const [editingOptionId, setEditingOptionId] = useState<number | null>(null);
+    const [deletingQuestionId, setDeletingQuestionId] = useState<number | null>(null);
+    const [deletingOptionId, setDeletingOptionId] = useState<number | null>(null);
 
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
@@ -110,8 +114,12 @@ export default function AdminQuizzesPage() {
         order: 1,
     });
 
-    const [optionDrafts, setOptionDrafts] = useState<
-        Record<number, QuizOptionCreate>
+    const [optionDrafts, setOptionDrafts] = useState<Record<number, QuizOptionCreate>>({});
+    const [questionEdits, setQuestionEdits] = useState<
+        Record<number, { question_text: string; order: number }>
+    >({});
+    const [optionEdits, setOptionEdits] = useState<
+        Record<number, { option_text: string; order: number; is_correct: boolean }>
     >({});
 
     const selectedCourse = useMemo(
@@ -202,20 +210,41 @@ export default function AdminQuizzesPage() {
             setLoadingQuiz(true);
             setError("");
             setSuccess("");
-            const res = await apiGet<QuizQuestionOut[]>(
-                `/lessons/${lessonId}/quiz/admin`,
-                token
-            );
+
+            const res = await apiGet<QuizQuestionOut[]>(`/lessons/${lessonId}/quiz/admin`, token);
             setQuestions(res);
             setQuestionForm((prev) => ({
                 ...prev,
                 order: res.length + 1,
             }));
+
+            const questionEditMap: Record<number, { question_text: string; order: number }> = {};
+            const optionEditMap: Record<number, { option_text: string; order: number; is_correct: boolean }> = {};
+
+            res.forEach((question) => {
+                questionEditMap[question.id] = {
+                    question_text: question.question_text,
+                    order: question.order,
+                };
+
+                question.options.forEach((option) => {
+                    optionEditMap[option.id] = {
+                        option_text: option.option_text,
+                        order: option.order,
+                        is_correct: option.is_correct,
+                    };
+                });
+            });
+
+            setQuestionEdits(questionEditMap);
+            setOptionEdits(optionEditMap);
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Failed to load quiz";
             if (msg.includes("404")) {
                 setQuestions([]);
                 setQuestionForm((prev) => ({ ...prev, order: 1 }));
+                setQuestionEdits({});
+                setOptionEdits({});
             } else {
                 setError(msg);
             }
@@ -262,6 +291,80 @@ export default function AdminQuizzesPage() {
         }
     }
 
+    async function updateQuestion(questionId: number) {
+        const token = authGuard();
+        if (!token || !selectedLessonId) return;
+
+        const draft = questionEdits[questionId];
+        if (!draft || !draft.question_text.trim()) {
+            setError("Question text cannot be empty.");
+            return;
+        }
+
+        try {
+            setEditingQuestionId(questionId);
+            setError("");
+            setSuccess("");
+
+            await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/quiz/questions/${questionId}`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    question_text: draft.question_text.trim(),
+                    order: draft.order,
+                }),
+            }).then(async (res) => {
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`API error ${res.status}: ${text}`);
+                }
+            });
+
+            setSuccess("Question updated.");
+            await loadQuiz(selectedLessonId);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Failed to update question");
+        } finally {
+            setEditingQuestionId(null);
+        }
+    }
+
+    async function deleteQuestion(questionId: number) {
+        const token = authGuard();
+        if (!token || !selectedLessonId) return;
+
+        const confirmed = window.confirm("Delete this question and all its options?");
+        if (!confirmed) return;
+
+        try {
+            setDeletingQuestionId(questionId);
+            setError("");
+            setSuccess("");
+
+            await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/quiz/questions/${questionId}`, {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            }).then(async (res) => {
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`API error ${res.status}: ${text}`);
+                }
+            });
+
+            setSuccess("Question deleted.");
+            await loadQuiz(selectedLessonId);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Failed to delete question");
+        } finally {
+            setDeletingQuestionId(null);
+        }
+    }
+
     function updateOptionDraft(
         questionId: number,
         patch: Partial<QuizOptionCreate>
@@ -281,7 +384,7 @@ export default function AdminQuizzesPage() {
 
     async function createOption(questionId: number) {
         const token = authGuard();
-        if (!token) return;
+        if (!token || !selectedLessonId) return;
 
         const draft = optionDrafts[questionId];
         if (!draft || !draft.option_text.trim()) {
@@ -315,13 +418,86 @@ export default function AdminQuizzesPage() {
             }));
 
             setSuccess("Option created.");
-            if (selectedLessonId) {
-                await loadQuiz(selectedLessonId);
-            }
+            await loadQuiz(selectedLessonId);
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Failed to create option");
         } finally {
             setSavingOptionForQuestionId(null);
+        }
+    }
+
+    async function updateOption(optionId: number) {
+        const token = authGuard();
+        if (!token || !selectedLessonId) return;
+
+        const draft = optionEdits[optionId];
+        if (!draft || !draft.option_text.trim()) {
+            setError("Option text cannot be empty.");
+            return;
+        }
+
+        try {
+            setEditingOptionId(optionId);
+            setError("");
+            setSuccess("");
+
+            await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/quiz/options/${optionId}`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    option_text: draft.option_text.trim(),
+                    order: draft.order,
+                    is_correct: draft.is_correct,
+                }),
+            }).then(async (res) => {
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`API error ${res.status}: ${text}`);
+                }
+            });
+
+            setSuccess("Option updated.");
+            await loadQuiz(selectedLessonId);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Failed to update option");
+        } finally {
+            setEditingOptionId(null);
+        }
+    }
+
+    async function deleteOption(optionId: number) {
+        const token = authGuard();
+        if (!token || !selectedLessonId) return;
+
+        const confirmed = window.confirm("Delete this option?");
+        if (!confirmed) return;
+
+        try {
+            setDeletingOptionId(optionId);
+            setError("");
+            setSuccess("");
+
+            await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/quiz/options/${optionId}`, {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            }).then(async (res) => {
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`API error ${res.status}: ${text}`);
+                }
+            });
+
+            setSuccess("Option deleted.");
+            await loadQuiz(selectedLessonId);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Failed to delete option");
+        } finally {
+            setDeletingOptionId(null);
         }
     }
 
@@ -390,11 +566,10 @@ export default function AdminQuizzesPage() {
                             lineHeight: 1.1,
                         }}
                     >
-                        Create Multiple Choice Quizzes
+                        Manage Multiple Choice Quizzes
                     </h1>
                     <div style={{ opacity: 0.95, fontSize: 17 }}>
-                        Select a course, module, and lesson, then add quiz questions and answer
-                        options.
+                        Create, edit, and delete quiz questions and answer options by lesson.
                     </div>
                 </section>
 
@@ -664,7 +839,7 @@ export default function AdminQuizzesPage() {
                         </Panel>
                     </div>
 
-                    <Panel title="3. Manage Quiz Questions">
+                    <Panel title="3. Edit and Delete Quiz">
                         {!selectedLessonId && (
                             <div style={{ color: "#6B7280" }}>
                                 Select a lesson to manage its quiz.
@@ -690,6 +865,11 @@ export default function AdminQuizzesPage() {
                                         order: question.options.length + 1,
                                     };
 
+                                    const questionEdit = questionEdits[question.id] ?? {
+                                        question_text: question.question_text,
+                                        order: question.order,
+                                    };
+
                                     return (
                                         <div
                                             key={question.id}
@@ -702,61 +882,139 @@ export default function AdminQuizzesPage() {
                                         >
                                             <div
                                                 style={{
-                                                    display: "flex",
-                                                    justifyContent: "space-between",
-                                                    gap: 12,
-                                                    alignItems: "start",
-                                                    flexWrap: "wrap",
+                                                    display: "grid",
+                                                    gap: 10,
                                                 }}
                                             >
-                                                <div>
-                                                    <div
+                                                <div
+                                                    style={{
+                                                        fontSize: 12,
+                                                        fontWeight: 800,
+                                                        color: "#6B7280",
+                                                    }}
+                                                >
+                                                    Question {questionIndex + 1}
+                                                </div>
+
+                                                <textarea
+                                                    value={questionEdit.question_text}
+                                                    onChange={(e) =>
+                                                        setQuestionEdits((prev) => ({
+                                                            ...prev,
+                                                            [question.id]: {
+                                                                ...questionEdit,
+                                                                question_text: e.target.value,
+                                                            },
+                                                        }))
+                                                    }
+                                                    rows={3}
+                                                    style={{
+                                                        width: "100%",
+                                                        padding: "12px 14px",
+                                                        borderRadius: 12,
+                                                        border: "1px solid #E5E7EB",
+                                                        background: "white",
+                                                        resize: "vertical",
+                                                    }}
+                                                />
+
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        gap: 10,
+                                                        alignItems: "center",
+                                                        flexWrap: "wrap",
+                                                    }}
+                                                >
+                                                    <input
+                                                        type="number"
+                                                        min={1}
+                                                        value={questionEdit.order}
+                                                        onChange={(e) =>
+                                                            setQuestionEdits((prev) => ({
+                                                                ...prev,
+                                                                [question.id]: {
+                                                                    ...questionEdit,
+                                                                    order: Number(e.target.value) || 1,
+                                                                },
+                                                            }))
+                                                        }
                                                         style={{
-                                                            fontSize: 12,
+                                                            width: 120,
+                                                            padding: "12px 14px",
+                                                            borderRadius: 12,
+                                                            border: "1px solid #E5E7EB",
+                                                            background: "white",
+                                                        }}
+                                                    />
+
+                                                    <button
+                                                        onClick={() => updateQuestion(question.id)}
+                                                        disabled={editingQuestionId === question.id}
+                                                        style={{
+                                                            padding: "12px 16px",
+                                                            borderRadius: 12,
+                                                            border: "none",
+                                                            background: "#2563EB",
+                                                            color: "white",
                                                             fontWeight: 800,
-                                                            color: "#6B7280",
+                                                            cursor:
+                                                                editingQuestionId === question.id
+                                                                    ? "not-allowed"
+                                                                    : "pointer",
                                                         }}
                                                     >
-                                                        Question {questionIndex + 1} • Order {question.order}
-                                                    </div>
-                                                    <div
+                                                        {editingQuestionId === question.id ? "Saving..." : "Save Question"}
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => deleteQuestion(question.id)}
+                                                        disabled={deletingQuestionId === question.id}
                                                         style={{
-                                                            marginTop: 6,
-                                                            fontSize: 18,
+                                                            padding: "12px 16px",
+                                                            borderRadius: 12,
+                                                            border: "1px solid #FCA5A5",
+                                                            background: "white",
+                                                            color: "#B91C1C",
                                                             fontWeight: 800,
-                                                            color: "#111827",
+                                                            cursor:
+                                                                deletingQuestionId === question.id
+                                                                    ? "not-allowed"
+                                                                    : "pointer",
                                                         }}
                                                     >
-                                                        {question.question_text}
-                                                    </div>
+                                                        {deletingQuestionId === question.id ? "Deleting..." : "Delete Question"}
+                                                    </button>
                                                 </div>
                                             </div>
 
-                                            <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                                            <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
                                                 {question.options.length === 0 && (
-                                                    <div style={{ color: "#6B7280" }}>
-                                                        No options added yet.
-                                                    </div>
+                                                    <div style={{ color: "#6B7280" }}>No options added yet.</div>
                                                 )}
 
                                                 {question.options
                                                     .slice()
                                                     .sort((a, b) => a.order - b.order)
-                                                    .map((option, optionIndex) => (
-                                                        <div
-                                                            key={option.id}
-                                                            style={{
-                                                                display: "flex",
-                                                                justifyContent: "space-between",
-                                                                gap: 12,
-                                                                alignItems: "center",
-                                                                padding: "12px 14px",
-                                                                borderRadius: 12,
-                                                                background: option.is_correct ? "#ECFDF5" : "white",
-                                                                border: "1px solid #E5E7EB",
-                                                            }}
-                                                        >
-                                                            <div>
+                                                    .map((option, optionIndex) => {
+                                                        const optionEdit = optionEdits[option.id] ?? {
+                                                            option_text: option.option_text,
+                                                            order: option.order,
+                                                            is_correct: option.is_correct,
+                                                        };
+
+                                                        return (
+                                                            <div
+                                                                key={option.id}
+                                                                style={{
+                                                                    padding: 14,
+                                                                    borderRadius: 12,
+                                                                    background: optionEdit.is_correct ? "#ECFDF5" : "white",
+                                                                    border: "1px solid #E5E7EB",
+                                                                    display: "grid",
+                                                                    gap: 10,
+                                                                }}
+                                                            >
                                                                 <div
                                                                     style={{
                                                                         fontSize: 12,
@@ -766,27 +1024,124 @@ export default function AdminQuizzesPage() {
                                                                 >
                                                                     Option {optionIndex + 1}
                                                                 </div>
-                                                                <div style={{ marginTop: 4, color: "#111827" }}>
-                                                                    {option.option_text}
-                                                                </div>
-                                                            </div>
 
-                                                            {option.is_correct && (
-                                                                <span
+                                                                <input
+                                                                    type="text"
+                                                                    value={optionEdit.option_text}
+                                                                    onChange={(e) =>
+                                                                        setOptionEdits((prev) => ({
+                                                                            ...prev,
+                                                                            [option.id]: {
+                                                                                ...optionEdit,
+                                                                                option_text: e.target.value,
+                                                                            },
+                                                                        }))
+                                                                    }
                                                                     style={{
-                                                                        fontSize: 12,
-                                                                        fontWeight: 800,
-                                                                        color: "#166534",
-                                                                        background: "#DCFCE7",
-                                                                        padding: "6px 10px",
-                                                                        borderRadius: 999,
+                                                                        width: "100%",
+                                                                        padding: "12px 14px",
+                                                                        borderRadius: 12,
+                                                                        border: "1px solid #E5E7EB",
+                                                                        background: "white",
+                                                                    }}
+                                                                />
+
+                                                                <div
+                                                                    style={{
+                                                                        display: "flex",
+                                                                        gap: 10,
+                                                                        alignItems: "center",
+                                                                        flexWrap: "wrap",
                                                                     }}
                                                                 >
-                                                                    Correct
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    ))}
+                                                                    <input
+                                                                        type="number"
+                                                                        min={1}
+                                                                        value={optionEdit.order}
+                                                                        onChange={(e) =>
+                                                                            setOptionEdits((prev) => ({
+                                                                                ...prev,
+                                                                                [option.id]: {
+                                                                                    ...optionEdit,
+                                                                                    order: Number(e.target.value) || 1,
+                                                                                },
+                                                                            }))
+                                                                        }
+                                                                        style={{
+                                                                            width: 120,
+                                                                            padding: "12px 14px",
+                                                                            borderRadius: 12,
+                                                                            border: "1px solid #E5E7EB",
+                                                                            background: "white",
+                                                                        }}
+                                                                    />
+
+                                                                    <label
+                                                                        style={{
+                                                                            display: "flex",
+                                                                            alignItems: "center",
+                                                                            gap: 8,
+                                                                            color: "#111827",
+                                                                            fontWeight: 700,
+                                                                        }}
+                                                                    >
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={optionEdit.is_correct}
+                                                                            onChange={(e) =>
+                                                                                setOptionEdits((prev) => ({
+                                                                                    ...prev,
+                                                                                    [option.id]: {
+                                                                                        ...optionEdit,
+                                                                                        is_correct: e.target.checked,
+                                                                                    },
+                                                                                }))
+                                                                            }
+                                                                        />
+                                                                        Correct answer
+                                                                    </label>
+
+                                                                    <button
+                                                                        onClick={() => updateOption(option.id)}
+                                                                        disabled={editingOptionId === option.id}
+                                                                        style={{
+                                                                            padding: "12px 16px",
+                                                                            borderRadius: 12,
+                                                                            border: "none",
+                                                                            background: "#2563EB",
+                                                                            color: "white",
+                                                                            fontWeight: 800,
+                                                                            cursor:
+                                                                                editingOptionId === option.id
+                                                                                    ? "not-allowed"
+                                                                                    : "pointer",
+                                                                        }}
+                                                                    >
+                                                                        {editingOptionId === option.id ? "Saving..." : "Save Option"}
+                                                                    </button>
+
+                                                                    <button
+                                                                        onClick={() => deleteOption(option.id)}
+                                                                        disabled={deletingOptionId === option.id}
+                                                                        style={{
+                                                                            padding: "12px 16px",
+                                                                            borderRadius: 12,
+                                                                            border: "1px solid #FCA5A5",
+                                                                            background: "white",
+                                                                            color: "#B91C1C",
+                                                                            fontWeight: 800,
+                                                                            cursor:
+                                                                                deletingOptionId === option.id
+                                                                                    ? "not-allowed"
+                                                                                    : "pointer",
+                                                                        }}
+                                                                    >
+                                                                        {deletingOptionId === option.id ? "Deleting..." : "Delete Option"}
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
                                             </div>
 
                                             <div
