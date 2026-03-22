@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
 from app.db.session import get_db
-from app.models import Course, Lesson, Module, User
+from app.models.course import Course
+from app.models.lesson import Lesson
+from app.models.module import Module
+from app.models.user import User
 from app.schemas.lesson import LessonCreate, LessonOut
 
 router = APIRouter()
@@ -19,16 +22,25 @@ async def create_lesson(
 ):
     res = await db.execute(select(Module).where(Module.id == module_id))
     module = res.scalar_one_or_none()
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Module not found",
+        )
 
     cres = await db.execute(select(Course).where(Course.id == module.course_id))
     course = cres.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
 
     if teacher.role != "admin" and course.teacher_id != teacher.id:
-        raise HTTPException(status_code=403, detail="Not your course")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not your course",
+        )
 
     lesson = Lesson(
         module_id=module_id,
@@ -38,8 +50,14 @@ async def create_lesson(
         order=payload.order,
     )
     db.add(lesson)
-    await db.commit()
-    await db.refresh(lesson)
+
+    try:
+        await db.commit()
+        await db.refresh(lesson)
+    except Exception:
+        await db.rollback()
+        raise
+
     return lesson
 
 
@@ -47,12 +65,15 @@ async def create_lesson(
 async def list_lessons(
     module_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role("student", "teacher", "admin")),
+    _user: User = Depends(require_role("student", "teacher", "admin")),
 ):
     res = await db.execute(select(Module).where(Module.id == module_id))
     module = res.scalar_one_or_none()
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Module not found",
+        )
 
     lessons_res = await db.execute(
         select(Lesson).where(Lesson.module_id == module_id).order_by(Lesson.order)
@@ -64,12 +85,15 @@ async def list_lessons(
 async def get_lesson(
     lesson_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role("student", "teacher", "admin")),
+    _user: User = Depends(require_role("student", "teacher", "admin")),
 ):
     res = await db.execute(select(Lesson).where(Lesson.id == lesson_id))
     lesson = res.scalar_one_or_none()
 
-    if not lesson:
-        raise HTTPException(status_code=404, detail="Lesson not found")
+    if lesson is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lesson not found",
+        )
 
     return lesson

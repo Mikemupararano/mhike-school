@@ -9,7 +9,6 @@ from app.core.bootstrap import bootstrap_admin
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 
-
 API_PREFIX = "/api/v1"
 
 
@@ -34,7 +33,7 @@ app = FastAPI(
 
 
 def custom_openapi():
-    if app.openapi_schema:
+    if app.openapi_schema is not None:
         return app.openapi_schema
 
     openapi_schema = get_openapi(
@@ -79,5 +78,6 @@ async def root():
         "app": settings.app_name,
         "status": "ok",
         "docs": "/docs",
+        "openapi": "/openapi.json",
         "api_prefix": API_PREFIX,
     }

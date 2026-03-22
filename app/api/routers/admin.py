@@ -1,30 +1,81 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from app.db.session import get_db
+from app.models.user import User
+from app.models.course import Course
+from app.models.enrollment import Enrollment
 from app.api.deps import require_role
-from app.models import User
 
-router = APIRouter()
+router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.patch("/users/{user_id}/role")
-async def set_user_role(
-    user_id: int,
-    role: str,  # "student" | "teacher" | "admin"
+@router.get("/stats")
+async def admin_stats(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_role("admin")),
 ):
-    if role not in {"student", "teacher", "admin"}:
-        raise HTTPException(status_code=400, detail="Invalid role")
+    total_users = await db.scalar(select(func.count()).select_from(User))
+    total_students = await db.scalar(
+        select(func.count()).select_from(User).where(User.role == "student")
+    )
+    total_teachers = await db.scalar(
+        select(func.count()).select_from(User).where(User.role == "teacher")
+    )
+    total_admins = await db.scalar(
+        select(func.count()).select_from(User).where(User.role == "admin")
+    )
+    total_courses = await db.scalar(select(func.count()).select_from(Course))
+    published_courses = await db.scalar(
+        select(func.count()).select_from(Course).where(Course.published == True)
+    )
+    total_enrollments = await db.scalar(select(func.count()).select_from(Enrollment))
 
-    res = await db.execute(select(User).where(User.id == user_id))
-    user = res.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "total_users": total_users or 0,
+        "total_students": total_students or 0,
+        "total_teachers": total_teachers or 0,
+        "total_admins": total_admins or 0,
+        "total_courses": total_courses or 0,
+        "published_courses": published_courses or 0,
+        "total_enrollments": total_enrollments or 0,
+    }
 
-    user.role = role
-    await db.commit()
-    await db.refresh(user)
-    return {"id": user.id, "email": user.email, "role": user.role}
+
+@router.get("/users")
+async def admin_users(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    res = await db.execute(select(User))
+    users = res.scalars().all()
+
+    return [
+        {
+            "id": u.id,
+            "full_name": u.full_name,
+            "email": u.email,
+            "role": u.role,
+        }
+        for u in users
+    ]
+
+
+@router.get("/courses")
+async def admin_courses(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    res = await db.execute(select(Course))
+    courses = res.scalars().all()
+
+    return [
+        {
+            "id": c.id,
+            "title": c.title,
+            "teacher_id": c.teacher_id,
+            "published": c.published,
+        }
+        for c in courses
+    ]

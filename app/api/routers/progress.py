@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
 from app.api.deps import require_role
-from app.models import Lesson, Progress, User
-from app.schemas.progress import ProgressOut, MarkLessonIn
+from app.db.session import get_db
+from app.models.lesson import Lesson
+from app.models.progress import Progress
+from app.models.user import User
+from app.schemas.progress import MarkLessonIn, ProgressOut
 
 router = APIRouter()
 
@@ -20,10 +22,13 @@ async def mark_lesson(
 ):
     res = await db.execute(select(Lesson).where(Lesson.id == lesson_id))
     lesson = res.scalar_one_or_none()
-    if not lesson:
-        raise HTTPException(status_code=404, detail="Lesson not found")
 
-    # Upsert progress (Postgres)
+    if lesson is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lesson not found",
+        )
+
     stmt = (
         insert(Progress)
         .values(

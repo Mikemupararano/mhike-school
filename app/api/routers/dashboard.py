@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
 from app.db.session import get_db
-from app.models import Course, Enrollment, Lesson, Module, Progress, User
+from app.models.course import Course
+from app.models.enrollment import Enrollment
+from app.models.lesson import Lesson
+from app.models.module import Module
+from app.models.progress import Progress
+from app.models.user import User
 from app.schemas.dashboard import CourseProgressOut, DashboardMeOut, NextLessonOut
 
 router = APIRouter()
@@ -23,13 +28,19 @@ async def course_progress(
                 Enrollment.student_id == student.id,
             )
         )
-        if not enr.scalar_one_or_none():
-            raise HTTPException(status_code=403, detail="Not enrolled in this course")
+        if enr.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not enrolled in this course",
+            )
 
     course_res = await db.execute(select(Course).where(Course.id == course_id))
     course = course_res.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
 
     total_q = (
         select(func.count(Lesson.id))

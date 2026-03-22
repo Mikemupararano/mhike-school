@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-from app.db.session import get_db
 from app.api.deps import require_role
-from app.models import Course, Module, User
+from app.db.session import get_db
+from app.models.course import Course
+from app.models.module import Module
+from app.models.user import User
 from app.schemas.module import ModuleCreate, ModuleOut
 
 router = APIRouter()
@@ -19,21 +21,42 @@ async def create_module(
 ):
     res = await db.execute(select(Course).where(Course.id == course_id))
     course = res.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
-    if teacher.role != "admin" and course.teacher_id != teacher.id:
-        raise HTTPException(status_code=403, detail="Not your course")
 
-    module = Module(course_id=course_id, title=payload.title, order=payload.order)
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
+
+    if teacher.role != "admin" and course.teacher_id != teacher.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not your course",
+        )
+
+    module = Module(
+        course_id=course_id,
+        title=payload.title,
+        order=payload.order,
+    )
     db.add(module)
-    await db.commit()
-    await db.refresh(module)
+
+    try:
+        await db.commit()
+        await db.refresh(module)
+    except Exception:
+        await db.rollback()
+        raise
+
     return module
 
 
 @router.get("/courses/{course_id}/modules", response_model=list[ModuleOut])
-async def list_modules(course_id: int, db: AsyncSession = Depends(get_db)):
+async def list_modules(
+    course_id: int,
+    db: AsyncSession = Depends(get_db),
+):
     res = await db.execute(
-        select(Module).where(Module.course_id == course_id).order_by(Module.order)
+        select(Module).where(Module.course_id == course_id).order_by(asc(Module.order))
     )
     return list(res.scalars().all())
