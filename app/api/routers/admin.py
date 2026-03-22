@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import require_role
 from app.db.session import get_db
-from app.models.user import User
 from app.models.course import Course
 from app.models.enrollment import Enrollment
-from app.api.deps import require_role
+from app.models.user import User
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -48,7 +48,7 @@ async def admin_users(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_role("admin")),
 ):
-    res = await db.execute(select(User))
+    res = await db.execute(select(User).order_by(User.id.desc()))
     users = res.scalars().all()
 
     return [
@@ -57,6 +57,7 @@ async def admin_users(
             "full_name": u.full_name,
             "email": u.email,
             "role": u.role,
+            "is_active": getattr(u, "is_active", True),
         }
         for u in users
     ]
@@ -67,13 +68,14 @@ async def admin_courses(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_role("admin")),
 ):
-    res = await db.execute(select(Course))
+    res = await db.execute(select(Course).order_by(Course.id.desc()))
     courses = res.scalars().all()
 
     return [
         {
             "id": c.id,
             "title": c.title,
+            "description": c.description,
             "teacher_id": c.teacher_id,
             "published": c.published,
         }

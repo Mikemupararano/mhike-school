@@ -51,7 +51,9 @@ def custom_openapi():
         "bearerFormat": "JWT",
     }
 
+    # Apply Bearer auth globally in docs
     openapi_schema["security"] = [{"BearerAuth": []}]
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 

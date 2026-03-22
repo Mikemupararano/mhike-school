@@ -124,6 +124,10 @@ npm run dev
 The frontend will be available at:
 http://localhost:3000
 
+## Open Postgres:
+
+docker compose exec db psql -U postgres -d postgres
+
 ## Development Architecture
 Next.js Frontend
        │

@@ -23,5 +23,5 @@ api_router.include_router(quiz_router, tags=["quiz"])
 
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 
-# ✅ ADD THIS
-api_router.include_router(admin_router, tags=["admin"])
+# ✅ Admin router (already has prefix="/admin" internally)
+api_router.include_router(admin_router)
