@@ -8,9 +8,13 @@ import {
     AdminCourseOut,
     AdminStatsOut,
     AdminUserOut,
+    deleteCourseAdmin,
     getAdminCourses,
     getAdminStats,
     getAdminUsers,
+    setCoursePublished,
+    toggleUserActive,
+    updateUserRole,
 } from "@/lib/adminApi";
 
 function cardStyle(): React.CSSProperties {
@@ -131,6 +135,8 @@ export default function AdminPage() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState("");
+    const [success, setSuccess] = useState("");
+    const [actionKey, setActionKey] = useState("");
 
     useEffect(() => {
         const t = getToken();
@@ -170,8 +176,8 @@ export default function AdminPage() {
         loadDashboard(token);
     }, [token]);
 
-    const recentUsers = useMemo(() => users.slice(0, 6), [users]);
-    const recentCourses = useMemo(() => courses.slice(0, 6), [courses]);
+    const recentUsers = useMemo(() => users.slice(0, 8), [users]);
+    const recentCourses = useMemo(() => courses.slice(0, 8), [courses]);
 
     const derived = useMemo(() => {
         const draftCourses = courses.filter((c) => !c.published).length;
@@ -186,11 +192,96 @@ export default function AdminPage() {
         };
     }, [courses, stats]);
 
+    async function onChangeRole(
+        userId: number,
+        role: "student" | "teacher" | "admin"
+    ) {
+        if (!token) return;
+        const key = `role-${userId}`;
+        setActionKey(key);
+        setError("");
+        setSuccess("");
+
+        try {
+            await updateUserRole(token, userId, role);
+            setSuccess("User role updated.");
+            await loadDashboard(token, true);
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : "Failed to update role");
+        } finally {
+            setActionKey("");
+        }
+    }
+
+    async function onToggleUser(user: AdminUserOut) {
+        if (!token) return;
+        const key = `active-${user.id}`;
+        setActionKey(key);
+        setError("");
+        setSuccess("");
+
+        try {
+            await toggleUserActive(token, user.id, !(user.is_active ?? true));
+            setSuccess(
+                user.is_active === false ? "User activated." : "User deactivated."
+            );
+            await loadDashboard(token, true);
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : "Failed to update user status");
+        } finally {
+            setActionKey("");
+        }
+    }
+
+    async function onToggleCoursePublish(course: AdminCourseOut) {
+        if (!token) return;
+        const key = `publish-${course.id}`;
+        setActionKey(key);
+        setError("");
+        setSuccess("");
+
+        try {
+            await setCoursePublished(token, course.id, !course.published);
+            setSuccess(course.published ? "Course unpublished." : "Course published.");
+            await loadDashboard(token, true);
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : "Failed to update course status");
+        } finally {
+            setActionKey("");
+        }
+    }
+
+    async function onDeleteCourse(course: AdminCourseOut) {
+        if (!token) return;
+
+        const confirmed = window.confirm(
+            `Delete "${course.title}"? This action cannot be undone.`
+        );
+        if (!confirmed) return;
+
+        const key = `delete-${course.id}`;
+        setActionKey(key);
+        setError("");
+        setSuccess("");
+
+        try {
+            await deleteCourseAdmin(token, course.id);
+            setSuccess("Course deleted.");
+            await loadDashboard(token, true);
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : "Failed to delete course");
+        } finally {
+            setActionKey("");
+        }
+    }
+
     if (loading) {
         return (
             <main style={{ maxWidth: 1280, margin: "0 auto", padding: 24 }}>
                 <div style={cardStyle()}>
-                    <div style={{ fontSize: 18, fontWeight: 800 }}>Loading admin dashboard...</div>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>
+                        Loading admin dashboard...
+                    </div>
                 </div>
             </main>
         );
@@ -207,7 +298,8 @@ export default function AdminPage() {
             <div style={{ maxWidth: 1280, margin: "0 auto" }}>
                 <header
                     style={{
-                        background: "linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #60A5FA 100%)",
+                        background:
+                            "linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #60A5FA 100%)",
                         borderRadius: 24,
                         padding: 24,
                         color: "white",
@@ -366,6 +458,22 @@ export default function AdminPage() {
                     </div>
                 )}
 
+                {success && (
+                    <div
+                        style={{
+                            marginTop: 16,
+                            padding: 14,
+                            borderRadius: 16,
+                            background: "#ECFDF5",
+                            color: "#065F46",
+                            border: "1px solid #A7F3D0",
+                            fontWeight: 600,
+                        }}
+                    >
+                        {success}
+                    </div>
+                )}
+
                 <section
                     style={{
                         marginTop: 18,
@@ -409,9 +517,11 @@ export default function AdminPage() {
                                 }}
                             >
                                 <div>
-                                    <h2 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>Users</h2>
+                                    <h2 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>
+                                        Users
+                                    </h2>
                                     <p style={{ margin: "6px 0 0 0", color: "#6B7280" }}>
-                                        Latest platform users and their roles
+                                        Manage roles and account status
                                     </p>
                                 </div>
                                 <Badge text={`${users.length} loaded`} kind="info" />
@@ -429,41 +539,115 @@ export default function AdminPage() {
                                                 borderRadius: 16,
                                                 padding: 14,
                                                 background: "#F8FAFC",
-                                                display: "flex",
-                                                justifyContent: "space-between",
+                                                display: "grid",
                                                 gap: 12,
-                                                alignItems: "center",
-                                                flexWrap: "wrap",
                                             }}
                                         >
-                                            <div>
-                                                <div
-                                                    style={{
-                                                        fontWeight: 900,
-                                                        fontSize: 16,
-                                                        color: "#0F172A",
-                                                    }}
-                                                >
-                                                    {user.full_name || user.email}
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    justifyContent: "space-between",
+                                                    gap: 12,
+                                                    alignItems: "center",
+                                                    flexWrap: "wrap",
+                                                }}
+                                            >
+                                                <div>
+                                                    <div
+                                                        style={{
+                                                            fontWeight: 900,
+                                                            fontSize: 16,
+                                                            color: "#0F172A",
+                                                        }}
+                                                    >
+                                                        {user.full_name || user.email}
+                                                    </div>
+                                                    <div
+                                                        style={{
+                                                            marginTop: 4,
+                                                            color: "#6B7280",
+                                                            fontSize: 14,
+                                                        }}
+                                                    >
+                                                        {user.email}
+                                                    </div>
                                                 </div>
+
                                                 <div
                                                     style={{
-                                                        marginTop: 4,
-                                                        color: "#6B7280",
-                                                        fontSize: 14,
+                                                        display: "flex",
+                                                        gap: 8,
+                                                        alignItems: "center",
+                                                        flexWrap: "wrap",
                                                     }}
                                                 >
-                                                    {user.email}
+                                                    {roleBadge(user.role)}
+                                                    {user.is_active === false ? (
+                                                        <Badge text="Inactive" kind="danger" />
+                                                    ) : (
+                                                        <Badge text="Active" kind="success" />
+                                                    )}
                                                 </div>
                                             </div>
 
-                                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                                {roleBadge(user.role)}
-                                                {user.is_active === false ? (
-                                                    <Badge text="Inactive" kind="danger" />
-                                                ) : (
-                                                    <Badge text="Active" kind="success" />
-                                                )}
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    gap: 10,
+                                                    flexWrap: "wrap",
+                                                    alignItems: "center",
+                                                }}
+                                            >
+                                                <select
+                                                    value={user.role}
+                                                    onChange={(e) =>
+                                                        onChangeRole(
+                                                            user.id,
+                                                            e.target.value as
+                                                            | "student"
+                                                            | "teacher"
+                                                            | "admin"
+                                                        )
+                                                    }
+                                                    disabled={actionKey === `role-${user.id}`}
+                                                    style={{
+                                                        padding: "10px 12px",
+                                                        borderRadius: 12,
+                                                        border: "1px solid #CBD5E1",
+                                                        background: "white",
+                                                        fontWeight: 700,
+                                                    }}
+                                                >
+                                                    <option value="student">student</option>
+                                                    <option value="teacher">teacher</option>
+                                                    <option value="admin">admin</option>
+                                                </select>
+
+                                                <button
+                                                    onClick={() => onToggleUser(user)}
+                                                    disabled={actionKey === `active-${user.id}`}
+                                                    style={{
+                                                        padding: "10px 14px",
+                                                        borderRadius: 12,
+                                                        border: "1px solid #E5E7EB",
+                                                        background:
+                                                            user.is_active === false
+                                                                ? "#DCFCE7"
+                                                                : "#FEE2E2",
+                                                        color:
+                                                            user.is_active === false
+                                                                ? "#166534"
+                                                                : "#991B1B",
+                                                        fontWeight: 800,
+                                                        cursor: "pointer",
+                                                    }}
+                                                >
+                                                    {actionKey === `active-${user.id}`
+                                                        ? "Saving..."
+                                                        : user.is_active === false
+                                                            ? "Activate"
+                                                            : "Deactivate"}
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
@@ -482,9 +666,11 @@ export default function AdminPage() {
                                 }}
                             >
                                 <div>
-                                    <h2 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>Courses</h2>
+                                    <h2 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>
+                                        Courses
+                                    </h2>
                                     <p style={{ margin: "6px 0 0 0", color: "#6B7280" }}>
-                                        Recently loaded courses and publication status
+                                        Moderate publication state and delete courses
                                     </p>
                                 </div>
                                 <Badge text={`${courses.length} loaded`} kind="info" />
@@ -502,6 +688,8 @@ export default function AdminPage() {
                                                 borderRadius: 16,
                                                 padding: 14,
                                                 background: "#F8FAFC",
+                                                display: "grid",
+                                                gap: 12,
                                             }}
                                         >
                                             <div
@@ -547,6 +735,50 @@ export default function AdminPage() {
 
                                                 <div>{courseBadge(course.published)}</div>
                                             </div>
+
+                                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                                <button
+                                                    onClick={() => onToggleCoursePublish(course)}
+                                                    disabled={actionKey === `publish-${course.id}`}
+                                                    style={{
+                                                        padding: "10px 14px",
+                                                        borderRadius: 12,
+                                                        border: "1px solid #E5E7EB",
+                                                        background: course.published
+                                                            ? "#FEF3C7"
+                                                            : "#DBEAFE",
+                                                        color: course.published
+                                                            ? "#92400E"
+                                                            : "#1D4ED8",
+                                                        fontWeight: 800,
+                                                        cursor: "pointer",
+                                                    }}
+                                                >
+                                                    {actionKey === `publish-${course.id}`
+                                                        ? "Saving..."
+                                                        : course.published
+                                                            ? "Unpublish"
+                                                            : "Publish"}
+                                                </button>
+
+                                                <button
+                                                    onClick={() => onDeleteCourse(course)}
+                                                    disabled={actionKey === `delete-${course.id}`}
+                                                    style={{
+                                                        padding: "10px 14px",
+                                                        borderRadius: 12,
+                                                        border: "1px solid #FECACA",
+                                                        background: "#FEE2E2",
+                                                        color: "#991B1B",
+                                                        fontWeight: 800,
+                                                        cursor: "pointer",
+                                                    }}
+                                                >
+                                                    {actionKey === `delete-${course.id}`
+                                                        ? "Deleting..."
+                                                        : "Delete course"}
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -565,7 +797,9 @@ export default function AdminPage() {
                             </div>
 
                             <div style={{ marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
-                                <span style={{ color: "#475569", fontWeight: 700 }}>Published rate</span>
+                                <span style={{ color: "#475569", fontWeight: 700 }}>
+                                    Published rate
+                                </span>
                                 <span style={{ fontWeight: 900 }}>{derived.publishedRate}%</span>
                             </div>
 
@@ -582,7 +816,8 @@ export default function AdminPage() {
                                     style={{
                                         width: `${derived.publishedRate}%`,
                                         height: "100%",
-                                        background: "linear-gradient(90deg, #2563EB 0%, #60A5FA 100%)",
+                                        background:
+                                            "linear-gradient(90deg, #2563EB 0%, #60A5FA 100%)",
                                     }}
                                 />
                             </div>
@@ -604,7 +839,9 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <span style={{ color: "#475569", fontWeight: 700 }}>Published</span>
+                                    <span style={{ color: "#475569", fontWeight: 700 }}>
+                                        Published
+                                    </span>
                                     <strong>{stats?.published_courses ?? 0}</strong>
                                 </div>
 
@@ -618,7 +855,9 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <span style={{ color: "#475569", fontWeight: 700 }}>Draft</span>
+                                    <span style={{ color: "#475569", fontWeight: 700 }}>
+                                        Draft
+                                    </span>
                                     <strong>{derived.draftCourses}</strong>
                                 </div>
 
@@ -632,7 +871,9 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <span style={{ color: "#475569", fontWeight: 700 }}>Enrollments</span>
+                                    <span style={{ color: "#475569", fontWeight: 700 }}>
+                                        Enrollments
+                                    </span>
                                     <strong>{stats?.total_enrollments ?? 0}</strong>
                                 </div>
                             </div>
@@ -650,7 +891,8 @@ export default function AdminPage() {
                                         textDecoration: "none",
                                         padding: "14px 16px",
                                         borderRadius: 14,
-                                        background: "linear-gradient(90deg, #2563EB 0%, #3B82F6 100%)",
+                                        background:
+                                            "linear-gradient(90deg, #2563EB 0%, #3B82F6 100%)",
                                         color: "#FFFFFF",
                                         fontWeight: 800,
                                     }}
@@ -687,7 +929,9 @@ export default function AdminPage() {
                                         cursor: "pointer",
                                     }}
                                 >
-                                    {refreshing ? "Refreshing admin data..." : "Refresh admin data"}
+                                    {refreshing
+                                        ? "Refreshing admin data..."
+                                        : "Refresh admin data"}
                                 </button>
                             </div>
                         </div>
@@ -706,9 +950,18 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <div style={{ fontSize: 13, color: "#6B7280" }}>User mix</div>
-                                    <div style={{ marginTop: 6, fontWeight: 800, color: "#0F172A" }}>
-                                        {stats?.total_students ?? 0} students • {stats?.total_teachers ?? 0} teachers •{" "}
+                                    <div style={{ fontSize: 13, color: "#6B7280" }}>
+                                        User mix
+                                    </div>
+                                    <div
+                                        style={{
+                                            marginTop: 6,
+                                            fontWeight: 800,
+                                            color: "#0F172A",
+                                        }}
+                                    >
+                                        {stats?.total_students ?? 0} students •{" "}
+                                        {stats?.total_teachers ?? 0} teachers •{" "}
                                         {stats?.total_admins ?? 0} admins
                                     </div>
                                 </div>
@@ -721,9 +974,18 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <div style={{ fontSize: 13, color: "#6B7280" }}>Course health</div>
-                                    <div style={{ marginTop: 6, fontWeight: 800, color: "#0F172A" }}>
-                                        {stats?.total_courses ?? 0} total courses with {stats?.published_courses ?? 0} published
+                                    <div style={{ fontSize: 13, color: "#6B7280" }}>
+                                        Course health
+                                    </div>
+                                    <div
+                                        style={{
+                                            marginTop: 6,
+                                            fontWeight: 800,
+                                            color: "#0F172A",
+                                        }}
+                                    >
+                                        {stats?.total_courses ?? 0} total courses with{" "}
+                                        {stats?.published_courses ?? 0} published
                                     </div>
                                 </div>
 
@@ -735,9 +997,18 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <div style={{ fontSize: 13, color: "#6B7280" }}>Learning activity</div>
-                                    <div style={{ marginTop: 6, fontWeight: 800, color: "#0F172A" }}>
-                                        {stats?.total_enrollments ?? 0} enrollments recorded on the platform
+                                    <div style={{ fontSize: 13, color: "#6B7280" }}>
+                                        Learning activity
+                                    </div>
+                                    <div
+                                        style={{
+                                            marginTop: 6,
+                                            fontWeight: 800,
+                                            color: "#0F172A",
+                                        }}
+                                    >
+                                        {stats?.total_enrollments ?? 0} enrollments recorded on
+                                        the platform
                                     </div>
                                 </div>
                             </div>
