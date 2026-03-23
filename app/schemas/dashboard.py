@@ -18,6 +18,10 @@ class CourseProgressOut(BaseModel):
 
 class DashboardMeOut(BaseModel):
     student_id: int
+    full_name: str | None = None
+    email: str
+    role: str
+    is_active: bool = True
     enrolled_courses: int
     total_lessons_completed: int
     courses: list[CourseProgressOut]

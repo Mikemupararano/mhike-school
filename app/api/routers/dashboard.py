@@ -156,6 +156,10 @@ async def dashboard_me(
 
     return DashboardMeOut(
         student_id=student.id,
+        full_name=student.full_name,
+        email=student.email,
+        role=student.role,
+        is_active=getattr(student, "is_active", True),
         enrolled_courses=len(enrolled_courses),
         total_lessons_completed=total_completed_all_courses,
         courses=courses_out,

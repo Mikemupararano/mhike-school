@@ -2,12 +2,26 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiPost, setToken } from "@/lib/api";
+import { apiGet, apiPost, setToken } from "@/lib/api";
 
 type TokenOut = {
     access_token: string;
     token_type: string;
 };
+
+type MeOut = {
+    id: number;
+    full_name?: string | null;
+    email: string;
+    role: "student" | "teacher" | "admin" | string;
+    is_active?: boolean;
+};
+
+function getHomeRoute(role: string) {
+    if (role === "admin") return "/admin";
+    if (role === "teacher") return "/teacher";
+    return "/dashboard";
+}
 
 export default function LoginPage() {
     const router = useRouter();
@@ -21,7 +35,7 @@ export default function LoginPage() {
         e.preventDefault();
         setError("");
 
-        const trimmedEmail = email.trim();
+        const trimmedEmail = email.trim().toLowerCase();
         const trimmedPassword = password.trim();
 
         if (!trimmedEmail || !trimmedPassword) {
@@ -42,12 +56,29 @@ export default function LoginPage() {
             }
 
             setToken(res.access_token);
-            router.replace("/dashboard");
+
+            const me = await apiGet<MeOut>("/auth/me", res.access_token);
+
+            if (me.is_active === false) {
+                throw new Error("Account is inactive");
+            }
+
+            router.replace(getHomeRoute(me.role));
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Login failed";
 
-            if (message.includes("401")) {
+            if (
+                message.includes("401") ||
+                message.toLowerCase().includes("invalid credentials") ||
+                message.toLowerCase().includes("invalid email or password")
+            ) {
                 setError("Invalid email or password.");
+            } else if (
+                message.includes("403") ||
+                message.toLowerCase().includes("forbidden") ||
+                message.toLowerCase().includes("inactive")
+            ) {
+                setError("Your account is not allowed to sign in.");
             } else {
                 setError(message || "Login failed. Please try again.");
             }
@@ -174,7 +205,7 @@ export default function LoginPage() {
                         lineHeight: 1.5,
                     }}
                 >
-                    Use your student account to sign in.
+                    Use your school account to sign in.
                 </p>
             </div>
         </main>

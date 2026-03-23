@@ -1,5 +1,9 @@
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
+export const API_BASE_URL =
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
+/**
+ * Safely get token from localStorage
+ */
 export function getToken(): string | null {
     if (typeof window === "undefined") return null;
     return localStorage.getItem("mhike_token");
@@ -15,18 +19,48 @@ export function clearToken() {
     localStorage.removeItem("mhike_token");
 }
 
+/**
+ * Normalize URL to avoid double slashes
+ */
+function buildUrl(path: string): string {
+    const base = API_BASE_URL.replace(/\/+$/, "");
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${cleanPath}`;
+}
+
+/**
+ * Unified response handler
+ */
 async function handle<T>(res: Response): Promise<T> {
     if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`API error ${res.status}: ${text}`);
+        let message = `API error ${res.status}`;
+
+        try {
+            const data = await res.json();
+            message = data?.detail || JSON.stringify(data);
+        } catch {
+            try {
+                message = await res.text();
+            } catch {
+                // fallback stays
+            }
+        }
+
+        throw new Error(message);
     }
+
     return res.json() as Promise<T>;
 }
 
+/**
+ * GET request
+ */
 export async function apiGet<T>(path: string, token?: string): Promise<T> {
     const authToken = token ?? getToken();
 
-    const res = await fetch(`${API_BASE_URL}${path}`, {
+    const url = buildUrl(path);
+
+    const res = await fetch(url, {
         method: "GET",
         headers: {
             "Content-Type": "application/json",
@@ -38,10 +72,19 @@ export async function apiGet<T>(path: string, token?: string): Promise<T> {
     return handle<T>(res);
 }
 
-export async function apiPost<T>(path: string, body: unknown, token?: string): Promise<T> {
+/**
+ * POST request
+ */
+export async function apiPost<T>(
+    path: string,
+    body: unknown,
+    token?: string
+): Promise<T> {
     const authToken = token ?? getToken();
 
-    const res = await fetch(`${API_BASE_URL}${path}`, {
+    const url = buildUrl(path);
+
+    const res = await fetch(url, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",

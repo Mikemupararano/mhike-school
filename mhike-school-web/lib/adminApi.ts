@@ -23,25 +23,74 @@ export type AdminCourseOut = {
     title: string;
     description?: string | null;
     teacher_id: number;
+    teacher_name?: string | null;
     published: boolean;
+};
+
+export type AdminUsersResponse = {
+    items: AdminUserOut[];
+    total: number;
+    skip: number;
+    limit: number;
+};
+
+export type AdminCoursesResponse = {
+    items: AdminCourseOut[];
+    total: number;
+    skip: number;
+    limit: number;
 };
 
 export async function getAdminStats(token: string) {
     return apiGet<AdminStatsOut>("/admin/stats", token);
 }
 
-export async function getAdminUsers(token: string) {
-    return apiGet<AdminUserOut[]>("/admin/users", token);
+export async function getAdminUsers(
+    token: string,
+    params?: {
+        role?: string;
+        search?: string;
+        skip?: number;
+        limit?: number;
+    }
+) {
+    const qs = new URLSearchParams();
+
+    if (params?.role && params.role !== "all") qs.set("role", params.role);
+    if (params?.search) qs.set("search", params.search);
+    if (params?.skip !== undefined) qs.set("skip", String(params.skip));
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+
+    const query = qs.toString();
+
+    return apiGet<AdminUsersResponse>(
+        `/admin/users${query ? `?${query}` : ""}`,
+        token
+    );
 }
 
-export async function getAdminCourses(token: string) {
-    return apiGet<AdminCourseOut[]>("/admin/courses", token);
+export async function getAdminCourses(
+    token: string,
+    params?: {
+        search?: string;
+        skip?: number;
+        limit?: number;
+    }
+) {
+    const qs = new URLSearchParams();
+
+    if (params?.search) qs.set("search", params.search);
+    if (params?.skip !== undefined) qs.set("skip", String(params.skip));
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+
+    const query = qs.toString();
+
+    return apiGet<AdminCoursesResponse>(
+        `/admin/courses${query ? `?${query}` : ""}`,
+        token
+    );
 }
 
-/**
- * Admin actions.
- * Only call these if the matching backend endpoints exist.
- */
 export async function updateUserRole(
     token: string,
     userId: number,
@@ -55,7 +104,11 @@ export async function toggleUserActive(
     userId: number,
     is_active: boolean
 ) {
-    return apiPost<AdminUserOut>(`/admin/users/${userId}/active`, { is_active }, token);
+    return apiPost<AdminUserOut>(
+        `/admin/users/${userId}/active`,
+        { is_active },
+        token
+    );
 }
 
 export async function setCoursePublished(

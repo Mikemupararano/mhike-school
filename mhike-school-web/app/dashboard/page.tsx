@@ -21,6 +21,10 @@ type CourseProgressOut = {
 
 type DashboardMeOut = {
     student_id: number;
+    full_name?: string | null;
+    email: string;
+    role: "student" | "teacher" | "admin" | string;
+    is_active?: boolean;
     enrolled_courses: number;
     total_lessons_completed: number;
     courses: CourseProgressOut[];
@@ -123,7 +127,16 @@ export default function DashboardPage() {
     const [error, setError] = useState("");
 
     const progressSectionRef = useRef<HTMLDivElement | null>(null);
-    const studentName = "John";
+
+    const displayName = useMemo(() => {
+        if (!data) return "Student";
+        return data.full_name?.trim() || "Student";
+    }, [data]);
+
+    const displayInitial = useMemo(() => {
+        const source = displayName.trim();
+        return source ? source.charAt(0).toUpperCase() : "S";
+    }, [displayName]);
 
     const stats = useMemo(() => {
         if (!data) return null;
@@ -141,8 +154,6 @@ export default function DashboardPage() {
         };
     }, [data]);
 
-    const featuredCourse = data?.courses?.[0] ?? null;
-
     async function loadDashboard() {
         setError("");
         setLoading(true);
@@ -155,6 +166,23 @@ export default function DashboardPage() {
 
         try {
             const res = await apiGet<DashboardMeOut>("/dashboard/me", token);
+
+            if (res.role === "admin") {
+                router.replace("/admin");
+                return;
+            }
+
+            if (res.role === "teacher") {
+                router.replace("/teacher");
+                return;
+            }
+
+            if (res.role !== "student") {
+                setError("Unsupported user role.");
+                setData(null);
+                return;
+            }
+
             setData(res);
         } catch (err: unknown) {
             const message =
@@ -163,7 +191,13 @@ export default function DashboardPage() {
             setError(message);
             setData(null);
 
-            if (message.includes("401") || message.includes("403")) {
+            if (message.includes("401")) {
+                clearToken();
+                router.replace("/login");
+                return;
+            }
+
+            if (message.includes("403") || message.toLowerCase().includes("forbidden")) {
                 clearToken();
                 router.replace("/login");
             }
@@ -248,9 +282,9 @@ export default function DashboardPage() {
                                 fontWeight: 900,
                             }}
                         >
-                            {studentName.charAt(0)}
+                            {displayInitial}
                         </div>
-                        <span style={{ fontWeight: 700 }}>{studentName}</span>
+                        <span style={{ fontWeight: 700 }}>{displayName}</span>
                     </div>
 
                     <button
@@ -309,7 +343,7 @@ export default function DashboardPage() {
                                 fontWeight: 900,
                             }}
                         >
-                            Welcome back, {studentName}!
+                            Welcome back, {displayName}!
                         </h1>
 
                         <p style={{ fontSize: 18, margin: 0, opacity: 0.95 }}>
@@ -351,7 +385,7 @@ export default function DashboardPage() {
                                     cursor: "pointer",
                                 }}
                             >
-                                My Dashboard
+                                Student Dashboard
                             </button>
                         </div>
                     </div>
@@ -615,7 +649,11 @@ export default function DashboardPage() {
                             <Panel title="Course Progress">
                                 {loading && <div style={{ color: "#6B7280" }}>Loading progress...</div>}
 
-                                {!loading && data && (
+                                {!loading && data && data.courses.length === 0 && (
+                                    <div style={{ color: "#6B7280" }}>No course progress yet.</div>
+                                )}
+
+                                {!loading && data && data.courses.length > 0 && (
                                     <div style={{ display: "grid", gap: 16 }}>
                                         {data.courses.slice(0, 3).map((course) => (
                                             <div key={course.course_id}>
