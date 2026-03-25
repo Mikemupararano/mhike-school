@@ -1,7 +1,8 @@
 services:
   api:
     build: .
-    env_file: .env
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     depends_on:
@@ -9,24 +10,24 @@ services:
       - redis
     volumes:
       - .:/app
-    command: >
-      bash -lc "
-      alembic upgrade head &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-      "
+    command:
+      - bash
+      - -lc
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   worker:
     build: .
-    env_file: .env
+    env_file:
+      - .env
     depends_on:
       - db
       - redis
     volumes:
       - .:/app
-    command: >
-      bash -lc "
-      celery -A app.tasks.celery_app.celery worker --loglevel=INFO
-      "
+    command:
+      - bash
+      - -lc
+      - celery -A app.tasks.celery_app.celery worker --loglevel=INFO
 
   db:
     image: postgres:16
