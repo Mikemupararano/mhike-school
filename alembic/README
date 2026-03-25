@@ -1,0 +1,10 @@
+Alembic Migrations Guide
+
+Create migration:
+alembic revision --autogenerate -m "message"
+
+Apply migrations:
+alembic upgrade head
+
+Rollback:
+alembic downgrade -1
