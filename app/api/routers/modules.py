@@ -19,7 +19,12 @@ async def create_module(
     db: AsyncSession = Depends(get_db),
     teacher: User = Depends(require_role("teacher", "admin")),
 ):
-    res = await db.execute(select(Course).where(Course.id == course_id))
+    res = await db.execute(
+        select(Course).where(
+            Course.id == course_id,
+            Course.school_id == teacher.school_id,
+        )
+    )
     course = res.scalar_one_or_none()
 
     if course is None:
@@ -55,7 +60,28 @@ async def create_module(
 async def list_modules(
     course_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("student", "teacher", "admin")),
 ):
+    course_res = await db.execute(
+        select(Course).where(
+            Course.id == course_id,
+            Course.school_id == current_user.school_id,
+        )
+    )
+    course = course_res.scalar_one_or_none()
+
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
+
+    if current_user.role == "student" and not course.published:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
+
     res = await db.execute(
         select(Module).where(Module.course_id == course_id).order_by(asc(Module.order))
     )

@@ -22,14 +22,21 @@ async def create_lesson(
 ):
     res = await db.execute(select(Module).where(Module.id == module_id))
     module = res.scalar_one_or_none()
+
     if module is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Module not found",
         )
 
-    cres = await db.execute(select(Course).where(Course.id == module.course_id))
+    cres = await db.execute(
+        select(Course).where(
+            Course.id == module.course_id,
+            Course.school_id == teacher.school_id,
+        )
+    )
     course = cres.scalar_one_or_none()
+
     if course is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -65,14 +72,35 @@ async def create_lesson(
 async def list_lessons(
     module_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_role("student", "teacher", "admin")),
+    current_user: User = Depends(require_role("student", "teacher", "admin")),
 ):
-    res = await db.execute(select(Module).where(Module.id == module_id))
-    module = res.scalar_one_or_none()
+    module_res = await db.execute(select(Module).where(Module.id == module_id))
+    module = module_res.scalar_one_or_none()
+
     if module is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Module not found",
+        )
+
+    course_res = await db.execute(
+        select(Course).where(
+            Course.id == module.course_id,
+            Course.school_id == current_user.school_id,
+        )
+    )
+    course = course_res.scalar_one_or_none()
+
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
+
+    if current_user.role == "student" and not course.published:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
         )
 
     lessons_res = await db.execute(
@@ -85,12 +113,41 @@ async def list_lessons(
 async def get_lesson(
     lesson_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_role("student", "teacher", "admin")),
+    current_user: User = Depends(require_role("student", "teacher", "admin")),
 ):
-    res = await db.execute(select(Lesson).where(Lesson.id == lesson_id))
-    lesson = res.scalar_one_or_none()
+    lesson_res = await db.execute(select(Lesson).where(Lesson.id == lesson_id))
+    lesson = lesson_res.scalar_one_or_none()
 
     if lesson is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lesson not found",
+        )
+
+    module_res = await db.execute(select(Module).where(Module.id == lesson.module_id))
+    module = module_res.scalar_one_or_none()
+
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Module not found",
+        )
+
+    course_res = await db.execute(
+        select(Course).where(
+            Course.id == module.course_id,
+            Course.school_id == current_user.school_id,
+        )
+    )
+    course = course_res.scalar_one_or_none()
+
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lesson not found",
+        )
+
+    if current_user.role == "student" and not course.published:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lesson not found",

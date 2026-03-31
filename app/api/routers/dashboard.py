@@ -21,6 +21,20 @@ async def course_progress(
     db: AsyncSession = Depends(get_db),
     student: User = Depends(require_role("student", "admin")),
 ):
+    course_res = await db.execute(
+        select(Course).where(
+            Course.id == course_id,
+            Course.school_id == student.school_id,
+        )
+    )
+    course = course_res.scalar_one_or_none()
+
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
+
     if student.role != "admin":
         enr = await db.execute(
             select(Enrollment).where(
@@ -33,14 +47,6 @@ async def course_progress(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not enrolled in this course",
             )
-
-    course_res = await db.execute(select(Course).where(Course.id == course_id))
-    course = course_res.scalar_one_or_none()
-    if course is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Course not found",
-        )
 
     total_q = (
         select(func.count(Lesson.id))
@@ -80,7 +86,10 @@ async def dashboard_me(
     enroll_q = (
         select(Course)
         .join(Enrollment, Enrollment.course_id == Course.id)
-        .where(Enrollment.student_id == student.id)
+        .where(
+            Enrollment.student_id == student.id,
+            Course.school_id == student.school_id,
+        )
         .order_by(Course.id)
     )
     enrolled_courses = list((await db.execute(enroll_q)).scalars().all())

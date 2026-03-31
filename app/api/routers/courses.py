@@ -21,6 +21,7 @@ async def create_course(
         title=payload.title,
         description=payload.description,
         teacher_id=current_user.id,
+        school_id=current_user.school_id,
     )
     db.add(course)
 
@@ -39,7 +40,7 @@ async def list_courses(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("student", "teacher", "admin")),
 ):
-    stmt = select(Course)
+    stmt = select(Course).where(Course.school_id == current_user.school_id)
 
     if current_user.role == "student":
         stmt = stmt.where(Course.published.is_(True))
@@ -54,7 +55,12 @@ async def publish_course(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("teacher", "admin")),
 ):
-    res = await db.execute(select(Course).where(Course.id == course_id))
+    res = await db.execute(
+        select(Course).where(
+            Course.id == course_id,
+            Course.school_id == current_user.school_id,
+        )
+    )
     course = res.scalar_one_or_none()
 
     if course is None:
@@ -90,6 +96,7 @@ async def enroll(
     res = await db.execute(
         select(Course).where(
             Course.id == course_id,
+            Course.school_id == current_user.school_id,
             Course.published.is_(True),
         )
     )
@@ -101,7 +108,10 @@ async def enroll(
             detail="Course not found or not published",
         )
 
-    enrollment = Enrollment(course_id=course_id, student_id=current_user.id)
+    enrollment = Enrollment(
+        course_id=course_id,
+        student_id=current_user.id,
+    )
     db.add(enrollment)
 
     try:
@@ -124,7 +134,7 @@ async def my_courses(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("teacher", "admin")),
 ):
-    stmt = select(Course)
+    stmt = select(Course).where(Course.school_id == current_user.school_id)
 
     if current_user.role == "teacher":
         stmt = stmt.where(Course.teacher_id == current_user.id)
