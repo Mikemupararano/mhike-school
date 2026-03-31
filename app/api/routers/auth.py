@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
-from app.models import User
+from app.models import School, User
 from app.schemas.auth import LoginIn, RegisterIn, TokenOut
 from app.schemas.user import UserOut
 
@@ -16,17 +16,34 @@ router = APIRouter()
 async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
     email = payload.email.strip().lower()
 
-    exists = await db.execute(select(User).where(User.email == email))
+    school = await db.get(School, payload.school_id)
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    exists = await db.execute(
+        select(User).where(
+            User.email == email,
+            User.school_id == payload.school_id,
+        )
+    )
     if exists.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
+            detail="Email already registered for this school",
         )
 
     user = User(
         email=email,
         hashed_password=hash_password(payload.password),
+        school_id=payload.school_id,
+        role=getattr(payload, "role", "student"),
+        is_active=getattr(payload, "is_active", True),
+        full_name=getattr(payload, "full_name", None),
     )
+
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -37,7 +54,19 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
 async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
     email = payload.email.strip().lower()
 
-    res = await db.execute(select(User).where(User.email == email))
+    school = await db.get(School, payload.school_id)
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    res = await db.execute(
+        select(User).where(
+            User.email == email,
+            User.school_id == payload.school_id,
+        )
+    )
     user = res.scalar_one_or_none()
 
     if not user or not verify_password(payload.password, user.hashed_password):
@@ -46,13 +75,20 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
             detail="Invalid credentials",
         )
 
-    if hasattr(user, "is_active") and user.is_active is False:
+    if getattr(user, "is_active", True) is False:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
 
-    token = create_access_token(subject=user.email)
+    token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "email": user.email,
+            "school_id": user.school_id,
+            "role": user.role,
+        }
+    )
     return TokenOut(access_token=token, token_type="bearer")
 
 
@@ -63,5 +99,6 @@ async def auth_me(current_user: User = Depends(get_current_user)):
         "full_name": getattr(current_user, "full_name", None),
         "email": current_user.email,
         "role": current_user.role,
+        "school_id": getattr(current_user, "school_id", None),
         "is_active": getattr(current_user, "is_active", True),
     }
