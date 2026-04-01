@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+
 from jose import jwt
 from passlib.context import CryptContext
-from typing import Any, Dict, Optional
 
 from app.core.config import settings
 
@@ -18,28 +19,33 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def create_access_token(
+    *,
     data: Optional[Dict[str, Any]] = None,
     subject: Optional[str] = None,
+    school_id: Optional[int] = None,
     expires_minutes: Optional[int] = None,
 ) -> str:
     """
     Multi-tenant safe token creation.
 
     Supports:
-    - new usage: create_access_token(data={...})
-    - old usage: create_access_token(subject="email")
+    - create_access_token(data={...})
+    - create_access_token(subject="user_id", school_id=1)
     """
 
     minutes = expires_minutes or settings.access_token_expire_minutes
     expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
-    if data:
+    if data is not None:
         payload = data.copy()
-    elif subject:
-        payload = {"sub": subject}
+    elif subject is not None:
+        payload = {
+            "sub": subject,
+            "school_id": school_id,
+        }
     else:
         raise ValueError("Either 'data' or 'subject' must be provided")
 
-    payload.update({"exp": expire})
+    payload["exp"] = expire
 
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)

@@ -53,7 +53,7 @@ async def get_current_user(
             detail="User not found",
         )
 
-    if getattr(user, "is_active", True) is False:
+    if user.is_active is False:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",

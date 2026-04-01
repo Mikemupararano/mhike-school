@@ -39,9 +39,9 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
         email=email,
         hashed_password=hash_password(payload.password),
         school_id=payload.school_id,
-        role=getattr(payload, "role", "student"),
-        is_active=getattr(payload, "is_active", True),
-        full_name=getattr(payload, "full_name", None),
+        role=payload.role or "student",
+        full_name=payload.full_name,
+        is_active=True,
     )
 
     db.add(user)
@@ -75,20 +75,17 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
             detail="Invalid credentials",
         )
 
-    if getattr(user, "is_active", True) is False:
+    if user.is_active is False:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
 
     token = create_access_token(
-        data={
-            "sub": str(user.id),
-            "email": user.email,
-            "school_id": user.school_id,
-            "role": user.role,
-        }
+        subject=str(user.id),
+        school_id=user.school_id,
     )
+
     return TokenOut(access_token=token, token_type="bearer")
 
 
@@ -96,9 +93,9 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
 async def auth_me(current_user: User = Depends(get_current_user)):
     return {
         "id": current_user.id,
-        "full_name": getattr(current_user, "full_name", None),
+        "full_name": current_user.full_name,
         "email": current_user.email,
         "role": current_user.role,
-        "school_id": getattr(current_user, "school_id", None),
-        "is_active": getattr(current_user, "is_active", True),
+        "school_id": current_user.school_id,
+        "is_active": current_user.is_active,
     }

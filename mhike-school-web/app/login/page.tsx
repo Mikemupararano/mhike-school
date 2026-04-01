@@ -28,6 +28,7 @@ export default function LoginPage() {
 
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [schoolId, setSchoolId] = useState("1");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
@@ -37,9 +38,15 @@ export default function LoginPage() {
 
         const trimmedEmail = email.trim().toLowerCase();
         const trimmedPassword = password.trim();
+        const parsedSchoolId = Number(schoolId);
 
         if (!trimmedEmail || !trimmedPassword) {
             setError("Please enter your email and password.");
+            return;
+        }
+
+        if (!schoolId.trim() || Number.isNaN(parsedSchoolId) || parsedSchoolId <= 0) {
+            setError("Please enter a valid school ID.");
             return;
         }
 
@@ -49,6 +56,7 @@ export default function LoginPage() {
             const res = await apiPost<TokenOut>("/auth/login", {
                 email: trimmedEmail,
                 password: trimmedPassword,
+                school_id: parsedSchoolId,
             });
 
             if (!res.access_token) {
@@ -70,9 +78,11 @@ export default function LoginPage() {
             if (
                 message.includes("401") ||
                 message.toLowerCase().includes("invalid credentials") ||
-                message.toLowerCase().includes("invalid email or password")
+                message.toLowerCase().includes("invalid email or password") ||
+                message.toLowerCase().includes("invalid token") ||
+                message.toLowerCase().includes("invalid tenant")
             ) {
-                setError("Invalid email or password.");
+                setError("Invalid email, password, or school ID.");
             } else if (
                 message.includes("403") ||
                 message.toLowerCase().includes("forbidden") ||
@@ -149,6 +159,27 @@ export default function LoginPage() {
                         autoComplete="current-password"
                         disabled={loading}
                         required
+                        style={{
+                            width: "100%",
+                            padding: "14px 16px",
+                            borderRadius: 16,
+                            border: "1px solid #E5E7EB",
+                            outline: "none",
+                            marginBottom: 12,
+                            fontSize: 16,
+                            background: "white",
+                            boxSizing: "border-box",
+                        }}
+                    />
+
+                    <input
+                        type="number"
+                        value={schoolId}
+                        onChange={(e) => setSchoolId(e.target.value)}
+                        placeholder="School ID"
+                        disabled={loading}
+                        required
+                        min={1}
                         style={{
                             width: "100%",
                             padding: "14px 16px",
