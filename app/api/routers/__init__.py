@@ -9,6 +9,7 @@ from app.api.routers.lessons import router as lessons_router
 from app.api.routers.modules import router as modules_router
 from app.api.routers.progress import router as progress_router
 from app.api.routers.quiz import router as quiz_router
+from app.api.routers.schools import router as schools_router
 
 api_router = APIRouter()
 
@@ -25,3 +26,8 @@ api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboar
 
 # ✅ Admin router (already has prefix="/admin" internally)
 api_router.include_router(admin_router)
+api_router.include_router(
+    schools_router,
+    prefix="/schools",
+    tags=["schools"],
+)
