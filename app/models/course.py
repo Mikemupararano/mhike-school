@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import String, ForeignKey, Boolean, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -10,18 +12,24 @@ class Course(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     title: Mapped[str] = mapped_column(String(255), index=True)
-    description: Mapped[str | None] = mapped_column(String(2000), default=None)
+    description: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
-    teacher_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    teacher_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
 
-    # 🔥 Add this (multi-school support)
-    school_id: Mapped[int | None] = mapped_column(
-        ForeignKey("schools.id"), default=None
+    # ✅ FIXED: REQUIRED for multi-tenancy
+    school_id: Mapped[int] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
 
     published: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    created_at: Mapped[str] = mapped_column(
+    # ✅ FIXED: correct type
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
@@ -29,7 +37,9 @@ class Course(Base):
     # Relationships
     teacher = relationship("User", lazy="selectin")
 
-    # 🔥 Modules inside this course
+    # ✅ OPTIONAL BUT GOOD PRACTICE
+    school = relationship("School", lazy="selectin")
+
     modules = relationship(
         "Module",
         back_populates="course",
@@ -37,7 +47,6 @@ class Course(Base):
         order_by="Module.order",
     )
 
-    # 🔥 Enrollments (students taking this course)
     enrollments = relationship(
         "Enrollment",
         back_populates="course",

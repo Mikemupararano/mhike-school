@@ -42,8 +42,13 @@ async function handle<T>(res: Response): Promise<T> {
             try {
                 message = await res.text();
             } catch {
-                // fallback stays
+                // fallback
             }
+        }
+
+        // ✅ Auto logout on auth failure
+        if (res.status === 401) {
+            clearToken();
         }
 
         throw new Error(message);
@@ -53,19 +58,24 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 /**
+ * Build headers safely
+ */
+function buildHeaders(token?: string): HeadersInit {
+    const authToken = token ?? getToken();
+
+    return {
+        "Content-Type": "application/json",
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    };
+}
+
+/**
  * GET request
  */
 export async function apiGet<T>(path: string, token?: string): Promise<T> {
-    const authToken = token ?? getToken();
-
-    const url = buildUrl(path);
-
-    const res = await fetch(url, {
+    const res = await fetch(buildUrl(path), {
         method: "GET",
-        headers: {
-            "Content-Type": "application/json",
-            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
+        headers: buildHeaders(token),
         cache: "no-store",
     });
 
@@ -80,16 +90,9 @@ export async function apiPost<T>(
     body: unknown,
     token?: string
 ): Promise<T> {
-    const authToken = token ?? getToken();
-
-    const url = buildUrl(path);
-
-    const res = await fetch(url, {
+    const res = await fetch(buildUrl(path), {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
+        headers: buildHeaders(token),
         body: JSON.stringify(body),
         cache: "no-store",
     });

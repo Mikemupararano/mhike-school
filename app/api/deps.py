@@ -13,10 +13,11 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> User:
+    # ✅ Check Authorization header
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing token",
+            detail="Missing or invalid Authorization header",
         )
 
     token = authorization.split(" ", 1)[1]
@@ -27,10 +28,11 @@ async def get_current_user(
         user_id = payload.get("sub")
         school_id = payload.get("school_id")
 
-        if not user_id or school_id is None:
+        # ✅ Strict validation
+        if user_id is None or school_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
+                detail="Invalid token payload",
             )
 
     except JWTError:
@@ -39,6 +41,7 @@ async def get_current_user(
             detail="Invalid token",
         )
 
+    # ✅ Multi-tenant user lookup (CRITICAL)
     res = await db.execute(
         select(User).where(
             User.id == int(user_id),
@@ -47,13 +50,14 @@ async def get_current_user(
     )
     user = res.scalar_one_or_none()
 
-    if not user:
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
 
-    if getattr(user, "is_active", True) is False:
+    # ✅ Active check
+    if user.is_active is False:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",

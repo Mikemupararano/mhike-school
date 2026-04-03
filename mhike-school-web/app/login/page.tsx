@@ -14,6 +14,7 @@ type MeOut = {
     full_name?: string | null;
     email: string;
     role: "student" | "teacher" | "admin" | string;
+    school_id?: number | null;
     is_active?: boolean;
 };
 
@@ -28,6 +29,7 @@ export default function LoginPage() {
 
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [schoolId, setSchoolId] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
@@ -37,9 +39,15 @@ export default function LoginPage() {
 
         const trimmedEmail = email.trim().toLowerCase();
         const trimmedPassword = password.trim();
+        const parsedSchoolId = Number(schoolId);
 
-        if (!trimmedEmail || !trimmedPassword) {
-            setError("Please enter your email and password.");
+        if (!trimmedEmail || !trimmedPassword || !schoolId.trim()) {
+            setError("Please enter your email, password, and school ID.");
+            return;
+        }
+
+        if (!Number.isInteger(parsedSchoolId) || parsedSchoolId <= 0) {
+            setError("Please enter a valid school ID.");
             return;
         }
 
@@ -49,6 +57,7 @@ export default function LoginPage() {
             const res = await apiPost<TokenOut>("/auth/login", {
                 email: trimmedEmail,
                 password: trimmedPassword,
+                school_id: parsedSchoolId,
             });
 
             if (!res.access_token) {
@@ -70,15 +79,21 @@ export default function LoginPage() {
             if (
                 message.includes("401") ||
                 message.toLowerCase().includes("invalid credentials") ||
-                message.toLowerCase().includes("invalid email or password")
+                message.toLowerCase().includes("invalid email or password") ||
+                message.toLowerCase().includes("invalid token")
             ) {
-                setError("Invalid email or password.");
+                setError("Invalid email, password, or school ID.");
             } else if (
                 message.includes("403") ||
                 message.toLowerCase().includes("forbidden") ||
                 message.toLowerCase().includes("inactive")
             ) {
                 setError("Your account is not allowed to sign in.");
+            } else if (
+                message.includes("404") ||
+                message.toLowerCase().includes("school not found")
+            ) {
+                setError("School not found.");
             } else {
                 setError(message || "Login failed. Please try again.");
             }
@@ -149,6 +164,27 @@ export default function LoginPage() {
                         autoComplete="current-password"
                         disabled={loading}
                         required
+                        style={{
+                            width: "100%",
+                            padding: "14px 16px",
+                            borderRadius: 16,
+                            border: "1px solid #E5E7EB",
+                            outline: "none",
+                            marginBottom: 12,
+                            fontSize: 16,
+                            background: "white",
+                            boxSizing: "border-box",
+                        }}
+                    />
+
+                    <input
+                        type="number"
+                        value={schoolId}
+                        onChange={(e) => setSchoolId(e.target.value)}
+                        placeholder="School ID"
+                        disabled={loading}
+                        required
+                        min={1}
                         style={{
                             width: "100%",
                             padding: "14px 16px",
