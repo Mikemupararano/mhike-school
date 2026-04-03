@@ -7,6 +7,9 @@ from app.models.lesson import Lesson
 from app.models.progress import Progress
 from app.models.quiz import QuizQuestion, QuizOption
 
+# ✅ ADD THIS
+from app.models.class_group import ClassGroup
+
 __all__ = [
     "User",
     "School",
@@ -17,4 +20,5 @@ __all__ = [
     "Progress",
     "QuizQuestion",
     "QuizOption",
+    "ClassGroup",  # ✅ ADD THIS
 ]

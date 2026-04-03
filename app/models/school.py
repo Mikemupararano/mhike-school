@@ -27,3 +27,10 @@ class School(Base):
         "User",
         back_populates="school",
     )
+
+    # ✅ ADD THIS
+    classes: Mapped[list["ClassGroup"]] = relationship(
+        "ClassGroup",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )

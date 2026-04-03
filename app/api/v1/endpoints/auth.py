@@ -33,15 +33,9 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
         )
 
 
-@router.get("/me")
+@router.get("/me", response_model=UserOut)
 async def me(
     current_user: User = Depends(get_current_user),
     current_school_id: int = Depends(get_current_school_id),
 ):
-    return {
-        "user_id": current_user.id,
-        "email": current_user.email,
-        "school_id": current_school_id,
-        "role": current_user.role,
-        "is_active": current_user.is_active,
-    }
+    return current_user
