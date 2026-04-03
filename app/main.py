@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
-from app.api.routers import api_router
+from app.api.v1.api import api_router
 from app.core.bootstrap import bootstrap_admin
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
@@ -33,7 +33,7 @@ app = FastAPI(
 
 
 def custom_openapi():
-    if app.openapi_schema is not None:
+    if app.openapi_schema:
         return app.openapi_schema
 
     openapi_schema = get_openapi(
@@ -43,15 +43,17 @@ def custom_openapi():
         routes=app.routes,
     )
 
+    # Ensure components exist
     components = openapi_schema.setdefault("components", {})
     security_schemes = components.setdefault("securitySchemes", {})
+
     security_schemes["BearerAuth"] = {
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
     }
 
-    # Apply Bearer auth globally in docs
+    # Apply Bearer auth globally
     openapi_schema["security"] = [{"BearerAuth": []}]
 
     app.openapi_schema = openapi_schema
@@ -60,6 +62,8 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
+
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -71,9 +75,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ✅ Register API routes
 app.include_router(api_router, prefix=API_PREFIX)
 
 
+# Root endpoint
 @app.get("/", tags=["root"])
 async def root():
     return {

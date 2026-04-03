@@ -1,17 +1,21 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from jose import jwt
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-ALGORITHM = "HS256"
+ALGORITHM = getattr(settings, "algorithm", "HS256")
 
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
+
+
+def get_password_hash(password: str) -> str:
+    return hash_password(password)
 
 
 def verify_password(password: str, hashed: str) -> bool:
@@ -28,8 +32,9 @@ def create_access_token(
     """
     Multi-tenant safe token creation.
 
-    REQUIREMENTS:
-    - school_id must ALWAYS be present
+    Requirements:
+    - school_id must be included for school-scoped users
+    - either `data` or `subject` must be provided
     """
 
     minutes = expires_minutes or settings.access_token_expire_minutes
@@ -56,3 +61,10 @@ def create_access_token(
     payload["exp"] = expire
 
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def decode_access_token(token: str) -> Dict[str, Any]:
+    try:
+        return jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        raise ValueError("Invalid token") from exc

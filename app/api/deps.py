@@ -13,7 +13,6 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> User:
-    # ✅ Check Authorization header
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -28,27 +27,25 @@ async def get_current_user(
         user_id = payload.get("sub")
         school_id = payload.get("school_id")
 
-        # ✅ Strict validation
         if user_id is None or school_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",
             )
 
-    except JWTError:
+    except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
-        )
+        ) from exc
 
-    # ✅ Multi-tenant user lookup (CRITICAL)
-    res = await db.execute(
+    result = await db.execute(
         select(User).where(
             User.id == int(user_id),
-            User.school_id == school_id,
+            User.school_id == int(school_id),
         )
     )
-    user = res.scalar_one_or_none()
+    user = result.scalar_one_or_none()
 
     if user is None:
         raise HTTPException(
@@ -56,14 +53,24 @@ async def get_current_user(
             detail="User not found",
         )
 
-    # ✅ Active check
-    if user.is_active is False:
+    if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
 
     return user
+
+
+async def get_current_school_id(
+    current_user: User = Depends(get_current_user),
+) -> int:
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not assigned to a school",
+        )
+    return int(current_user.school_id)
 
 
 def require_role(*roles: str):

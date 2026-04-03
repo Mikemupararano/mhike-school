@@ -1,10 +1,16 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
 
 
 class UserOut(BaseModel):
     id: int
-    email: EmailStr
+    email: str
+    full_name: Optional[str]
     role: str
+    school_id: Optional[int]
+    is_active: bool
+    created_at: datetime
 
     class Config:
-        from_attributes = True
+        from_attributes = True  # for SQLAlchemy
