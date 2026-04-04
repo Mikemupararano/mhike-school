@@ -14,7 +14,17 @@ router = APIRouter()
 @router.post("/register", response_model=UserOut)
 async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
     try:
-        return await AuthService.register(db, payload)
+        user = await AuthService.register(db, payload)
+        return {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "school_id": user.school_id,
+            "school_name": user.school.name if user.school else None,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+        }
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -38,4 +48,13 @@ async def me(
     current_user: User = Depends(get_current_user),
     current_school_id: int = Depends(get_current_school_id),
 ):
-    return current_user
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+        "school_id": current_user.school_id,
+        "school_name": current_user.school.name if current_user.school else None,
+        "is_active": current_user.is_active,
+        "created_at": current_user.created_at,
+    }

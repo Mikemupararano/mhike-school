@@ -12,7 +12,7 @@ class CourseProgressOut(BaseModel):
     published: bool
     total_lessons: int
     completed_lessons: int
-    progress_percent: float
+    progress_percent: int  # ✅ use int for UI consistency
     next_lesson: NextLessonOut | None = None
 
 
@@ -24,4 +24,4 @@ class DashboardMeOut(BaseModel):
     is_active: bool = True
     enrolled_courses: int
     total_lessons_completed: int
-    courses: list[CourseProgressOut]
+    courses: list[CourseProgressOut] = []  # ✅ default prevents None issues

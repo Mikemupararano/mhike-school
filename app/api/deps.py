@@ -2,6 +2,7 @@ from fastapi import Depends, Header, HTTPException, status
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.security import ALGORITHM
@@ -40,7 +41,9 @@ async def get_current_user(
         ) from exc
 
     result = await db.execute(
-        select(User).where(
+        select(User)
+        .options(selectinload(User.school))
+        .where(
             User.id == int(user_id),
             User.school_id == int(school_id),
         )

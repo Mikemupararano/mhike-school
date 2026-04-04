@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet, clearToken, getToken } from "@/lib/api";
+import { useAuth } from "@/providers/AuthProvider";
 
 type NextLessonOut = {
     lesson_id: number;
@@ -23,6 +24,7 @@ type DashboardMeOut = {
     student_id: number;
     full_name?: string | null;
     email: string;
+    school_name?: string | null;
     role: "student" | "teacher" | "admin" | string;
     is_active?: boolean;
     enrolled_courses: number;
@@ -122,16 +124,23 @@ function Panel({
 
 export default function DashboardPage() {
     const router = useRouter();
+    const { user, refreshUser } = useAuth();
+
     const [data, setData] = useState<DashboardMeOut | null>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState("");
 
     const progressSectionRef = useRef<HTMLDivElement | null>(null);
+    const didInitialLoad = useRef(false);
 
     const displayName = useMemo(() => {
-        if (!data) return "Student";
-        return data.full_name?.trim() || "Student";
-    }, [data]);
+        return data?.full_name?.trim() || user?.full_name?.trim() || "Student";
+    }, [data, user]);
+
+    const displaySchoolName = useMemo(() => {
+        return data?.school_name?.trim() || user?.school_name?.trim() || "Your School";
+    }, [data, user]);
 
     const displayInitial = useMemo(() => {
         const source = displayName.trim();
@@ -154,17 +163,27 @@ export default function DashboardPage() {
         };
     }, [data]);
 
-    async function loadDashboard() {
+    async function loadDashboard(options?: { silent?: boolean }) {
+        const silent = options?.silent ?? false;
+
         setError("");
-        setLoading(true);
+
+        if (silent) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
 
         const token = getToken();
         if (!token) {
+            clearToken();
             router.replace("/login");
             return;
         }
 
         try {
+            await refreshUser();
+
             const res = await apiGet<DashboardMeOut>("/dashboard/me", token);
 
             if (res.role === "admin") {
@@ -189,24 +208,27 @@ export default function DashboardPage() {
                 err instanceof Error ? err.message : "Failed to load dashboard";
 
             setError(message);
-            setData(null);
 
-            if (message.includes("401")) {
+            if (
+                message.includes("401") ||
+                message.includes("403") ||
+                message.toLowerCase().includes("forbidden")
+            ) {
                 clearToken();
                 router.replace("/login");
                 return;
             }
-
-            if (message.includes("403") || message.toLowerCase().includes("forbidden")) {
-                clearToken();
-                router.replace("/login");
-            }
         } finally {
-            setLoading(false);
+            if (silent) {
+                setRefreshing(false);
+            } else {
+                setLoading(false);
+            }
         }
     }
 
     function handleLogout() {
+        setData(null);
         clearToken();
         router.replace("/login");
     }
@@ -219,6 +241,8 @@ export default function DashboardPage() {
     }
 
     useEffect(() => {
+        if (didInitialLoad.current) return;
+        didInitialLoad.current = true;
         void loadDashboard();
     }, []);
 
@@ -284,11 +308,24 @@ export default function DashboardPage() {
                         >
                             {displayInitial}
                         </div>
-                        <span style={{ fontWeight: 700 }}>{displayName}</span>
+
+                        <div
+                            style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                lineHeight: 1.1,
+                            }}
+                        >
+                            <span style={{ fontWeight: 700 }}>{displayName}</span>
+                            <span style={{ fontSize: 12, opacity: 0.85 }}>
+                                {displaySchoolName}
+                            </span>
+                        </div>
                     </div>
 
                     <button
-                        onClick={() => void loadDashboard()}
+                        onClick={() => void loadDashboard({ silent: true })}
+                        disabled={refreshing}
                         style={{
                             padding: "10px 16px",
                             borderRadius: 12,
@@ -296,10 +333,11 @@ export default function DashboardPage() {
                             background: "rgba(255,255,255,0.12)",
                             color: "white",
                             fontWeight: 700,
-                            cursor: "pointer",
+                            cursor: refreshing ? "not-allowed" : "pointer",
+                            opacity: refreshing ? 0.7 : 1,
                         }}
                     >
-                        Refresh
+                        {refreshing ? "Refreshing..." : "Refresh"}
                     </button>
 
                     <button
@@ -334,7 +372,9 @@ export default function DashboardPage() {
                     }}
                 >
                     <div>
-                        <div style={{ fontSize: 18, opacity: 0.9 }}>Student dashboard</div>
+                        <div style={{ fontSize: 18, opacity: 0.9 }}>
+                            {displaySchoolName} · Student dashboard
+                        </div>
                         <h1
                             style={{
                                 fontSize: 46,
@@ -438,7 +478,7 @@ export default function DashboardPage() {
                     />
                     <StatCard
                         label="Average progress"
-                        value={`${stats?.averageProgress ?? (loading ? "…" : 0)}%`}
+                        value={loading && !stats ? "…" : `${stats?.averageProgress ?? 0}%`}
                     />
                 </section>
 
@@ -453,7 +493,9 @@ export default function DashboardPage() {
                 >
                     <div style={{ display: "grid", gap: 18 }}>
                         <Panel title="My Courses">
-                            {loading && <div style={{ color: "#6B7280" }}>Loading courses...</div>}
+                            {loading && !data && (
+                                <div style={{ color: "#6B7280" }}>Loading courses...</div>
+                            )}
 
                             {!loading && data && data.courses.length === 0 && (
                                 <div style={{ color: "#6B7280" }}>
@@ -461,8 +503,8 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {!loading && data && data.courses.length > 0 && (
-                                <div style={{ display: "grid", gap: 16 }}>
+                            {data && data.courses.length > 0 && (
+                                <div style={{ display: "grid", gap: 16, opacity: refreshing ? 0.75 : 1 }}>
                                     {data.courses.map((course) => {
                                         const isComplete =
                                             !course.next_lesson || course.progress_percent >= 100;
@@ -498,7 +540,7 @@ export default function DashboardPage() {
                                                             {course.title}
                                                         </div>
                                                         <div style={{ color: "#6B7280", marginTop: 6 }}>
-                                                            {course.completed_lessons}/{course.total_lessons} lessons •{" "}
+                                                            {course.completed_lessons}/{course.total_lessons} lessons ·{" "}
                                                             {course.progress_percent}%
                                                         </div>
                                                     </div>
@@ -566,6 +608,10 @@ export default function DashboardPage() {
                                         );
                                     })}
                                 </div>
+                            )}
+
+                            {!loading && data && data.courses.length === 0 && refreshing && (
+                                <div style={{ color: "#6B7280", marginTop: 8 }}>Refreshing...</div>
                             )}
                         </Panel>
 
@@ -647,14 +693,16 @@ export default function DashboardPage() {
 
                         <div ref={progressSectionRef}>
                             <Panel title="Course Progress">
-                                {loading && <div style={{ color: "#6B7280" }}>Loading progress...</div>}
+                                {loading && !data && (
+                                    <div style={{ color: "#6B7280" }}>Loading progress...</div>
+                                )}
 
                                 {!loading && data && data.courses.length === 0 && (
                                     <div style={{ color: "#6B7280" }}>No course progress yet.</div>
                                 )}
 
-                                {!loading && data && data.courses.length > 0 && (
-                                    <div style={{ display: "grid", gap: 16 }}>
+                                {data && data.courses.length > 0 && (
+                                    <div style={{ display: "grid", gap: 16, opacity: refreshing ? 0.75 : 1 }}>
                                         {data.courses.slice(0, 3).map((course) => (
                                             <div key={course.course_id}>
                                                 <div
@@ -743,7 +791,9 @@ export default function DashboardPage() {
                                             textAlign: "left",
                                         }}
                                     >
-                                        <div style={{ fontWeight: 900, color: "#2563EB" }}>{rank}</div>
+                                        <div style={{ fontWeight: 900, color: "#2563EB" }}>
+                                            {rank}
+                                        </div>
                                         <div>{name}</div>
                                         <div style={{ fontWeight: 800 }}>{score}</div>
                                     </button>

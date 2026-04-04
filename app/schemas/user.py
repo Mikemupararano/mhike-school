@@ -10,6 +10,7 @@ class UserOut(BaseModel):
     full_name: Optional[str]
     role: str
     school_id: Optional[int]
+    school_name: Optional[str] = None
     is_active: bool
     created_at: datetime
 

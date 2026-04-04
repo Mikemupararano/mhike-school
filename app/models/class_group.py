@@ -23,5 +23,10 @@ class ClassGroup(Base):
         server_default=func.now(),
     )
 
-    # relationships
     school = relationship("School", back_populates="classes")
+
+    enrollments: Mapped[list["Enrollment"]] = relationship(
+        "Enrollment",
+        back_populates="class_group",
+        cascade="all, delete-orphan",
+    )

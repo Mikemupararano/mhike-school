@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, ForeignKey, Boolean, DateTime, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -19,7 +19,6 @@ class Course(Base):
         index=True,
     )
 
-    # ✅ FIXED: REQUIRED for multi-tenancy
     school_id: Mapped[int] = mapped_column(
         ForeignKey("schools.id", ondelete="CASCADE"),
         nullable=False,
@@ -28,16 +27,12 @@ class Course(Base):
 
     published: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # ✅ FIXED: correct type
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
 
-    # Relationships
     teacher = relationship("User", lazy="selectin")
-
-    # ✅ OPTIONAL BUT GOOD PRACTICE
     school = relationship("School", lazy="selectin")
 
     modules = relationship(
@@ -45,10 +40,4 @@ class Course(Base):
         back_populates="course",
         cascade="all, delete-orphan",
         order_by="Module.order",
-    )
-
-    enrollments = relationship(
-        "Enrollment",
-        back_populates="course",
-        cascade="all, delete-orphan",
     )

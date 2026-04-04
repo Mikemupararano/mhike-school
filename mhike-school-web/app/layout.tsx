@@ -1,3 +1,5 @@
+import { AuthProvider } from "@/providers/AuthProvider";
+
 export const metadata = {
   title: "Mhike School",
   description: "Mhike School frontend",
@@ -17,7 +19,7 @@ export default function RootLayout({
           background: "#f8fafc",
         }}
       >
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
