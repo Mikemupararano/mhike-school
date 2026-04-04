@@ -2,19 +2,21 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiGet, apiPost, setToken } from "@/lib/api";
+import { apiPost } from "@/lib/api";
+import { useAuth } from "@/providers/AuthProvider";
 
 type TokenOut = {
     access_token: string;
     token_type: string;
 };
 
-type MeOut = {
+type AuthUser = {
     id: number;
     full_name?: string | null;
     email: string;
     role: "student" | "teacher" | "admin" | string;
     school_id?: number | null;
+    school_name?: string | null;
     is_active?: boolean;
 };
 
@@ -26,6 +28,7 @@ function getHomeRoute(role: string) {
 
 export default function LoginPage() {
     const router = useRouter();
+    const { setToken, logout } = useAuth();
 
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -39,9 +42,10 @@ export default function LoginPage() {
 
         const trimmedEmail = email.trim().toLowerCase();
         const trimmedPassword = password.trim();
-        const parsedSchoolId = Number(schoolId);
+        const trimmedSchoolId = schoolId.trim();
+        const parsedSchoolId = Number(trimmedSchoolId);
 
-        if (!trimmedEmail || !trimmedPassword || !schoolId.trim()) {
+        if (!trimmedEmail || !trimmedPassword || !trimmedSchoolId) {
             setError("Please enter your email, password, and school ID.");
             return;
         }
@@ -54,6 +58,8 @@ export default function LoginPage() {
         setLoading(true);
 
         try {
+            logout();
+
             const res = await apiPost<TokenOut>("/auth/login", {
                 email: trimmedEmail,
                 password: trimmedPassword,
@@ -64,15 +70,17 @@ export default function LoginPage() {
                 throw new Error("No access token returned from the server.");
             }
 
-            setToken(res.access_token);
+            const currentUser = (await setToken(res.access_token)) as AuthUser | null;
 
-            const me = await apiGet<MeOut>("/auth/me", res.access_token);
+            if (!currentUser) {
+                throw new Error("Unable to load authenticated user.");
+            }
 
-            if (me.is_active === false) {
+            if (currentUser.is_active === false) {
                 throw new Error("Account is inactive");
             }
 
-            router.replace(getHomeRoute(me.role));
+            router.replace(getHomeRoute(currentUser.role));
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Login failed";
 

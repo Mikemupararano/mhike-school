@@ -1,22 +1,24 @@
 export const API_BASE_URL =
     process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
+const TOKEN_KEY = "mhike_token";
+
 /**
- * Safely get token from localStorage
+ * Safely get token from sessionStorage
  */
 export function getToken(): string | null {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem("mhike_token");
+    return sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token: string) {
+export function saveToken(token: string) {
     if (typeof window === "undefined") return;
-    localStorage.setItem("mhike_token", token);
+    sessionStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
     if (typeof window === "undefined") return;
-    localStorage.removeItem("mhike_token");
+    sessionStorage.removeItem(TOKEN_KEY);
 }
 
 /**
@@ -46,8 +48,7 @@ async function handle<T>(res: Response): Promise<T> {
             }
         }
 
-        // ✅ Auto logout on auth failure
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
             clearToken();
         }
 
@@ -94,6 +95,55 @@ export async function apiPost<T>(
         method: "POST",
         headers: buildHeaders(token),
         body: JSON.stringify(body),
+        cache: "no-store",
+    });
+
+    return handle<T>(res);
+}
+
+/**
+ * PUT request
+ */
+export async function apiPut<T>(
+    path: string,
+    body: unknown,
+    token?: string
+): Promise<T> {
+    const res = await fetch(buildUrl(path), {
+        method: "PUT",
+        headers: buildHeaders(token),
+        body: JSON.stringify(body),
+        cache: "no-store",
+    });
+
+    return handle<T>(res);
+}
+
+/**
+ * PATCH request
+ */
+export async function apiPatch<T>(
+    path: string,
+    body: unknown,
+    token?: string
+): Promise<T> {
+    const res = await fetch(buildUrl(path), {
+        method: "PATCH",
+        headers: buildHeaders(token),
+        body: JSON.stringify(body),
+        cache: "no-store",
+    });
+
+    return handle<T>(res);
+}
+
+/**
+ * DELETE request
+ */
+export async function apiDelete<T>(path: string, token?: string): Promise<T> {
+    const res = await fetch(buildUrl(path), {
+        method: "DELETE",
+        headers: buildHeaders(token),
         cache: "no-store",
     });
 

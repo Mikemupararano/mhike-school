@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiGet, clearToken, getToken } from "@/lib/api";
+import { useAuth } from "@/providers/AuthProvider";
 import {
     CourseOut,
     ModuleOut,
@@ -21,6 +21,8 @@ type AuthMeOut = {
     full_name?: string | null;
     email: string;
     role: "student" | "teacher" | "admin" | string;
+    school_id?: number | null;
+    school_name?: string | null;
     is_active?: boolean;
 };
 
@@ -82,33 +84,16 @@ function SectionCard({
     );
 }
 
-function actionButtonStyle(
-    tone: "primary" | "secondary" = "secondary"
-): React.CSSProperties {
-    return {
-        padding: "12px 14px",
-        borderRadius: 12,
-        border: tone === "primary" ? "1px solid #2563EB" : "1px solid #E5E7EB",
-        background: tone === "primary" ? "#2563EB" : "#FFFFFF",
-        color: tone === "primary" ? "#FFFFFF" : "#0F172A",
-        fontWeight: 800,
-        cursor: "pointer",
-    };
-}
-
 export default function TeacherPage() {
     const router = useRouter();
-    const [token, setToken] = useState("");
-    const [me, setMe] = useState<AuthMeOut | null>(null);
+    const { user, loading: authLoading, refreshUser, logout } = useAuth();
 
+    const [me, setMe] = useState<AuthMeOut | null>(null);
     const [courses, setCourses] = useState<CourseOut[]>([]);
     const [selectedCourse, setSelectedCourse] = useState<CourseOut | null>(null);
-
     const [modules, setModules] = useState<ModuleOut[]>([]);
     const [selectedModule, setSelectedModule] = useState<ModuleOut | null>(null);
-
     const [lessons, setLessons] = useState<LessonOut[]>([]);
-
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -124,20 +109,20 @@ export default function TeacherPage() {
     const [lessonContent, setLessonContent] = useState("");
     const [lessonOrder, setLessonOrder] = useState(1);
 
-    const displayName = useMemo(() => me?.full_name?.trim() || "Teacher", [me]);
-    const displayInitial = useMemo(() => displayName.charAt(0).toUpperCase(), [displayName]);
+    const displayName = useMemo(() => {
+        return me?.full_name?.trim() || user?.full_name?.trim() || "Teacher";
+    }, [me, user]);
 
-    useEffect(() => {
-        const t = getToken();
-        if (!t) {
-            router.push("/login");
-            return;
-        }
-        setToken(t);
-    }, [router]);
+    const displaySchoolName = useMemo(() => {
+        return me?.school_name?.trim() || user?.school_name?.trim() || "Your School";
+    }, [me, user]);
 
-    async function loadCourses(t: string) {
-        const data = await getMyCourses(t);
+    const displayInitial = useMemo(() => {
+        return displayName.charAt(0).toUpperCase();
+    }, [displayName]);
+
+    async function loadCourses() {
+        const data = await getMyCourses();
         setCourses(data);
         setSelectedCourse((prev) => {
             if (!data.length) return null;
@@ -149,8 +134,8 @@ export default function TeacherPage() {
         });
     }
 
-    async function loadModules(courseId: number, authToken: string) {
-        const data = await listModules(courseId, authToken);
+    async function loadModules(courseId: number) {
+        const data = await listModules(courseId);
         setModules(data);
         setSelectedModule((prev) => {
             if (!data.length) return null;
@@ -162,20 +147,25 @@ export default function TeacherPage() {
         });
     }
 
-    async function loadLessons(moduleId: number, authToken: string) {
-        const data = await listLessons(moduleId, authToken);
+    async function loadLessons(moduleId: number) {
+        const data = await listLessons(moduleId);
         setLessons(data);
     }
 
     useEffect(() => {
-        if (!token) return;
+        async function init() {
+            if (authLoading) return;
 
-        (async () => {
             setLoading(true);
             setError("");
 
             try {
-                const currentUser = await apiGet<AuthMeOut>("/auth/me", token);
+                const currentUser = await refreshUser();
+
+                if (!currentUser) {
+                    router.replace("/login");
+                    return;
+                }
 
                 if (currentUser.role === "admin") {
                     router.replace("/admin");
@@ -192,8 +182,14 @@ export default function TeacherPage() {
                     return;
                 }
 
-                setMe(currentUser);
-                await loadCourses(token);
+                if (currentUser.is_active === false) {
+                    logout();
+                    router.replace("/login");
+                    return;
+                }
+
+                setMe(currentUser as AuthMeOut);
+                await loadCourses();
             } catch (e: unknown) {
                 const message =
                     e instanceof Error ? e.message : "Failed to load teacher dashboard";
@@ -204,17 +200,20 @@ export default function TeacherPage() {
                     message.includes("403") ||
                     message.toLowerCase().includes("forbidden")
                 ) {
-                    clearToken();
-                    router.push("/login");
+                    logout();
+                    router.replace("/login");
+                    return;
                 }
             } finally {
                 setLoading(false);
             }
-        })();
-    }, [token, router]);
+        }
+
+        void init();
+    }, [authLoading, refreshUser, router, logout]);
 
     useEffect(() => {
-        if (!selectedCourse || !token) {
+        if (!selectedCourse) {
             setModules([]);
             setSelectedModule(null);
             setLessons([]);
@@ -223,27 +222,41 @@ export default function TeacherPage() {
 
         (async () => {
             try {
-                await loadModules(selectedCourse.id, token);
+                await loadModules(selectedCourse.id);
             } catch (e: unknown) {
                 setError(e instanceof Error ? e.message : "Failed to load modules");
             }
         })();
-    }, [selectedCourse, token]);
+    }, [selectedCourse]);
 
     useEffect(() => {
-        if (!selectedModule || !token) {
+        if (!selectedModule) {
             setLessons([]);
             return;
         }
 
         (async () => {
             try {
-                await loadLessons(selectedModule.id, token);
+                await loadLessons(selectedModule.id);
             } catch (e: unknown) {
                 setError(e instanceof Error ? e.message : "Failed to load lessons");
             }
         })();
-    }, [selectedModule, token]);
+    }, [selectedModule]);
+
+    useEffect(() => {
+        if (!user || !me) return;
+
+        if (
+            user.role === "teacher" &&
+            user.school_id != null &&
+            me.school_id != null &&
+            user.school_id !== me.school_id
+        ) {
+            logout();
+            router.replace("/login");
+        }
+    }, [user, me, logout, router]);
 
     const courseStats = useMemo(() => {
         const published = courses.filter((c) => c.published).length;
@@ -255,18 +268,19 @@ export default function TeacherPage() {
     }, [courses]);
 
     async function onCreateCourse() {
-        if (!token) return;
+        if (!courseTitle.trim()) return;
+
         setBusy(true);
         setError("");
 
         try {
-            await createCourse(token, {
+            await createCourse({
                 title: courseTitle,
                 description: courseDesc || null,
             });
             setCourseTitle("");
             setCourseDesc("");
-            await loadCourses(token);
+            await loadCourses();
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to create course");
         } finally {
@@ -275,14 +289,15 @@ export default function TeacherPage() {
     }
 
     async function onPublishCourse() {
-        if (!token || !selectedCourse) return;
+        if (!selectedCourse) return;
+
         setBusy(true);
         setError("");
 
         try {
-            const updated = await publishCourse(token, selectedCourse.id);
+            const updated = await publishCourse(selectedCourse.id);
             setSelectedCourse(updated);
-            await loadCourses(token);
+            await loadCourses();
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to publish course");
         } finally {
@@ -291,18 +306,19 @@ export default function TeacherPage() {
     }
 
     async function onCreateModule() {
-        if (!token || !selectedCourse) return;
+        if (!selectedCourse || !moduleTitle.trim()) return;
+
         setBusy(true);
         setError("");
 
         try {
-            await createModule(token, selectedCourse.id, {
+            await createModule(selectedCourse.id, {
                 title: moduleTitle,
                 order: moduleOrder,
             });
             setModuleTitle("");
             setModuleOrder(1);
-            await loadModules(selectedCourse.id, token);
+            await loadModules(selectedCourse.id);
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to create module");
         } finally {
@@ -311,12 +327,13 @@ export default function TeacherPage() {
     }
 
     async function onCreateLesson() {
-        if (!token || !selectedModule) return;
+        if (!selectedModule || !lessonTitle.trim()) return;
+
         setBusy(true);
         setError("");
 
         try {
-            await createLesson(token, selectedModule.id, {
+            await createLesson(selectedModule.id, {
                 title: lessonTitle,
                 content_type: lessonType,
                 content: lessonContent || null,
@@ -325,7 +342,7 @@ export default function TeacherPage() {
             setLessonTitle("");
             setLessonContent("");
             setLessonOrder(1);
-            await loadLessons(selectedModule.id, token);
+            await loadLessons(selectedModule.id);
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to create lesson");
         } finally {
@@ -333,11 +350,13 @@ export default function TeacherPage() {
         }
     }
 
-    if (loading) {
+    if (authLoading || loading) {
         return (
             <main style={{ maxWidth: 1280, margin: "0 auto", padding: 24 }}>
                 <div style={cardStyle()}>
-                    <div style={{ fontSize: 18, fontWeight: 800 }}>Loading teacher dashboard...</div>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>
+                        Loading teacher dashboard...
+                    </div>
                 </div>
             </main>
         );
@@ -405,11 +424,14 @@ export default function TeacherPage() {
                         >
                             {displayInitial}
                         </div>
-                        <span style={{ fontWeight: 700 }}>{displayName}</span>
+                        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+                            <span style={{ fontWeight: 700 }}>{displayName}</span>
+                            <span style={{ fontSize: 12, opacity: 0.85 }}>{displaySchoolName}</span>
+                        </div>
                     </div>
 
                     <button
-                        onClick={() => token && void loadCourses(token)}
+                        onClick={() => void loadCourses()}
                         style={{
                             padding: "10px 16px",
                             borderRadius: 12,
@@ -440,8 +462,8 @@ export default function TeacherPage() {
 
                     <button
                         onClick={() => {
-                            clearToken();
-                            router.push("/login");
+                            logout();
+                            router.replace("/login");
                         }}
                         style={{
                             padding: "10px 16px",
@@ -473,7 +495,9 @@ export default function TeacherPage() {
                     }}
                 >
                     <div>
-                        <div style={{ fontSize: 18, opacity: 0.9 }}>Teacher dashboard</div>
+                        <div style={{ fontSize: 18, opacity: 0.9 }}>
+                            {displaySchoolName} · Teacher dashboard
+                        </div>
                         <h1
                             style={{
                                 fontSize: 44,
@@ -690,6 +714,7 @@ export default function TeacherPage() {
                                         }}
                                         style={{ padding: 12, borderRadius: 12, border: "1px solid #E5E7EB" }}
                                     >
+                                        <option value="">Choose module</option>
                                         {modules.map((m) => (
                                             <option key={m.id} value={m.id}>
                                                 {m.order}. {m.title}
@@ -714,7 +739,11 @@ export default function TeacherPage() {
                                 />
                                 <select
                                     value={lessonType}
-                                    onChange={(e) => setLessonType(e.target.value as "text" | "video" | "pdf" | "link")}
+                                    onChange={(e) =>
+                                        setLessonType(
+                                            e.target.value as "text" | "video" | "pdf" | "link"
+                                        )
+                                    }
                                     style={{ padding: 12, borderRadius: 12, border: "1px solid #E5E7EB" }}
                                 >
                                     <option value="text">text</option>
@@ -761,7 +790,9 @@ export default function TeacherPage() {
 
                     <SectionCard title="Preview">
                         {!selectedCourse ? (
-                            <div style={{ color: "#6B7280" }}>Select a course to see its content.</div>
+                            <div style={{ color: "#6B7280" }}>
+                                Select a course to see its content.
+                            </div>
                         ) : (
                             <>
                                 <div style={{ fontWeight: 900 }}>{selectedCourse.title}</div>
@@ -781,12 +812,16 @@ export default function TeacherPage() {
                                 </div>
 
                                 <div style={{ marginTop: 12 }}>
-                                    <div style={{ fontSize: 12, color: "#6B7280" }}>Lessons in selected module</div>
+                                    <div style={{ fontSize: 12, color: "#6B7280" }}>
+                                        Lessons in selected module
+                                    </div>
                                     <ul style={{ paddingLeft: 18 }}>
                                         {lessons.map((l) => (
                                             <li key={l.id}>
                                                 {l.order}. {l.title}{" "}
-                                                <span style={{ color: "#6B7280" }}>({l.content_type})</span>
+                                                <span style={{ color: "#6B7280" }}>
+                                                    ({l.content_type})
+                                                </span>
                                             </li>
                                         ))}
                                     </ul>

@@ -24,18 +24,18 @@ export type LessonOut = {
     order: number;
 };
 
-export async function getMyCourses(token: string) {
+export async function getMyCourses(token?: string) {
     return apiGet<CourseOut[]>("/courses/me", token);
 }
 
 export async function createCourse(
-    token: string,
-    body: { title: string; description?: string | null }
+    body: { title: string; description?: string | null },
+    token?: string
 ) {
     return apiPost<CourseOut>("/courses", body, token);
 }
 
-export async function publishCourse(token: string, courseId: number) {
+export async function publishCourse(courseId: number, token?: string) {
     return apiPost<CourseOut>(`/courses/${courseId}/publish`, {}, token);
 }
 
@@ -44,9 +44,9 @@ export async function listModules(courseId: number, token?: string) {
 }
 
 export async function createModule(
-    token: string,
     courseId: number,
-    body: { title: string; order: number }
+    body: { title: string; order: number },
+    token?: string
 ) {
     return apiPost<ModuleOut>(`/courses/${courseId}/modules`, body, token);
 }
@@ -56,14 +56,14 @@ export async function listLessons(moduleId: number, token?: string) {
 }
 
 export async function createLesson(
-    token: string,
     moduleId: number,
     body: {
         title: string;
         content_type: string;
         content?: string | null;
         order: number;
-    }
+    },
+    token?: string
 ) {
     return apiPost<LessonOut>(`/modules/${moduleId}/lessons`, body, token);
 }

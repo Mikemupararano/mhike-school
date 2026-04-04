@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useState,
+} from "react";
 
 type User = {
     id: number;
@@ -17,81 +24,168 @@ type AuthContextType = {
     token: string | null;
     user: User | null;
     loading: boolean;
-    setToken: (token: string | null) => void;
-    refreshUser: () => Promise<void>;
+    setToken: (token: string | null) => Promise<User | null>;
+    refreshUser: () => Promise<User | null>;
     logout: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = "mhike_token";
+const ME_URL = "http://localhost:8000/api/v1/auth/me";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [token, setTokenState] = useState<string | null>(null);
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
-    const setToken = (value: string | null) => {
-        setTokenState(value);
-        if (value) {
-            localStorage.setItem(TOKEN_KEY, value);
-        } else {
-            localStorage.removeItem(TOKEN_KEY);
-            setUser(null);
-        }
-    };
+    const fetchCurrentUser = useCallback(async (activeToken: string): Promise<User> => {
+        const res = await fetch(ME_URL, {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${activeToken}`,
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+            },
+            cache: "no-store",
+        });
 
-    const refreshUser = async () => {
-        const activeToken = token ?? localStorage.getItem(TOKEN_KEY);
-        if (!activeToken) {
+        if (!res.ok) {
+            throw new Error("Failed to fetch current user");
+        }
+
+        const data: User = await res.json();
+        return data;
+    }, []);
+
+    const clearAuth = useCallback(() => {
+        if (typeof window !== "undefined") {
+            sessionStorage.removeItem(TOKEN_KEY);
+        }
+        setTokenState(null);
+        setUser(null);
+    }, []);
+
+    const refreshUser = useCallback(async (): Promise<User | null> => {
+        if (typeof window === "undefined") {
+            setTokenState(null);
             setUser(null);
-            setLoading(false);
-            return;
+            return null;
+        }
+
+        const activeToken = sessionStorage.getItem(TOKEN_KEY);
+
+        if (!activeToken) {
+            setTokenState(null);
+            setUser(null);
+            return null;
         }
 
         try {
-            const res = await fetch("http://localhost:8000/api/v1/auth/me", {
-                headers: {
-                    Authorization: `Bearer ${activeToken}`,
-                },
-            });
+            const currentUser = await fetchCurrentUser(activeToken);
+            setTokenState(activeToken);
+            setUser(currentUser);
+            return currentUser;
+        } catch {
+            clearAuth();
+            return null;
+        }
+    }, [clearAuth, fetchCurrentUser]);
 
-            if (!res.ok) {
-                throw new Error("Failed to fetch current user");
+    const setToken = useCallback(
+        async (value: string | null): Promise<User | null> => {
+            setLoading(true);
+
+            if (!value) {
+                clearAuth();
+                setLoading(false);
+                return null;
             }
 
-            const data = await res.json();
-            setUser(data);
-        } catch {
-            setUser(null);
-            localStorage.removeItem(TOKEN_KEY);
-            setTokenState(null);
-        } finally {
-            setLoading(false);
-        }
-    };
+            try {
+                setUser(null);
+                setTokenState(null);
 
-    const logout = () => {
-        setToken(null);
-        setUser(null);
-    };
+                if (typeof window !== "undefined") {
+                    sessionStorage.removeItem(TOKEN_KEY);
+                    sessionStorage.setItem(TOKEN_KEY, value);
+                }
+
+                setTokenState(value);
+
+                const currentUser = await fetchCurrentUser(value);
+                setUser(currentUser);
+
+                return currentUser;
+            } catch {
+                clearAuth();
+                throw new Error("Unable to authenticate user with provided token");
+            } finally {
+                setLoading(false);
+            }
+        },
+        [clearAuth, fetchCurrentUser]
+    );
+
+    const logout = useCallback(() => {
+        clearAuth();
+        setLoading(false);
+    }, [clearAuth]);
 
     useEffect(() => {
-        const stored = localStorage.getItem(TOKEN_KEY);
-        if (stored) {
-            setTokenState(stored);
-        } else {
-            setLoading(false);
-        }
-    }, []);
+        let mounted = true;
 
-    useEffect(() => {
-        if (token) {
-            refreshUser();
-        }
-    }, [token]);
+        async function initAuth() {
+            setLoading(true);
 
-    const value = useMemo(
+            if (typeof window === "undefined") {
+                if (mounted) {
+                    setTokenState(null);
+                    setUser(null);
+                    setLoading(false);
+                }
+                return;
+            }
+
+            const storedToken = sessionStorage.getItem(TOKEN_KEY);
+
+            if (!storedToken) {
+                if (mounted) {
+                    setTokenState(null);
+                    setUser(null);
+                    setLoading(false);
+                }
+                return;
+            }
+
+            try {
+                const currentUser = await fetchCurrentUser(storedToken);
+
+                if (mounted) {
+                    setTokenState(storedToken);
+                    setUser(currentUser);
+                }
+            } catch {
+                if (mounted) {
+                    sessionStorage.removeItem(TOKEN_KEY);
+                    setTokenState(null);
+                    setUser(null);
+                }
+            } finally {
+                if (mounted) {
+                    setLoading(false);
+                }
+            }
+        }
+
+        void initAuth();
+
+        return () => {
+            mounted = false;
+        };
+    }, [fetchCurrentUser]);
+
+    const value = useMemo<AuthContextType>(
         () => ({
             token,
             user,
@@ -100,7 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             refreshUser,
             logout,
         }),
-        [token, user, loading]
+        [token, user, loading, setToken, refreshUser, logout]
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -108,8 +202,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
     const ctx = useContext(AuthContext);
+
     if (!ctx) {
         throw new Error("useAuth must be used within an AuthProvider");
     }
+
     return ctx;
 }

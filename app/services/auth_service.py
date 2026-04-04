@@ -10,7 +10,17 @@ from app.schemas.auth import LoginIn, RegisterIn, TokenOut
 class AuthService:
     @staticmethod
     async def register(db: AsyncSession, payload: RegisterIn) -> User:
-        if payload.role != "platform_admin":
+        normalized_email = payload.email.strip().lower()
+        normalized_role = payload.role.strip().lower()
+
+        allowed_roles = {"student", "teacher", "admin", "platform_admin"}
+        if normalized_role not in allowed_roles:
+            raise ValueError("Invalid role.")
+
+        school = None
+        school_id: int | None = None
+
+        if normalized_role != "platform_admin":
             if not payload.school_id:
                 raise ValueError("school_id is required for non-platform users.")
 
@@ -20,10 +30,12 @@ class AuthService:
             if not school:
                 raise ValueError("School not found.")
 
+            school_id = school.id
+
         res = await db.execute(
             select(User).where(
-                User.email == payload.email,
-                User.school_id == payload.school_id,
+                User.email == normalized_email,
+                User.school_id == school_id,
             )
         )
         existing_user = res.scalar_one_or_none()
@@ -32,25 +44,35 @@ class AuthService:
             raise ValueError("A user with this email already exists for this school.")
 
         user = User(
-            email=payload.email,
+            email=normalized_email,
             hashed_password=get_password_hash(payload.password),
-            full_name=payload.full_name,
-            role=payload.role,
-            school_id=payload.school_id if payload.role != "platform_admin" else None,
+            full_name=payload.full_name.strip() if payload.full_name else None,
+            role=normalized_role,
+            school_id=school_id,
             is_active=True,
         )
 
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
 
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+        await db.refresh(user)
         return user
 
     @staticmethod
     async def login(db: AsyncSession, payload: LoginIn) -> TokenOut:
+        normalized_email = payload.email.strip().lower()
+
+        if payload.school_id is None:
+            raise ValueError("school_id is required.")
+
         res = await db.execute(
             select(User).where(
-                User.email == payload.email,
+                User.email == normalized_email,
                 User.school_id == payload.school_id,
             )
         )
