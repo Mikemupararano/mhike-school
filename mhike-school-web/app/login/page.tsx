@@ -14,13 +14,14 @@ type AuthUser = {
     id: number;
     full_name?: string | null;
     email: string;
-    role: "student" | "teacher" | "admin" | string;
+    role: "student" | "teacher" | "admin" | "platform_admin" | string;
     school_id?: number | null;
     school_name?: string | null;
     is_active?: boolean;
 };
 
 function getHomeRoute(role: string) {
+    if (role === "platform_admin") return "/admin";
     if (role === "admin") return "/admin";
     if (role === "teacher") return "/teacher";
     return "/dashboard";
@@ -33,6 +34,7 @@ export default function LoginPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [schoolId, setSchoolId] = useState("");
+    const [isPlatformAdminLogin, setIsPlatformAdminLogin] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
@@ -43,14 +45,23 @@ export default function LoginPage() {
         const trimmedEmail = email.trim().toLowerCase();
         const trimmedPassword = password.trim();
         const trimmedSchoolId = schoolId.trim();
-        const parsedSchoolId = Number(trimmedSchoolId);
 
-        if (!trimmedEmail || !trimmedPassword || !trimmedSchoolId) {
-            setError("Please enter your email, password, and school ID.");
+        if (!trimmedEmail || !trimmedPassword) {
+            setError("Please enter your email and password.");
             return;
         }
 
-        if (!Number.isInteger(parsedSchoolId) || parsedSchoolId <= 0) {
+        if (!isPlatformAdminLogin && !trimmedSchoolId) {
+            setError("Please enter your school ID.");
+            return;
+        }
+
+        const parsedSchoolId = trimmedSchoolId ? Number(trimmedSchoolId) : null;
+
+        if (
+            !isPlatformAdminLogin &&
+            (!Number.isInteger(parsedSchoolId) || (parsedSchoolId ?? 0) <= 0)
+        ) {
             setError("Please enter a valid school ID.");
             return;
         }
@@ -63,7 +74,7 @@ export default function LoginPage() {
             const res = await apiPost<TokenOut>("/auth/login", {
                 email: trimmedEmail,
                 password: trimmedPassword,
-                school_id: parsedSchoolId,
+                school_id: isPlatformAdminLogin ? null : parsedSchoolId,
             });
 
             if (!res.access_token) {
@@ -80,6 +91,10 @@ export default function LoginPage() {
                 throw new Error("Account is inactive");
             }
 
+            if (isPlatformAdminLogin && currentUser.role !== "platform_admin") {
+                throw new Error("This account is not a platform admin account.");
+            }
+
             router.replace(getHomeRoute(currentUser.role));
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Login failed";
@@ -90,7 +105,11 @@ export default function LoginPage() {
                 message.toLowerCase().includes("invalid email or password") ||
                 message.toLowerCase().includes("invalid token")
             ) {
-                setError("Invalid email, password, or school ID.");
+                setError(
+                    isPlatformAdminLogin
+                        ? "Invalid platform admin email or password."
+                        : "Invalid email, password, or school ID."
+                );
             } else if (
                 message.includes("403") ||
                 message.toLowerCase().includes("forbidden") ||
@@ -116,14 +135,15 @@ export default function LoginPage() {
                 minHeight: "100vh",
                 display: "grid",
                 placeItems: "start center",
-                padding: "48px 24px",
+                padding: "56px 24px",
+                background: "#F8FAFC",
             }}
         >
-            <div style={{ width: "100%", maxWidth: 460 }}>
+            <div style={{ width: "100%", maxWidth: 500 }}>
                 <h1
                     style={{
-                        fontSize: 28,
-                        fontWeight: 800,
+                        fontSize: 34,
+                        fontWeight: 900,
                         margin: 0,
                         color: "#111827",
                     }}
@@ -133,10 +153,10 @@ export default function LoginPage() {
 
                 <p
                     style={{
-                        marginTop: 8,
-                        marginBottom: 24,
+                        marginTop: 10,
+                        marginBottom: 28,
                         color: "#6B7280",
-                        fontSize: 15,
+                        fontSize: 16,
                     }}
                 >
                     Login to your dashboard
@@ -153,11 +173,11 @@ export default function LoginPage() {
                         required
                         style={{
                             width: "100%",
-                            padding: "14px 16px",
+                            padding: "16px 18px",
                             borderRadius: 16,
                             border: "1px solid #E5E7EB",
                             outline: "none",
-                            marginBottom: 12,
+                            marginBottom: 14,
                             fontSize: 16,
                             background: "white",
                             boxSizing: "border-box",
@@ -174,44 +194,66 @@ export default function LoginPage() {
                         required
                         style={{
                             width: "100%",
-                            padding: "14px 16px",
+                            padding: "16px 18px",
                             borderRadius: 16,
                             border: "1px solid #E5E7EB",
                             outline: "none",
-                            marginBottom: 12,
+                            marginBottom: 14,
                             fontSize: 16,
                             background: "white",
                             boxSizing: "border-box",
                         }}
                     />
 
-                    <input
-                        type="number"
-                        value={schoolId}
-                        onChange={(e) => setSchoolId(e.target.value)}
-                        placeholder="School ID"
-                        disabled={loading}
-                        required
-                        min={1}
+                    <label
                         style={{
-                            width: "100%",
-                            padding: "14px 16px",
-                            borderRadius: 16,
-                            border: "1px solid #E5E7EB",
-                            outline: "none",
-                            marginBottom: 12,
-                            fontSize: 16,
-                            background: "white",
-                            boxSizing: "border-box",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            marginBottom: 14,
+                            fontSize: 15,
+                            color: "#374151",
+                            fontWeight: 600,
                         }}
-                    />
+                    >
+                        <input
+                            type="checkbox"
+                            checked={isPlatformAdminLogin}
+                            onChange={(e) => setIsPlatformAdminLogin(e.target.checked)}
+                            disabled={loading}
+                        />
+                        Platform admin login
+                    </label>
+
+                    {!isPlatformAdminLogin && (
+                        <input
+                            type="number"
+                            value={schoolId}
+                            onChange={(e) => setSchoolId(e.target.value)}
+                            placeholder="School ID"
+                            disabled={loading}
+                            required={!isPlatformAdminLogin}
+                            min={1}
+                            style={{
+                                width: "100%",
+                                padding: "16px 18px",
+                                borderRadius: 16,
+                                border: "1px solid #E5E7EB",
+                                outline: "none",
+                                marginBottom: 14,
+                                fontSize: 16,
+                                background: "white",
+                                boxSizing: "border-box",
+                            }}
+                        />
+                    )}
 
                     <button
                         type="submit"
                         disabled={loading}
                         style={{
                             width: "100%",
-                            padding: "14px 16px",
+                            padding: "16px 18px",
                             borderRadius: 16,
                             border: "1px solid #111827",
                             background: loading ? "#374151" : "#0F172A",
@@ -229,7 +271,7 @@ export default function LoginPage() {
                 {error && (
                     <div
                         style={{
-                            marginTop: 14,
+                            marginTop: 16,
                             padding: "12px 14px",
                             borderRadius: 12,
                             background: "#FEF2F2",
@@ -243,13 +285,15 @@ export default function LoginPage() {
 
                 <p
                     style={{
-                        marginTop: 16,
+                        marginTop: 18,
                         color: "#6B7280",
                         fontSize: 14,
-                        lineHeight: 1.5,
+                        lineHeight: 1.6,
                     }}
                 >
-                    Use your school account to sign in.
+                    {isPlatformAdminLogin
+                        ? "Use your platform admin account to sign in."
+                        : "Use your school account to sign in."}
                 </p>
             </div>
         </main>

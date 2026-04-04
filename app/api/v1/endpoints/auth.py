@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_school_id, get_current_user
+from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import School, User
 from app.schemas.auth import LoginIn, RegisterIn, TokenOut
@@ -56,7 +56,6 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 async def me(
     current_user: User = Depends(get_current_user),
-    current_school_id: int = Depends(get_current_school_id),
     db: AsyncSession = Depends(get_db),
 ):
     school_name = await _resolve_school_name(db, current_user.school_id)

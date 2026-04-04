@@ -10,10 +10,12 @@ import {
     AdminStatsOut,
     AdminUserOut,
     AdminUsersResponse,
+    PlatformSchoolSummaryOut,
     deleteCourseAdmin,
     getAdminCourses,
     getAdminStats,
     getAdminUsers,
+    getPlatformSchools,
     setCoursePublished,
     toggleUserActive,
     updateUserRole,
@@ -24,7 +26,7 @@ function cardStyle(): React.CSSProperties {
         background: "#FFFFFF",
         border: "1px solid #E5E7EB",
         borderRadius: 20,
-        padding: 18,
+        padding: 20,
         boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
     };
 }
@@ -51,10 +53,10 @@ function actionButtonStyle(
     };
 
     return {
-        padding: "8px 12px",
-        borderRadius: 10,
+        padding: "10px 14px",
+        borderRadius: 12,
         fontWeight: 800,
-        fontSize: 13,
+        fontSize: 14,
         cursor: "pointer",
         ...styles[kind],
     };
@@ -85,16 +87,14 @@ function StatCard({
                 ...cardStyle(),
                 background,
                 color,
-                minHeight: 120,
+                minHeight: 126,
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
             }}
         >
-            <div style={{ fontSize: 13, color: subColor }}>{label}</div>
-            <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1 }}>
-                {value}
-            </div>
+            <div style={{ fontSize: 15, color: subColor, fontWeight: 600 }}>{label}</div>
+            <div style={{ fontSize: 38, fontWeight: 900, lineHeight: 1 }}>{value}</div>
         </div>
     );
 }
@@ -147,6 +147,7 @@ function Badge({
 }
 
 function roleBadge(role: string) {
+    if (role === "platform_admin") return <Badge text="Platform Admin" kind="danger" />;
     if (role === "admin") return <Badge text="Admin" kind="danger" />;
     if (role === "teacher") return <Badge text="Teacher" kind="info" />;
     return <Badge text="Student" kind="neutral" />;
@@ -162,11 +163,13 @@ function courseBadge(published: boolean) {
 
 function TopNavbar({
     currentUserName,
+    currentContextLabel,
     onRefresh,
     onLogout,
     refreshing,
 }: {
     currentUserName: string;
+    currentContextLabel: string;
     onRefresh: () => void;
     onLogout: () => void;
     refreshing: boolean;
@@ -215,7 +218,7 @@ function TopNavbar({
                     style={{
                         color: "#FFFFFF",
                         textDecoration: "none",
-                        fontSize: 18,
+                        fontSize: 20,
                         fontWeight: 900,
                         whiteSpace: "nowrap",
                     }}
@@ -261,7 +264,10 @@ function TopNavbar({
                     >
                         {currentUserName?.charAt(0)?.toUpperCase() || "A"}
                     </div>
-                    <span>{currentUserName || "Admin User"}</span>
+                    <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+                        <span>{currentUserName || "Platform Admin"}</span>
+                        <span style={{ fontSize: 12, opacity: 0.85 }}>{currentContextLabel}</span>
+                    </div>
                 </div>
 
                 <button
@@ -304,10 +310,12 @@ export default function AdminPage() {
 
     const [token, setToken] = useState("");
     const [stats, setStats] = useState<AdminStatsOut | null>(null);
+    const [schools, setSchools] = useState<PlatformSchoolSummaryOut[]>([]);
     const [usersRes, setUsersRes] = useState<AdminUsersResponse | null>(null);
-    const [coursesRes, setCoursesRes] = useState<AdminCoursesResponse | null>(
-        null
-    );
+    const [coursesRes, setCoursesRes] = useState<AdminCoursesResponse | null>(null);
+
+    const [selectedSchoolId, setSelectedSchoolId] = useState<number | null>(null);
+
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState("");
@@ -326,24 +334,22 @@ export default function AdminPage() {
         setToken(t);
     }, [router]);
 
-    async function loadDashboard(authToken: string, silent = false) {
+    async function loadOverview(authToken: string, silent = false) {
         if (!silent) setLoading(true);
         if (silent) setRefreshing(true);
         setError("");
 
         try {
-            const [statsData, usersData, coursesData] = await Promise.all([
+            const [statsData, schoolsData] = await Promise.all([
                 getAdminStats(authToken),
-                getAdminUsers(authToken, { skip: 0, limit: 8 }),
-                getAdminCourses(authToken, { skip: 0, limit: 8 }),
+                getPlatformSchools(authToken),
             ]);
 
             setStats(statsData);
-            setUsersRes(usersData);
-            setCoursesRes(coursesData);
+            setSchools(schoolsData);
         } catch (e: unknown) {
             const message =
-                e instanceof Error ? e.message : "Failed to load admin dashboard";
+                e instanceof Error ? e.message : "Failed to load platform overview";
 
             setError(message);
 
@@ -361,16 +367,47 @@ export default function AdminPage() {
         }
     }
 
+    async function loadSchoolData(authToken: string, schoolId: number, silent = false) {
+        if (silent) setRefreshing(true);
+        setError("");
+
+        try {
+            const [usersData, coursesData] = await Promise.all([
+                getAdminUsers(authToken, { school_id: schoolId, skip: 0, limit: 8 }),
+                getAdminCourses(authToken, { school_id: schoolId, skip: 0, limit: 8 }),
+            ]);
+
+            setUsersRes(usersData);
+            setCoursesRes(coursesData);
+        } catch (e: unknown) {
+            const message =
+                e instanceof Error ? e.message : "Failed to load school data";
+            setError(message);
+        } finally {
+            setRefreshing(false);
+        }
+    }
+
     useEffect(() => {
         if (!token) return;
-        void loadDashboard(token);
+        void loadOverview(token);
     }, [token]);
+
+    useEffect(() => {
+        if (!token || selectedSchoolId == null) {
+            setUsersRes(null);
+            setCoursesRes(null);
+            return;
+        }
+
+        void loadSchoolData(token, selectedSchoolId);
+    }, [token, selectedSchoolId]);
 
     async function handleRoleChange(
         userId: number,
         role: "student" | "teacher" | "admin"
     ) {
-        if (!token) return;
+        if (!token || selectedSchoolId == null) return;
 
         const key = `role-${userId}-${role}`;
         setBusyKey(key);
@@ -380,7 +417,7 @@ export default function AdminPage() {
         try {
             await updateUserRole(token, userId, role);
             setSuccess("User role updated.");
-            await loadDashboard(token, true);
+            await loadSchoolData(token, selectedSchoolId, true);
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to update user role");
         } finally {
@@ -389,7 +426,7 @@ export default function AdminPage() {
     }
 
     async function handleToggleActive(userId: number, nextActive: boolean) {
-        if (!token) return;
+        if (!token || selectedSchoolId == null) return;
 
         const key = `active-${userId}`;
         setBusyKey(key);
@@ -399,7 +436,7 @@ export default function AdminPage() {
         try {
             await toggleUserActive(token, userId, nextActive);
             setSuccess(nextActive ? "User activated." : "User deactivated.");
-            await loadDashboard(token, true);
+            await loadSchoolData(token, selectedSchoolId, true);
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to update user status");
         } finally {
@@ -408,7 +445,7 @@ export default function AdminPage() {
     }
 
     async function handleSetPublished(courseId: number, published: boolean) {
-        if (!token) return;
+        if (!token || selectedSchoolId == null) return;
 
         const key = `publish-${courseId}`;
         setBusyKey(key);
@@ -418,7 +455,7 @@ export default function AdminPage() {
         try {
             await setCoursePublished(token, courseId, published);
             setSuccess(published ? "Course published." : "Course unpublished.");
-            await loadDashboard(token, true);
+            await loadSchoolData(token, selectedSchoolId, true);
         } catch (e: unknown) {
             setError(
                 e instanceof Error ? e.message : "Failed to update course publication"
@@ -429,7 +466,7 @@ export default function AdminPage() {
     }
 
     async function handleDeleteCourse(courseId: number, title: string) {
-        if (!token) return;
+        if (!token || selectedSchoolId == null) return;
 
         const confirmed = window.confirm(`Delete "${title}"?`);
         if (!confirmed) return;
@@ -442,7 +479,7 @@ export default function AdminPage() {
         try {
             await deleteCourseAdmin(token, courseId);
             setSuccess("Course deleted.");
-            await loadDashboard(token, true);
+            await loadSchoolData(token, selectedSchoolId, true);
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to delete course");
         } finally {
@@ -455,6 +492,11 @@ export default function AdminPage() {
 
     const recentUsers = useMemo(() => users.slice(0, 8), [users]);
     const recentCourses = useMemo(() => courses.slice(0, 8), [courses]);
+
+    const selectedSchool = useMemo(
+        () => schools.find((s) => s.id === selectedSchoolId) ?? null,
+        [schools, selectedSchoolId]
+    );
 
     const derived = useMemo(() => {
         const draftCourses = Math.max(
@@ -470,6 +512,7 @@ export default function AdminPage() {
         return {
             draftCourses,
             publishedRate,
+            scopeLabel: "Global platform",
         };
     }, [stats]);
 
@@ -487,15 +530,16 @@ export default function AdminPage() {
                 }}
             >
                 <TopNavbar
-                    currentUserName="Admin User"
+                    currentUserName="Platform Admin"
+                    currentContextLabel="Global platform"
                     onRefresh={() => { }}
                     onLogout={handleLogout}
                     refreshing={false}
                 />
-                <div style={{ maxWidth: 1280, margin: "0 auto", padding: 24 }}>
+                <div style={{ maxWidth: 1320, margin: "0 auto", padding: 24 }}>
                     <div style={cardStyle()}>
-                        <div style={{ fontSize: 18, fontWeight: 800 }}>
-                            Loading admin dashboard...
+                        <div style={{ fontSize: 20, fontWeight: 800 }}>
+                            Loading platform admin dashboard...
                         </div>
                     </div>
                 </div>
@@ -511,21 +555,27 @@ export default function AdminPage() {
             }}
         >
             <TopNavbar
-                currentUserName="Admin User"
+                currentUserName="Platform Admin"
+                currentContextLabel={derived.scopeLabel}
                 onRefresh={() => {
-                    if (token) void loadDashboard(token, true);
+                    if (token) {
+                        void loadOverview(token, true);
+                        if (selectedSchoolId != null) {
+                            void loadSchoolData(token, selectedSchoolId, true);
+                        }
+                    }
                 }}
                 onLogout={handleLogout}
                 refreshing={refreshing}
             />
 
-            <div style={{ maxWidth: 1280, margin: "0 auto", padding: 24 }}>
+            <div style={{ maxWidth: 1320, margin: "0 auto", padding: 24 }}>
                 <header
                     style={{
                         background:
                             "linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #60A5FA 100%)",
                         borderRadius: 24,
-                        padding: 24,
+                        padding: 28,
                         color: "white",
                         display: "flex",
                         justifyContent: "space-between",
@@ -535,32 +585,33 @@ export default function AdminPage() {
                     }}
                 >
                     <div style={{ flex: 1, minWidth: 320 }}>
-                        <div style={{ fontSize: 14, opacity: 0.9, marginBottom: 8 }}>
-                            Admin dashboard
+                        <div style={{ fontSize: 18, opacity: 0.92, marginBottom: 8 }}>
+                            Platform admin dashboard
                         </div>
 
                         <h1
                             style={{
                                 margin: 0,
-                                fontSize: 44,
+                                fontSize: 52,
                                 fontWeight: 900,
-                                lineHeight: 1.05,
+                                lineHeight: 1.04,
                             }}
                         >
-                            Manage Mhike School
+                            Manage Mhike School LMS
                         </h1>
 
                         <p
                             style={{
                                 marginTop: 12,
                                 marginBottom: 0,
-                                fontSize: 17,
-                                color: "rgba(255,255,255,0.88)",
-                                maxWidth: 700,
+                                fontSize: 20,
+                                color: "rgba(255,255,255,0.9)",
+                                maxWidth: 760,
                             }}
                         >
-                            Monitor users, courses, publications, and enrollments from one
-                            place.
+                            Monitor schools, users, courses, publications, and enrollments
+                            across the platform. Select a school below to manage its users and
+                            courses.
                         </p>
 
                         <div
@@ -583,6 +634,7 @@ export default function AdminPage() {
                                     fontWeight: 800,
                                     background: "#FFFFFF",
                                     color: "#1D4ED8",
+                                    fontSize: 15,
                                 }}
                             >
                                 Main Dashboard
@@ -601,6 +653,7 @@ export default function AdminPage() {
                                     background: "rgba(255,255,255,0.12)",
                                     color: "#FFFFFF",
                                     border: "1px solid rgba(255,255,255,0.22)",
+                                    fontSize: 15,
                                 }}
                             >
                                 Teacher View
@@ -622,18 +675,26 @@ export default function AdminPage() {
                         }}
                     >
                         <div>
-                            <div style={{ fontSize: 13, opacity: 0.9 }}>System snapshot</div>
-                            <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>
+                            <div style={{ fontSize: 14, opacity: 0.92 }}>System snapshot</div>
+                            <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>
                                 {stats?.total_users ?? 0} users
                             </div>
-                            <div style={{ marginTop: 8 }}>
+                            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 <Badge text="Operational" kind="success" />
+                                <Badge text={`${schools.length} schools`} kind="info" />
                             </div>
                         </div>
 
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                             <button
-                                onClick={() => token && void loadDashboard(token, true)}
+                                onClick={() => {
+                                    if (token) {
+                                        void loadOverview(token, true);
+                                        if (selectedSchoolId != null) {
+                                            void loadSchoolData(token, selectedSchoolId, true);
+                                        }
+                                    }
+                                }}
                                 disabled={refreshing}
                                 style={{
                                     padding: "10px 14px",
@@ -676,6 +737,7 @@ export default function AdminPage() {
                             color: "#991B1B",
                             border: "1px solid #FECACA",
                             fontWeight: 600,
+                            fontSize: 15,
                         }}
                     >
                         {error}
@@ -692,6 +754,7 @@ export default function AdminPage() {
                             color: "#065F46",
                             border: "1px solid #A7F3D0",
                             fontWeight: 600,
+                            fontSize: 15,
                         }}
                     >
                         {success}
@@ -723,6 +786,133 @@ export default function AdminPage() {
                     />
                 </section>
 
+                <section style={{ marginTop: 18 }}>
+                    <div style={cardStyle()}>
+                        <div
+                            style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 12,
+                                marginBottom: 14,
+                                flexWrap: "wrap",
+                            }}
+                        >
+                            <div>
+                                <h2
+                                    style={{
+                                        margin: 0,
+                                        fontSize: 26,
+                                        fontWeight: 900,
+                                    }}
+                                >
+                                    Schools
+                                </h2>
+                                <p
+                                    style={{
+                                        margin: "6px 0 0 0",
+                                        color: "#6B7280",
+                                        fontSize: 15,
+                                    }}
+                                >
+                                    Select a school to view and manage its users and courses.
+                                </p>
+                            </div>
+
+                            <div style={{ minWidth: 280 }}>
+                                <select
+                                    value={selectedSchoolId ?? ""}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        setSelectedSchoolId(value ? Number(value) : null);
+                                        setSuccess("");
+                                        setError("");
+                                    }}
+                                    style={{
+                                        width: "100%",
+                                        padding: "12px 14px",
+                                        borderRadius: 12,
+                                        border: "1px solid #E5E7EB",
+                                        fontSize: 15,
+                                        background: "white",
+                                    }}
+                                >
+                                    <option value="">Select a school</option>
+                                    {schools.map((school) => (
+                                        <option key={school.id} value={school.id}>
+                                            {school.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        {schools.length === 0 ? (
+                            <div style={{ color: "#6B7280", fontSize: 15 }}>
+                                No schools found.
+                            </div>
+                        ) : (
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                                    gap: 12,
+                                }}
+                            >
+                                {schools.map((school) => {
+                                    const isSelected = selectedSchoolId === school.id;
+
+                                    return (
+                                        <button
+                                            key={school.id}
+                                            onClick={() => {
+                                                setSelectedSchoolId(school.id);
+                                                setSuccess("");
+                                                setError("");
+                                            }}
+                                            style={{
+                                                textAlign: "left",
+                                                borderRadius: 16,
+                                                border: isSelected
+                                                    ? "2px solid #2563EB"
+                                                    : "1px solid #E5E7EB",
+                                                background: isSelected ? "#EFF6FF" : "#F8FAFC",
+                                                padding: 16,
+                                                cursor: "pointer",
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    fontWeight: 900,
+                                                    fontSize: 17,
+                                                    color: "#0F172A",
+                                                }}
+                                            >
+                                                {school.name}
+                                            </div>
+
+                                            <div
+                                                style={{
+                                                    marginTop: 10,
+                                                    display: "grid",
+                                                    gap: 6,
+                                                    color: "#475569",
+                                                    fontSize: 14,
+                                                }}
+                                            >
+                                                <div>{school.total_users} users</div>
+                                                <div>{school.total_students} students</div>
+                                                <div>{school.total_teachers} teachers</div>
+                                                <div>{school.total_courses} courses</div>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </section>
+
                 <section
                     style={{
                         marginTop: 18,
@@ -748,53 +938,96 @@ export default function AdminPage() {
                                     <h2
                                         style={{
                                             margin: 0,
-                                            fontSize: 24,
+                                            fontSize: 26,
                                             fontWeight: 900,
                                         }}
                                     >
                                         Users
                                     </h2>
-                                    <p style={{ margin: "6px 0 0 0", color: "#6B7280" }}>
-                                        Manage roles and account status
+                                    <p
+                                        style={{
+                                            margin: "6px 0 0 0",
+                                            color: "#6B7280",
+                                            fontSize: 15,
+                                        }}
+                                    >
+                                        {selectedSchool
+                                            ? `Manage roles and account status for ${selectedSchool.name}.`
+                                            : "Select a school to view users."}
                                     </p>
                                 </div>
                                 <Badge text={`${usersRes?.total ?? 0} total`} kind="info" />
                             </div>
 
-                            {recentUsers.length === 0 ? (
-                                <div style={{ color: "#6B7280" }}>No users found.</div>
+                            {!selectedSchool ? (
+                                <div style={{ color: "#6B7280", fontSize: 15 }}>
+                                    Select a school to view users.
+                                </div>
+                            ) : recentUsers.length === 0 ? (
+                                <div style={{ color: "#6B7280", fontSize: 15 }}>
+                                    No users found for this school.
+                                </div>
                             ) : (
                                 <div style={{ display: "grid", gap: 10 }}>
-                                    {recentUsers.map((user) => (
-                                        <div
-                                            key={user.id}
-                                            style={{
-                                                border: "1px solid #E5E7EB",
-                                                borderRadius: 16,
-                                                padding: 14,
-                                                background: "#F8FAFC",
-                                                display: "grid",
-                                                gap: 12,
-                                            }}
-                                        >
+                                    {recentUsers.map((user) => {
+                                        const isPlatformAdminUser = user.role === "platform_admin";
+
+                                        return (
                                             <div
+                                                key={user.id}
                                                 style={{
-                                                    display: "flex",
-                                                    justifyContent: "space-between",
+                                                    border: "1px solid #E5E7EB",
+                                                    borderRadius: 16,
+                                                    padding: 14,
+                                                    background: "#F8FAFC",
+                                                    display: "grid",
                                                     gap: 12,
-                                                    alignItems: "center",
-                                                    flexWrap: "wrap",
                                                 }}
                                             >
-                                                <div>
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        justifyContent: "space-between",
+                                                        gap: 12,
+                                                        alignItems: "center",
+                                                        flexWrap: "wrap",
+                                                    }}
+                                                >
+                                                    <div>
+                                                        <div
+                                                            style={{
+                                                                fontWeight: 900,
+                                                                fontSize: 17,
+                                                                color: "#0F172A",
+                                                            }}
+                                                        >
+                                                            {user.full_name || "Unnamed user"}
+                                                        </div>
+                                                        <div
+                                                            style={{
+                                                                marginTop: 6,
+                                                                color: "#64748B",
+                                                                fontSize: 14,
+                                                            }}
+                                                        >
+                                                            {user.email}
+                                                        </div>
+                                                    </div>
+
                                                     <div
                                                         style={{
-                                                            fontWeight: 900,
-                                                            fontSize: 16,
-                                                            color: "#0F172A",
+                                                            display: "flex",
+                                                            gap: 8,
+                                                            alignItems: "center",
+                                                            flexWrap: "wrap",
                                                         }}
                                                     >
-                                                        {user.full_name || "Unnamed user"}
+                                                        {roleBadge(user.role)}
+                                                        {user.is_active === false ? (
+                                                            <Badge text="Inactive" kind="danger" />
+                                                        ) : (
+                                                            <Badge text="Active" kind="success" />
+                                                        )}
                                                     </div>
                                                 </div>
 
@@ -802,65 +1035,55 @@ export default function AdminPage() {
                                                     style={{
                                                         display: "flex",
                                                         gap: 8,
-                                                        alignItems: "center",
                                                         flexWrap: "wrap",
                                                     }}
                                                 >
-                                                    {roleBadge(user.role)}
-                                                    {user.is_active === false ? (
-                                                        <Badge text="Inactive" kind="danger" />
-                                                    ) : (
-                                                        <Badge text="Active" kind="success" />
-                                                    )}
+                                                    <button
+                                                        onClick={() =>
+                                                            void handleRoleChange(user.id, "student")
+                                                        }
+                                                        disabled={busyKey !== "" || isPlatformAdminUser}
+                                                        style={actionButtonStyle()}
+                                                    >
+                                                        Make Student
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() =>
+                                                            void handleRoleChange(user.id, "teacher")
+                                                        }
+                                                        disabled={busyKey !== "" || isPlatformAdminUser}
+                                                        style={actionButtonStyle("primary")}
+                                                    >
+                                                        Promote Teacher
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() =>
+                                                            void handleRoleChange(user.id, "admin")
+                                                        }
+                                                        disabled={busyKey !== "" || isPlatformAdminUser}
+                                                        style={actionButtonStyle("danger")}
+                                                    >
+                                                        Make Admin
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() =>
+                                                            void handleToggleActive(
+                                                                user.id,
+                                                                user.is_active === false
+                                                            )
+                                                        }
+                                                        disabled={busyKey !== "" || isPlatformAdminUser}
+                                                        style={actionButtonStyle()}
+                                                    >
+                                                        {user.is_active === false ? "Activate" : "Deactivate"}
+                                                    </button>
                                                 </div>
                                             </div>
-
-                                            <div
-                                                style={{
-                                                    display: "flex",
-                                                    gap: 8,
-                                                    flexWrap: "wrap",
-                                                }}
-                                            >
-                                                <button
-                                                    onClick={() => void handleRoleChange(user.id, "student")}
-                                                    disabled={busyKey !== ""}
-                                                    style={actionButtonStyle()}
-                                                >
-                                                    Make Student
-                                                </button>
-
-                                                <button
-                                                    onClick={() => void handleRoleChange(user.id, "teacher")}
-                                                    disabled={busyKey !== ""}
-                                                    style={actionButtonStyle("primary")}
-                                                >
-                                                    Promote Teacher
-                                                </button>
-
-                                                <button
-                                                    onClick={() => void handleRoleChange(user.id, "admin")}
-                                                    disabled={busyKey !== ""}
-                                                    style={actionButtonStyle("danger")}
-                                                >
-                                                    Make Admin
-                                                </button>
-
-                                                <button
-                                                    onClick={() =>
-                                                        void handleToggleActive(
-                                                            user.id,
-                                                            user.is_active === false
-                                                        )
-                                                    }
-                                                    disabled={busyKey !== ""}
-                                                    style={actionButtonStyle()}
-                                                >
-                                                    {user.is_active === false ? "Activate" : "Deactivate"}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -880,21 +1103,35 @@ export default function AdminPage() {
                                     <h2
                                         style={{
                                             margin: 0,
-                                            fontSize: 24,
+                                            fontSize: 26,
                                             fontWeight: 900,
                                         }}
                                     >
                                         Courses
                                     </h2>
-                                    <p style={{ margin: "6px 0 0 0", color: "#6B7280" }}>
-                                        Moderate publication state and delete courses
+                                    <p
+                                        style={{
+                                            margin: "6px 0 0 0",
+                                            color: "#6B7280",
+                                            fontSize: 15,
+                                        }}
+                                    >
+                                        {selectedSchool
+                                            ? `Moderate course publication for ${selectedSchool.name}.`
+                                            : "Select a school to view courses."}
                                     </p>
                                 </div>
                                 <Badge text={`${coursesRes?.total ?? 0} total`} kind="info" />
                             </div>
 
-                            {recentCourses.length === 0 ? (
-                                <div style={{ color: "#6B7280" }}>No courses found.</div>
+                            {!selectedSchool ? (
+                                <div style={{ color: "#6B7280", fontSize: 15 }}>
+                                    Select a school to view courses.
+                                </div>
+                            ) : recentCourses.length === 0 ? (
+                                <div style={{ color: "#6B7280", fontSize: 15 }}>
+                                    No courses found for this school.
+                                </div>
                             ) : (
                                 <div style={{ display: "grid", gap: 10 }}>
                                     {recentCourses.map((course) => (
@@ -922,7 +1159,7 @@ export default function AdminPage() {
                                                     <div
                                                         style={{
                                                             fontWeight: 900,
-                                                            fontSize: 16,
+                                                            fontSize: 17,
                                                             color: "#0F172A",
                                                         }}
                                                     >
@@ -999,14 +1236,14 @@ export default function AdminPage() {
                                 style={{
                                     marginTop: 0,
                                     marginBottom: 10,
-                                    fontSize: 24,
+                                    fontSize: 26,
                                     fontWeight: 900,
                                 }}
                             >
                                 Publishing overview
                             </h2>
 
-                            <div style={{ color: "#6B7280", marginBottom: 16 }}>
+                            <div style={{ color: "#6B7280", marginBottom: 16, fontSize: 15 }}>
                                 Quick view of course publishing health across the platform.
                             </div>
 
@@ -1017,10 +1254,12 @@ export default function AdminPage() {
                                     justifyContent: "space-between",
                                 }}
                             >
-                                <span style={{ color: "#475569", fontWeight: 700 }}>
+                                <span style={{ color: "#475569", fontWeight: 700, fontSize: 15 }}>
                                     Published rate
                                 </span>
-                                <span style={{ fontWeight: 900 }}>{derived.publishedRate}%</span>
+                                <span style={{ fontWeight: 900, fontSize: 15 }}>
+                                    {derived.publishedRate}%
+                                </span>
                             </div>
 
                             <div
@@ -1059,7 +1298,7 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <span style={{ color: "#475569", fontWeight: 700 }}>
+                                    <span style={{ color: "#475569", fontWeight: 700, fontSize: 15 }}>
                                         Published
                                     </span>
                                     <strong>{stats?.published_courses ?? 0}</strong>
@@ -1075,7 +1314,7 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <span style={{ color: "#475569", fontWeight: 700 }}>
+                                    <span style={{ color: "#475569", fontWeight: 700, fontSize: 15 }}>
                                         Draft
                                     </span>
                                     <strong>{derived.draftCourses}</strong>
@@ -1091,7 +1330,7 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <span style={{ color: "#475569", fontWeight: 700 }}>
+                                    <span style={{ color: "#475569", fontWeight: 700, fontSize: 15 }}>
                                         Enrollments
                                     </span>
                                     <strong>{stats?.total_enrollments ?? 0}</strong>
@@ -1104,7 +1343,7 @@ export default function AdminPage() {
                                 style={{
                                     marginTop: 0,
                                     marginBottom: 10,
-                                    fontSize: 24,
+                                    fontSize: 26,
                                     fontWeight: 900,
                                 }}
                             >
@@ -1118,9 +1357,11 @@ export default function AdminPage() {
                                         textDecoration: "none",
                                         padding: "14px 16px",
                                         borderRadius: 14,
-                                        background: "linear-gradient(90deg, #2563EB 0%, #3B82F6 100%)",
+                                        background:
+                                            "linear-gradient(90deg, #2563EB 0%, #3B82F6 100%)",
                                         color: "#FFFFFF",
                                         fontWeight: 800,
+                                        fontSize: 15,
                                     }}
                                 >
                                     Open teacher dashboard
@@ -1136,13 +1377,21 @@ export default function AdminPage() {
                                         color: "#0F172A",
                                         fontWeight: 800,
                                         border: "1px solid #E5E7EB",
+                                        fontSize: 15,
                                     }}
                                 >
                                     Browse course catalog
                                 </Link>
 
                                 <button
-                                    onClick={() => token && void loadDashboard(token, true)}
+                                    onClick={() => {
+                                        if (token) {
+                                            void loadOverview(token, true);
+                                            if (selectedSchoolId != null) {
+                                                void loadSchoolData(token, selectedSchoolId, true);
+                                            }
+                                        }
+                                    }}
                                     disabled={refreshing}
                                     style={{
                                         textAlign: "left",
@@ -1153,6 +1402,7 @@ export default function AdminPage() {
                                         fontWeight: 800,
                                         border: "1px solid #E5E7EB",
                                         cursor: "pointer",
+                                        fontSize: 15,
                                     }}
                                 >
                                     {refreshing ? "Refreshing admin data..." : "Refresh admin data"}
@@ -1165,7 +1415,7 @@ export default function AdminPage() {
                                 style={{
                                     marginTop: 0,
                                     marginBottom: 10,
-                                    fontSize: 24,
+                                    fontSize: 26,
                                     fontWeight: 900,
                                 }}
                             >
@@ -1181,12 +1431,13 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <div style={{ fontSize: 13, color: "#6B7280" }}>User mix</div>
+                                    <div style={{ fontSize: 14, color: "#6B7280" }}>User mix</div>
                                     <div
                                         style={{
                                             marginTop: 6,
                                             fontWeight: 800,
                                             color: "#0F172A",
+                                            fontSize: 15,
                                         }}
                                     >
                                         {stats?.total_students ?? 0} students •{" "}
@@ -1203,7 +1454,7 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <div style={{ fontSize: 13, color: "#6B7280" }}>
+                                    <div style={{ fontSize: 14, color: "#6B7280" }}>
                                         Course health
                                     </div>
                                     <div
@@ -1211,6 +1462,7 @@ export default function AdminPage() {
                                             marginTop: 6,
                                             fontWeight: 800,
                                             color: "#0F172A",
+                                            fontSize: 15,
                                         }}
                                     >
                                         {stats?.total_courses ?? 0} total courses with{" "}
@@ -1226,7 +1478,7 @@ export default function AdminPage() {
                                         border: "1px solid #E5E7EB",
                                     }}
                                 >
-                                    <div style={{ fontSize: 13, color: "#6B7280" }}>
+                                    <div style={{ fontSize: 14, color: "#6B7280" }}>
                                         Learning activity
                                     </div>
                                     <div
@@ -1234,12 +1486,48 @@ export default function AdminPage() {
                                             marginTop: 6,
                                             fontWeight: 800,
                                             color: "#0F172A",
+                                            fontSize: 15,
                                         }}
                                     >
                                         {stats?.total_enrollments ?? 0} enrollments recorded on the
                                         platform
                                     </div>
                                 </div>
+
+                                {selectedSchool && (
+                                    <div
+                                        style={{
+                                            padding: 14,
+                                            borderRadius: 14,
+                                            background: "#EFF6FF",
+                                            border: "1px solid #BFDBFE",
+                                        }}
+                                    >
+                                        <div style={{ fontSize: 14, color: "#1D4ED8" }}>
+                                            Selected school
+                                        </div>
+                                        <div
+                                            style={{
+                                                marginTop: 6,
+                                                fontWeight: 900,
+                                                color: "#0F172A",
+                                                fontSize: 16,
+                                            }}
+                                        >
+                                            {selectedSchool.name}
+                                        </div>
+                                        <div
+                                            style={{
+                                                marginTop: 8,
+                                                color: "#475569",
+                                                fontSize: 14,
+                                            }}
+                                        >
+                                            {selectedSchool.total_users} users •{" "}
+                                            {selectedSchool.total_courses} courses
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>

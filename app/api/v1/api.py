@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from app.api.v1.endpoints import courses, platform_admin
 
 from app.api.v1.endpoints import (
     auth,
@@ -42,4 +43,11 @@ api_router.include_router(
     dashboard.router,
     prefix="/dashboard",
     tags=["dashboard"],
+)
+
+api_router.include_router(courses.router, prefix="/courses", tags=["courses"])
+api_router.include_router(
+    platform_admin.router,
+    prefix="/platform-admin",
+    tags=["platform-admin"],
 )

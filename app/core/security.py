@@ -27,14 +27,17 @@ def create_access_token(
     data: Optional[Dict[str, Any]] = None,
     subject: Optional[str] = None,
     school_id: Optional[int] = None,
+    role: Optional[str] = None,
     expires_minutes: Optional[int] = None,
 ) -> str:
     """
     Multi-tenant safe token creation.
 
-    Requirements:
-    - school_id must be included for school-scoped users
+    Rules:
     - either `data` or `subject` must be provided
+    - school-scoped users should include `school_id`
+    - platform admins may have `school_id=None`
+    - including `role` is recommended for downstream auth checks
     """
 
     minutes = expires_minutes or settings.access_token_expire_minutes
@@ -43,17 +46,17 @@ def create_access_token(
     if data is not None:
         payload = data.copy()
 
-        if "school_id" not in payload:
-            raise ValueError("Token payload must include 'school_id'")
+        if "sub" not in payload:
+            raise ValueError("Token payload must include 'sub'")
 
     elif subject is not None:
-        if school_id is None:
-            raise ValueError("school_id is required when using subject")
-
         payload = {
             "sub": subject,
             "school_id": school_id,
         }
+
+        if role is not None:
+            payload["role"] = role
 
     else:
         raise ValueError("Either 'data' or 'subject' must be provided")

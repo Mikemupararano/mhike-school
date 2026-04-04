@@ -27,8 +27,15 @@ async def get_current_user(
 
         user_id = payload.get("sub")
         school_id = payload.get("school_id")
+        role = payload.get("role")
 
-        if user_id is None or school_id is None:
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+            )
+
+        if role != "platform_admin" and school_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",
@@ -40,14 +47,16 @@ async def get_current_user(
             detail="Invalid token",
         ) from exc
 
-    result = await db.execute(
-        select(User)
-        .options(selectinload(User.school))
-        .where(
-            User.id == int(user_id),
-            User.school_id == int(school_id),
-        )
+    query = (
+        select(User).options(selectinload(User.school)).where(User.id == int(user_id))
     )
+
+    if school_id is None:
+        query = query.where(User.school_id.is_(None))
+    else:
+        query = query.where(User.school_id == int(school_id))
+
+    result = await db.execute(query)
     user = result.scalar_one_or_none()
 
     if user is None:

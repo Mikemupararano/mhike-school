@@ -11,13 +11,12 @@ class AuthService:
     @staticmethod
     async def register(db: AsyncSession, payload: RegisterIn) -> User:
         normalized_email = payload.email.strip().lower()
-        normalized_role = payload.role.strip().lower()
+        normalized_role = (payload.role or "student").strip().lower()
 
         allowed_roles = {"student", "teacher", "admin", "platform_admin"}
         if normalized_role not in allowed_roles:
             raise ValueError("Invalid role.")
 
-        school = None
         school_id: int | None = None
 
         if normalized_role != "platform_admin":
@@ -67,16 +66,24 @@ class AuthService:
     async def login(db: AsyncSession, payload: LoginIn) -> TokenOut:
         normalized_email = payload.email.strip().lower()
 
+        # Platform admin login: no school_id required
         if payload.school_id is None:
-            raise ValueError("school_id is required.")
-
-        res = await db.execute(
-            select(User).where(
-                User.email == normalized_email,
-                User.school_id == payload.school_id,
+            res = await db.execute(
+                select(User).where(
+                    User.email == normalized_email,
+                    User.school_id.is_(None),
+                    User.role == "platform_admin",
+                )
             )
-        )
-        user = res.scalar_one_or_none()
+            user = res.scalar_one_or_none()
+        else:
+            res = await db.execute(
+                select(User).where(
+                    User.email == normalized_email,
+                    User.school_id == payload.school_id,
+                )
+            )
+            user = res.scalar_one_or_none()
 
         if not user or not verify_password(payload.password, user.hashed_password):
             raise ValueError("Invalid credentials.")
@@ -85,8 +92,11 @@ class AuthService:
             raise ValueError("User account is inactive.")
 
         token = create_access_token(
-            subject=str(user.id),
-            school_id=user.school_id,
+            data={
+                "sub": str(user.id),
+                "school_id": user.school_id,
+                "role": user.role,
+            }
         )
 
         return TokenOut(

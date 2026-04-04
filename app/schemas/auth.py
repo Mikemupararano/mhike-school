@@ -5,7 +5,7 @@ from typing import Optional
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
-    school_id: int
+    school_id: Optional[int] = None
     full_name: Optional[str] = None
     role: Optional[str] = "student"
 
@@ -13,7 +13,7 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
-    school_id: int
+    school_id: Optional[int] = None
 
 
 class TokenOut(BaseModel):
