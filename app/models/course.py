@@ -41,3 +41,9 @@ class Course(Base):
         cascade="all, delete-orphan",
         order_by="Module.order",
     )
+
+    assignments = relationship(
+        "Assignment",
+        back_populates="course",
+        cascade="all, delete-orphan",
+    )

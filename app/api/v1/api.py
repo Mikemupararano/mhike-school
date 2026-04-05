@@ -1,13 +1,16 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import courses, platform_admin
 
 from app.api.v1.endpoints import (
     auth,
     classes,
-    dashboard,  # ✅ added
+    dashboard,
     enrollments,
     school_users,
     schools,
+    courses,
+    platform_admin,
+    assignments,  # ✅ NEW
+    assignment_submissions,  # ✅ NEW
 )
 
 api_router = APIRouter()
@@ -38,14 +41,30 @@ api_router.include_router(
     tags=["enrollments"],
 )
 
-# ✅ NEW: dashboard routes
 api_router.include_router(
     dashboard.router,
     prefix="/dashboard",
     tags=["dashboard"],
 )
 
-api_router.include_router(courses.router, prefix="/courses", tags=["courses"])
+api_router.include_router(
+    courses.router,
+    prefix="/courses",
+    tags=["courses"],
+)
+
+api_router.include_router(
+    assignments.router,
+    prefix="/assignments",
+    tags=["assignments"],
+)
+
+api_router.include_router(
+    assignment_submissions.router,
+    prefix="/assignment-submissions",
+    tags=["assignment-submissions"],
+)
+
 api_router.include_router(
     platform_admin.router,
     prefix="/platform-admin",
