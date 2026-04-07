@@ -3,6 +3,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet, clearToken, getToken } from "@/lib/api";
+import DashboardShell from "@/components/layout/DashboardShell";
+import SchoolHero from "@/components/school/SchoolHero";
+import SchoolStatsCards from "@/components/school/SchoolStatsCards";
 import { useAuth } from "@/providers/AuthProvider";
 
 type NextLessonOut = {
@@ -58,38 +61,6 @@ function ProgressBar({ value }: { value: number }) {
     );
 }
 
-function StatCard({
-    label,
-    value,
-}: {
-    label: string;
-    value: React.ReactNode;
-}) {
-    return (
-        <div
-            style={{
-                background: "white",
-                border: "1px solid #E5E7EB",
-                borderRadius: 18,
-                padding: 18,
-                boxShadow: "0 6px 16px rgba(0, 0, 0, 0.05)",
-            }}
-        >
-            <div style={{ color: "#6B7280", fontSize: 13 }}>{label}</div>
-            <div
-                style={{
-                    fontSize: 34,
-                    fontWeight: 800,
-                    marginTop: 8,
-                    color: "#111827",
-                }}
-            >
-                {value}
-            </div>
-        </div>
-    );
-}
-
 function Panel({
     title,
     children,
@@ -141,11 +112,6 @@ export default function DashboardPage() {
     const displaySchoolName = useMemo(() => {
         return data?.school_name?.trim() || user?.school_name?.trim() || "Your School";
     }, [data, user]);
-
-    const displayInitial = useMemo(() => {
-        const source = displayName.trim();
-        return source ? source.charAt(0).toUpperCase() : "S";
-    }, [displayName]);
 
     const stats = useMemo(() => {
         if (!data) return null;
@@ -227,12 +193,6 @@ export default function DashboardPage() {
         }
     }
 
-    function handleLogout() {
-        setData(null);
-        clearToken();
-        router.replace("/login");
-    }
-
     function scrollToProgress() {
         progressSectionRef.current?.scrollIntoView({
             behavior: "smooth",
@@ -246,204 +206,86 @@ export default function DashboardPage() {
         void loadDashboard();
     }, []);
 
-    return (
-        <main
-            style={{
-                minHeight: "100vh",
-                background: "#F3F6FB",
-                color: "#111827",
-            }}
-        >
-            <nav
-                style={{
-                    background: "linear-gradient(90deg, #1E3A8A, #2563EB)",
-                    color: "white",
-                    padding: "16px 28px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    boxShadow: "0 10px 30px rgba(37, 99, 235, 0.18)",
-                }}
+    const handleRefresh = () => {
+        void loadDashboard({ silent: true });
+    };
+
+    const statItems = useMemo(
+        () => [
+            {
+                label: "Courses enrolled",
+                value: stats?.enrolled ?? 0,
+            },
+            {
+                label: "Lessons completed",
+                value: stats?.completed ?? 0,
+            },
+            {
+                label: "Average progress",
+                value: `${stats?.averageProgress ?? 0}%`,
+            },
+        ],
+        [stats]
+    );
+
+    if (loading) {
+        return (
+            <DashboardShell
+                userName={displayName}
+                schoolName={displaySchoolName}
+                showSidebar={false}
+                showRefresh={false}
+                showLogout={true}
+                contentClassName="bg-[#F8FAFC]"
             >
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                    <div
-                        style={{
-                            width: 38,
-                            height: 38,
-                            borderRadius: 12,
-                            background: "rgba(255,255,255,0.15)",
-                            display: "grid",
-                            placeItems: "center",
-                            fontSize: 20,
-                        }}
-                    >
-                        🎓
-                    </div>
-                    <div style={{ fontSize: 28, fontWeight: 800 }}>Mhike School</div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div
-                        style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            padding: "8px 12px",
-                            borderRadius: 999,
-                            background: "rgba(255,255,255,0.12)",
-                            border: "1px solid rgba(255,255,255,0.18)",
-                        }}
-                    >
-                        <div
-                            style={{
-                                width: 30,
-                                height: 30,
-                                borderRadius: "50%",
-                                background: "#DBEAFE",
-                                color: "#1D4ED8",
-                                display: "grid",
-                                placeItems: "center",
-                                fontWeight: 900,
-                            }}
-                        >
-                            {displayInitial}
-                        </div>
-
-                        <div
-                            style={{
-                                display: "flex",
-                                flexDirection: "column",
-                                lineHeight: 1.1,
-                            }}
-                        >
-                            <span style={{ fontWeight: 700 }}>{displayName}</span>
-                            <span style={{ fontSize: 12, opacity: 0.85 }}>
-                                {displaySchoolName}
-                            </span>
-                        </div>
-                    </div>
-
-                    <button
-                        onClick={() => void loadDashboard({ silent: true })}
-                        disabled={refreshing}
-                        style={{
-                            padding: "10px 16px",
-                            borderRadius: 12,
-                            border: "1px solid rgba(255,255,255,0.25)",
-                            background: "rgba(255,255,255,0.12)",
-                            color: "white",
-                            fontWeight: 700,
-                            cursor: refreshing ? "not-allowed" : "pointer",
-                            opacity: refreshing ? 0.7 : 1,
-                        }}
-                    >
-                        {refreshing ? "Refreshing..." : "Refresh"}
-                    </button>
-
-                    <button
-                        onClick={handleLogout}
-                        style={{
-                            padding: "10px 16px",
-                            borderRadius: 12,
-                            border: "none",
-                            background: "white",
-                            color: "#1E3A8A",
-                            fontWeight: 800,
-                            cursor: "pointer",
-                        }}
-                    >
-                        Logout
-                    </button>
-                </div>
-            </nav>
-
-            <div style={{ maxWidth: 1250, margin: "0 auto", padding: 24 }}>
-                <section
+                <div
                     style={{
-                        background: "linear-gradient(120deg, #1D4ED8, #60A5FA)",
-                        borderRadius: 28,
-                        color: "white",
-                        padding: "24px 30px",
-                        display: "grid",
-                        gridTemplateColumns: "1.4fr 1fr",
-                        gap: 24,
-                        alignItems: "center",
-                        boxShadow: "0 18px 40px rgba(37, 99, 235, 0.2)",
+                        background: "white",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: 20,
+                        padding: 20,
+                        boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
                     }}
                 >
-                    <div>
-                        <div style={{ fontSize: 18, opacity: 0.9 }}>
-                            {displaySchoolName} · Student dashboard
-                        </div>
-                        <h1
-                            style={{
-                                fontSize: 46,
-                                lineHeight: 1.1,
-                                margin: "12px 0 10px 0",
-                                fontWeight: 900,
-                            }}
-                        >
-                            Welcome back, {displayName}!
-                        </h1>
-
-                        <p style={{ fontSize: 18, margin: 0, opacity: 0.95 }}>
-                            Continue your learning journey and stay on top of your progress.
-                        </p>
-
-                        <div
-                            style={{
-                                display: "flex",
-                                gap: 12,
-                                marginTop: 24,
-                                flexWrap: "wrap",
-                            }}
-                        >
-                            <button
-                                onClick={scrollToProgress}
-                                style={{
-                                    padding: "14px 20px",
-                                    borderRadius: 14,
-                                    border: "none",
-                                    background: "white",
-                                    color: "#1D4ED8",
-                                    fontWeight: 800,
-                                    cursor: "pointer",
-                                }}
-                            >
-                                View Progress
-                            </button>
-
-                            <button
-                                onClick={() => router.push("/dashboard")}
-                                style={{
-                                    padding: "14px 20px",
-                                    borderRadius: 14,
-                                    border: "1px solid rgba(255,255,255,0.35)",
-                                    background: "rgba(255,255,255,0.1)",
-                                    color: "white",
-                                    fontWeight: 700,
-                                    cursor: "pointer",
-                                }}
-                            >
-                                Student Dashboard
-                            </button>
-                        </div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: "#111827" }}>
+                        Loading student dashboard...
                     </div>
+                </div>
+            </DashboardShell>
+        );
+    }
 
-                    <div
-                        style={{
-                            minHeight: 190,
-                            borderRadius: 24,
-                            background:
-                                "radial-gradient(circle at top right, rgba(255,255,255,0.35), rgba(255,255,255,0.08))",
-                            display: "grid",
-                            placeItems: "center",
-                            fontSize: 90,
-                        }}
-                    >
-                        📘
-                    </div>
-                </section>
+    return (
+        <DashboardShell
+            userName={displayName}
+            schoolName={displaySchoolName}
+            showSidebar={false}
+            showRefresh={true}
+            refreshLabel={refreshing ? "Refreshing..." : "Refresh"}
+            onRefresh={handleRefresh}
+            showLogout={true}
+            contentClassName="bg-[#F8FAFC]"
+        >
+            <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+                <SchoolHero
+                    schoolName={displaySchoolName}
+                    roleLabel="Student dashboard"
+                    title={`Welcome back, ${displayName}!`}
+                    subtitle="Continue your learning journey and stay on top of your progress."
+                    actions={[
+                        {
+                            label: "View Progress",
+                            onClick: scrollToProgress,
+                            variant: "primary",
+                        },
+                        {
+                            label: "Student Dashboard",
+                            href: "/dashboard",
+                            variant: "secondary",
+                        },
+                    ]}
+                    rightContent={<div className="text-6xl">📘</div>}
+                />
 
                 {error && (
                     <div
@@ -460,27 +302,9 @@ export default function DashboardPage() {
                     </div>
                 )}
 
-                <section
-                    style={{
-                        marginTop: 22,
-                        display: "grid",
-                        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                        gap: 18,
-                    }}
-                >
-                    <StatCard
-                        label="Courses enrolled"
-                        value={stats?.enrolled ?? (loading ? "…" : 0)}
-                    />
-                    <StatCard
-                        label="Lessons completed"
-                        value={stats?.completed ?? (loading ? "…" : 0)}
-                    />
-                    <StatCard
-                        label="Average progress"
-                        value={loading && !stats ? "…" : `${stats?.averageProgress ?? 0}%`}
-                    />
-                </section>
+                <div style={{ marginTop: 22 }}>
+                    <SchoolStatsCards items={statItems} />
+                </div>
 
                 <section
                     style={{
@@ -504,15 +328,24 @@ export default function DashboardPage() {
                             )}
 
                             {data && data.courses.length > 0 && (
-                                <div style={{ display: "grid", gap: 16, opacity: refreshing ? 0.75 : 1 }}>
+                                <div
+                                    style={{
+                                        display: "grid",
+                                        gap: 16,
+                                        opacity: refreshing ? 0.75 : 1,
+                                    }}
+                                >
                                     {data.courses.map((course) => {
                                         const isComplete =
-                                            !course.next_lesson || course.progress_percent >= 100;
+                                            !course.next_lesson ||
+                                            course.progress_percent >= 100;
 
                                         return (
                                             <div
                                                 key={course.course_id}
-                                                onClick={() => router.push(`/courses/${course.course_id}`)}
+                                                onClick={() =>
+                                                    router.push(`/courses/${course.course_id}`)
+                                                }
                                                 style={{
                                                     border: "1px solid #E5E7EB",
                                                     borderRadius: 18,
@@ -539,8 +372,14 @@ export default function DashboardPage() {
                                                         >
                                                             {course.title}
                                                         </div>
-                                                        <div style={{ color: "#6B7280", marginTop: 6 }}>
-                                                            {course.completed_lessons}/{course.total_lessons} lessons ·{" "}
+                                                        <div
+                                                            style={{
+                                                                color: "#6B7280",
+                                                                marginTop: 6,
+                                                            }}
+                                                        >
+                                                            {course.completed_lessons}/
+                                                            {course.total_lessons} lessons ·{" "}
                                                             {course.progress_percent}%
                                                         </div>
                                                     </div>
@@ -550,18 +389,26 @@ export default function DashboardPage() {
                                                             fontSize: 12,
                                                             padding: "6px 10px",
                                                             borderRadius: 999,
-                                                            background: course.published ? "#DCFCE7" : "#FEF3C7",
-                                                            color: course.published ? "#166534" : "#92400E",
+                                                            background: course.published
+                                                                ? "#DCFCE7"
+                                                                : "#FEF3C7",
+                                                            color: course.published
+                                                                ? "#166534"
+                                                                : "#92400E",
                                                             fontWeight: 800,
                                                         }}
                                                         onClick={(e) => e.stopPropagation()}
                                                     >
-                                                        {course.published ? "Published" : "Draft"}
+                                                        {course.published
+                                                            ? "Published"
+                                                            : "Draft"}
                                                     </span>
                                                 </div>
 
                                                 <div style={{ marginTop: 14 }}>
-                                                    <ProgressBar value={course.progress_percent} />
+                                                    <ProgressBar
+                                                        value={course.progress_percent}
+                                                    />
                                                 </div>
 
                                                 <div
@@ -573,10 +420,21 @@ export default function DashboardPage() {
                                                         gap: 12,
                                                     }}
                                                 >
-                                                    <div style={{ color: "#4B5563", fontSize: 14 }}>
+                                                    <div
+                                                        style={{
+                                                            color: "#4B5563",
+                                                            fontSize: 14,
+                                                        }}
+                                                    >
                                                         {course.next_lesson ? (
                                                             <>
-                                                                Next lesson: <b>{course.next_lesson.title}</b>
+                                                                Next lesson:{" "}
+                                                                <b>
+                                                                    {
+                                                                        course.next_lesson
+                                                                            .title
+                                                                    }
+                                                                </b>
                                                             </>
                                                         ) : (
                                                             <>All lessons completed 🎉</>
@@ -588,17 +446,25 @@ export default function DashboardPage() {
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             if (course.next_lesson) {
-                                                                router.push(`/lessons/${course.next_lesson.lesson_id}`);
+                                                                router.push(
+                                                                    `/lessons/${course.next_lesson.lesson_id}`
+                                                                );
                                                             }
                                                         }}
                                                         style={{
                                                             padding: "10px 14px",
                                                             borderRadius: 12,
                                                             border: "none",
-                                                            background: isComplete ? "#E5E7EB" : "#2563EB",
-                                                            color: isComplete ? "#6B7280" : "white",
+                                                            background: isComplete
+                                                                ? "#E5E7EB"
+                                                                : "#2563EB",
+                                                            color: isComplete
+                                                                ? "#6B7280"
+                                                                : "white",
                                                             fontWeight: 800,
-                                                            cursor: isComplete ? "not-allowed" : "pointer",
+                                                            cursor: isComplete
+                                                                ? "not-allowed"
+                                                                : "pointer",
                                                         }}
                                                     >
                                                         Continue
@@ -610,9 +476,14 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {!loading && data && data.courses.length === 0 && refreshing && (
-                                <div style={{ color: "#6B7280", marginTop: 8 }}>Refreshing...</div>
-                            )}
+                            {!loading &&
+                                data &&
+                                data.courses.length === 0 &&
+                                refreshing && (
+                                    <div style={{ color: "#6B7280", marginTop: 8 }}>
+                                        Refreshing...
+                                    </div>
+                                )}
                         </Panel>
 
                         <Panel title="Quick Links">
@@ -623,7 +494,8 @@ export default function DashboardPage() {
                                         padding: "16px 18px",
                                         borderRadius: 14,
                                         border: "1px solid #DBEAFE",
-                                        background: "linear-gradient(90deg, #3B82F6, #2563EB)",
+                                        background:
+                                            "linear-gradient(90deg, #3B82F6, #2563EB)",
                                         color: "white",
                                         fontWeight: 700,
                                         textAlign: "left",
@@ -639,7 +511,8 @@ export default function DashboardPage() {
                                         padding: "16px 18px",
                                         borderRadius: 14,
                                         border: "1px solid #DBEAFE",
-                                        background: "linear-gradient(90deg, #3B82F6, #2563EB)",
+                                        background:
+                                            "linear-gradient(90deg, #3B82F6, #2563EB)",
                                         color: "white",
                                         fontWeight: 700,
                                         textAlign: "left",
@@ -655,7 +528,8 @@ export default function DashboardPage() {
                                         padding: "16px 18px",
                                         borderRadius: 14,
                                         border: "1px solid #DBEAFE",
-                                        background: "linear-gradient(90deg, #3B82F6, #2563EB)",
+                                        background:
+                                            "linear-gradient(90deg, #3B82F6, #2563EB)",
                                         color: "white",
                                         fontWeight: 700,
                                         textAlign: "left",
@@ -670,10 +544,18 @@ export default function DashboardPage() {
 
                     <div style={{ display: "grid", gap: 18 }}>
                         <Panel title="Upcoming Assignment">
-                            <div style={{ color: "#111827", fontWeight: 700, fontSize: 18 }}>
+                            <div
+                                style={{
+                                    color: "#111827",
+                                    fontWeight: 700,
+                                    fontSize: 18,
+                                }}
+                            >
                                 Project Report Submission
                             </div>
-                            <div style={{ marginTop: 8, color: "#6B7280" }}>Due this week</div>
+                            <div style={{ marginTop: 8, color: "#6B7280" }}>
+                                Due this week
+                            </div>
                             <button
                                 onClick={() => router.push("/assignments")}
                                 style={{
@@ -694,15 +576,25 @@ export default function DashboardPage() {
                         <div ref={progressSectionRef}>
                             <Panel title="Course Progress">
                                 {loading && !data && (
-                                    <div style={{ color: "#6B7280" }}>Loading progress...</div>
+                                    <div style={{ color: "#6B7280" }}>
+                                        Loading progress...
+                                    </div>
                                 )}
 
                                 {!loading && data && data.courses.length === 0 && (
-                                    <div style={{ color: "#6B7280" }}>No course progress yet.</div>
+                                    <div style={{ color: "#6B7280" }}>
+                                        No course progress yet.
+                                    </div>
                                 )}
 
                                 {data && data.courses.length > 0 && (
-                                    <div style={{ display: "grid", gap: 16, opacity: refreshing ? 0.75 : 1 }}>
+                                    <div
+                                        style={{
+                                            display: "grid",
+                                            gap: 16,
+                                            opacity: refreshing ? 0.75 : 1,
+                                        }}
+                                    >
                                         {data.courses.slice(0, 3).map((course) => (
                                             <div key={course.course_id}>
                                                 <div
@@ -716,7 +608,9 @@ export default function DashboardPage() {
                                                     <span>{course.title}</span>
                                                     <b>{course.progress_percent}%</b>
                                                 </div>
-                                                <ProgressBar value={course.progress_percent} />
+                                                <ProgressBar
+                                                    value={course.progress_percent}
+                                                />
                                             </div>
                                         ))}
                                     </div>
@@ -740,7 +634,8 @@ export default function DashboardPage() {
                                     cursor: "pointer",
                                 }}
                             >
-                                Live Q&amp;A session tomorrow at 3 PM. Don&apos;t miss it.
+                                Live Q&amp;A session tomorrow at 3 PM. Don&apos;t miss
+                                it.
                             </button>
                         </Panel>
 
@@ -791,11 +686,18 @@ export default function DashboardPage() {
                                             textAlign: "left",
                                         }}
                                     >
-                                        <div style={{ fontWeight: 900, color: "#2563EB" }}>
+                                        <div
+                                            style={{
+                                                fontWeight: 900,
+                                                color: "#2563EB",
+                                            }}
+                                        >
                                             {rank}
                                         </div>
                                         <div>{name}</div>
-                                        <div style={{ fontWeight: 800 }}>{score}</div>
+                                        <div style={{ fontWeight: 800 }}>
+                                            {score}
+                                        </div>
                                     </button>
                                 ))}
                             </div>
@@ -803,6 +705,6 @@ export default function DashboardPage() {
                     </div>
                 </section>
             </div>
-        </main>
+        </DashboardShell>
     );
 }

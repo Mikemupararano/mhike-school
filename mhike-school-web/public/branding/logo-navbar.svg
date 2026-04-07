@@ -1,0 +1,26 @@
+<svg width="900" height="140" viewBox="0 0 900 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bookBlue" x1="24" y1="48" x2="152" y2="132" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#52D3F2"/>
+      <stop offset="1" stop-color="#2B67F6"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(16 8)">
+    <path d="M79 10L142 29L79 48L16 29L79 10Z" fill="#F8FBFF"/>
+    <path d="M30 35V74L79 101V48L30 35Z" fill="#D5E3FF"/>
+    <path d="M128 35V74L79 101V48L128 35Z" fill="#EDF3FF"/>
+    <path d="M22 80L79 113L136 80L142 84L79 121L16 84L22 80Z" fill="#2358E4"/>
+    <path d="M27 74V107C27 107 37 116 79 116C121 116 131 107 131 107V74" fill="#59D3F1"/>
+    <path d="M27 74C27 74 39 63 79 63C119 63 131 74 131 74" fill="#204FDE"/>
+    <path d="M27 74V107C27 107 44 93 79 93C114 93 131 107 131 107V74C131 74 114 88 79 88C44 88 27 74 27 74Z" fill="url(#bookBlue)"/>
+    <path d="M77 73V106" stroke="#173EAF" stroke-width="4" stroke-linecap="round"/>
+    <path d="M91 82L112 82L112 62L130 62L130 103L112 103L112 89L91 89V82Z" fill="#EFF7FF"/>
+    <path d="M92 100L127 65" stroke="#EFF7FF" stroke-width="5" stroke-linecap="round"/>
+    <path d="M16 29L79 6L142 29L79 52L16 29Z" fill="#F8FBFF"/>
+    <path d="M49 37V64" stroke="#F4BC2A" stroke-width="5" stroke-linecap="round"/>
+    <path d="M49 64L42 78L49 73L56 78L49 64Z" fill="#F4BC2A"/>
+    <path d="M89 18H114L127 24L114 31H89V18Z" fill="#4772FF"/>
+  </g>
+  <text x="178" y="68" fill="#FFFFFF" font-family="Inter, Arial, Helvetica, sans-serif" font-size="52" font-weight="800" letter-spacing="-1.2">Mhike</text>
+  <text x="368" y="68" fill="#F7C458" font-family="Inter, Arial, Helvetica, sans-serif" font-size="52" font-weight="700" letter-spacing="-1.2">School</text>
+</svg>

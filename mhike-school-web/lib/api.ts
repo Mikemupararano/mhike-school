@@ -31,6 +31,19 @@ function buildUrl(path: string): string {
 }
 
 /**
+ * Build headers safely
+ */
+function buildHeaders(token?: string): HeadersInit {
+    const authToken = token ?? getToken();
+
+    return {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    };
+}
+
+/**
  * Unified response handler
  */
 async function handle<T>(res: Response): Promise<T> {
@@ -39,7 +52,7 @@ async function handle<T>(res: Response): Promise<T> {
 
         try {
             const data = await res.json();
-            message = data?.detail || JSON.stringify(data);
+            message = data?.detail || data?.message || JSON.stringify(data);
         } catch {
             try {
                 message = await res.text();
@@ -55,19 +68,12 @@ async function handle<T>(res: Response): Promise<T> {
         throw new Error(message);
     }
 
+    // Important for DELETE 204 responses
+    if (res.status === 204) {
+        return undefined as T;
+    }
+
     return res.json() as Promise<T>;
-}
-
-/**
- * Build headers safely
- */
-function buildHeaders(token?: string): HeadersInit {
-    const authToken = token ?? getToken();
-
-    return {
-        "Content-Type": "application/json",
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    };
 }
 
 /**

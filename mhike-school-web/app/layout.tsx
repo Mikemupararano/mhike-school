@@ -1,8 +1,14 @@
+import "./globals.css";
 import { AuthProvider } from "@/providers/AuthProvider";
 
 export const metadata = {
   title: "Mhike School",
-  description: "Mhike School frontend",
+  description: "Mhike School LMS platform",
+  icons: {
+    icon: "/branding/favicon.png",
+    shortcut: "/branding/favicon.png",
+    apple: "/branding/icon.png",
+  },
 };
 
 export default function RootLayout({
@@ -15,7 +21,7 @@ export default function RootLayout({
       <body
         style={{
           margin: 0,
-          fontFamily: "Arial, sans-serif",
+          fontFamily: "Inter, Arial, sans-serif",
           background: "#f8fafc",
         }}
       >
