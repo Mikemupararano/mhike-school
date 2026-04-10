@@ -3,21 +3,17 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-type SidebarItem = {
-    label: string;
-    href: string;
-    icon?: string;
-};
+import { getSidebarItems, type SidebarItem, type SidebarRole } from "@/lib/navigation/sidebar";
 
 type SidebarProps = {
     title?: string;
     items?: SidebarItem[];
+    role?: SidebarRole;
     collapsed?: boolean;
     className?: string;
 };
 
-const defaultItems: SidebarItem[] = [
+const fallbackItems: SidebarItem[] = [
     { label: "Dashboard", href: "/dashboard", icon: "/icons/dashboard.svg" },
     { label: "Courses", href: "/courses", icon: "/icons/book.svg" },
     { label: "Classes", href: "/teacher/classes", icon: "/icons/class.svg" },
@@ -28,11 +24,13 @@ const defaultItems: SidebarItem[] = [
 
 export default function Sidebar({
     title = "Mhike School",
-    items = defaultItems,
+    items,
+    role = "teacher",
     collapsed = false,
     className = "",
 }: SidebarProps) {
     const pathname = usePathname();
+    const resolvedItems = items ?? getSidebarItems(role) ?? fallbackItems;
 
     return (
         <aside
@@ -43,8 +41,7 @@ export default function Sidebar({
                 <div className="border-b border-slate-200 px-5 py-5">
                     <Link
                         href="/"
-                        className={`flex items-start ${collapsed ? "justify-center" : "gap-3"
-                            }`}
+                        className={`flex items-start ${collapsed ? "justify-center" : "gap-3"}`}
                     >
                         <Image
                             src="/branding/icon.png"
@@ -70,10 +67,10 @@ export default function Sidebar({
 
                 <nav className="flex-1 px-3 py-4">
                     <div className="grid gap-2">
-                        {items.map((item) => {
+                        {resolvedItems.map((item) => {
                             const active =
                                 pathname === item.href ||
-                                (item.href !== "/" && pathname.startsWith(item.href));
+                                (item.href !== "/" && pathname.startsWith(`${item.href}/`));
 
                             return (
                                 <Link
@@ -81,7 +78,7 @@ export default function Sidebar({
                                     href={item.href}
                                     className={`flex items-center rounded-2xl px-4 py-3.5 transition ${collapsed ? "justify-center" : "gap-3"
                                         } ${active
-                                            ? "bg-blue-100 text-blue-800 shadow-sm"
+                                            ? "bg-blue-100 text-blue-800 shadow-sm ring-1 ring-blue-200"
                                             : "text-slate-700 hover:bg-white hover:text-slate-900"
                                         }`}
                                 >
