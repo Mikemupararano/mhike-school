@@ -1,5 +1,7 @@
 import { apiGet, apiPost } from "@/lib/api";
 
+const PLATFORM_ADMIN_BASE = "/platform-admin";
+
 export type AdminStatsOut = {
     scope?: "platform" | "school";
     school_id?: number | null;
@@ -74,92 +76,90 @@ export type AdminCoursesResponse = {
     limit: number;
 };
 
+type GetPlatformSchoolsParams = {
+    search?: string;
+};
+
+type GetAdminUsersParams = {
+    school_id?: number;
+    role?: string;
+    search?: string;
+    skip?: number;
+    limit?: number;
+};
+
+type GetAdminCoursesParams = {
+    school_id?: number;
+    search?: string;
+    skip?: number;
+    limit?: number;
+};
+
+function buildQuery(
+    params?: Record<string, string | number | undefined | null>
+): string {
+    const qs = new URLSearchParams();
+
+    if (!params) return "";
+
+    Object.entries(params).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") return;
+        qs.set(key, String(value));
+    });
+
+    const query = qs.toString();
+    return query ? `?${query}` : "";
+}
+
 export async function getAdminStats(token: string) {
-    return apiGet<AdminStatsOut>("/platform-admin/dashboard", token);
+    return apiGet<AdminStatsOut>(`${PLATFORM_ADMIN_BASE}/dashboard`, token);
 }
 
 export async function getPlatformSchools(
     token: string,
-    params?: {
-        search?: string;
-    }
+    params?: GetPlatformSchoolsParams
 ) {
-    const qs = new URLSearchParams();
-
-    if (params?.search) qs.set("search", params.search);
-
-    const query = qs.toString();
+    const query = buildQuery({
+        search: params?.search,
+    });
 
     return apiGet<PlatformSchoolSummaryOut[]>(
-        `/platform-admin/schools${query ? `?${query}` : ""}`,
+        `${PLATFORM_ADMIN_BASE}/schools${query}`,
         token
     );
 }
 
 export async function getAdminUsers(
     token: string,
-    params?: {
-        school_id?: number;
-        role?: string;
-        search?: string;
-        skip?: number;
-        limit?: number;
-    }
+    params?: GetAdminUsersParams
 ) {
-    const qs = new URLSearchParams();
-
-    if (params?.school_id !== undefined) {
-        qs.set("school_id", String(params.school_id));
-    }
-    if (params?.role && params.role !== "all") {
-        qs.set("role", params.role);
-    }
-    if (params?.search) {
-        qs.set("search", params.search);
-    }
-    if (params?.skip !== undefined) {
-        qs.set("skip", String(params.skip));
-    }
-    if (params?.limit !== undefined) {
-        qs.set("limit", String(params.limit));
-    }
-
-    const query = qs.toString();
+    const query = buildQuery({
+        school_id: params?.school_id,
+        role: params?.role && params.role !== "all" ? params.role : undefined,
+        search: params?.search,
+        skip: params?.skip,
+        limit: params?.limit,
+    });
 
     return apiGet<AdminUsersResponse>(
-        `/platform-admin/users${query ? `?${query}` : ""}`,
+        `${PLATFORM_ADMIN_BASE}/users${query}`,
         token
     );
 }
 
 export async function getAdminCourses(
     token: string,
-    params?: {
-        school_id?: number;
-        search?: string;
-        skip?: number;
-        limit?: number;
-    }
+    params?: GetAdminCoursesParams
 ) {
-    const qs = new URLSearchParams();
-
-    if (params?.school_id !== undefined) {
-        qs.set("school_id", String(params.school_id));
-    }
-    if (params?.search) {
-        qs.set("search", params.search);
-    }
-    if (params?.skip !== undefined) {
-        qs.set("skip", String(params.skip));
-    }
-    if (params?.limit !== undefined) {
-        qs.set("limit", String(params.limit));
-    }
-
-    const query = qs.toString();
+    const query = buildQuery({
+        school_id: params?.school_id,
+        search: params?.search,
+        skip: params?.skip,
+        limit: params?.limit,
+    });
 
     return apiGet<AdminCoursesResponse>(
-        `/platform-admin/courses${query ? `?${query}` : ""}`,
+        `${PLATFORM_ADMIN_BASE}/courses${query}`,
         token
     );
 }
@@ -170,7 +170,7 @@ export async function updateUserRole(
     role: "student" | "teacher" | "admin"
 ) {
     return apiPost<AdminUserOut>(
-        `/platform-admin/users/${userId}/role`,
+        `${PLATFORM_ADMIN_BASE}/users/${userId}/role`,
         { role },
         token
     );
@@ -182,7 +182,7 @@ export async function toggleUserActive(
     is_active: boolean
 ) {
     return apiPost<AdminUserOut>(
-        `/platform-admin/users/${userId}/active`,
+        `${PLATFORM_ADMIN_BASE}/users/${userId}/active`,
         { is_active },
         token
     );
@@ -194,7 +194,7 @@ export async function setCoursePublished(
     published: boolean
 ) {
     return apiPost<AdminCourseOut>(
-        `/platform-admin/courses/${courseId}/publish`,
+        `${PLATFORM_ADMIN_BASE}/courses/${courseId}/publish`,
         { published },
         token
     );
@@ -202,7 +202,7 @@ export async function setCoursePublished(
 
 export async function deleteCourseAdmin(token: string, courseId: number) {
     return apiPost<{ success: boolean }>(
-        `/platform-admin/courses/${courseId}/delete`,
+        `${PLATFORM_ADMIN_BASE}/courses/${courseId}/delete`,
         {},
         token
     );

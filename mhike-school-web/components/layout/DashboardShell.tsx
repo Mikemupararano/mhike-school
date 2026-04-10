@@ -29,7 +29,7 @@ export default function DashboardShell({
     children,
     userName = "User",
     schoolName,
-    sidebarTitle = "Mhike School",
+    sidebarTitle,
     sidebarItems,
     showSidebar = true,
     sidebarCollapsed = false,
@@ -39,6 +39,8 @@ export default function DashboardShell({
     showLogout = true,
     contentClassName = "",
 }: DashboardShellProps) {
+    const resolvedSidebarTitle = sidebarTitle || schoolName || "Mhike School";
+
     return (
         <div className="min-h-screen bg-[#F8FAFC] text-slate-900">
             <Navbar
@@ -53,7 +55,7 @@ export default function DashboardShell({
             <div className="flex min-h-[calc(100vh-76px)]">
                 {showSidebar ? (
                     <Sidebar
-                        title={sidebarTitle}
+                        title={resolvedSidebarTitle}
                         items={sidebarItems}
                         collapsed={sidebarCollapsed}
                         className="hidden border-r border-slate-200/80 bg-white/85 shadow-sm backdrop-blur lg:block"

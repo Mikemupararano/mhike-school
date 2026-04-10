@@ -36,29 +36,31 @@ export default function Sidebar({
 
     return (
         <aside
-            className={`h-screen border-r border-slate-200 bg-white ${collapsed ? "w-20" : "w-72"} ${className}`}
+            className={`h-screen border-r border-slate-200 bg-slate-50 ${collapsed ? "w-20" : "w-80"
+                } ${className}`}
         >
             <div className="flex h-full flex-col">
-                <div className="border-b border-slate-200 px-4 py-5">
+                <div className="border-b border-slate-200 px-5 py-5">
                     <Link
                         href="/"
-                        className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}
+                        className={`flex items-start ${collapsed ? "justify-center" : "gap-3"
+                            }`}
                     >
                         <Image
                             src="/branding/icon.png"
                             alt="Mhike School"
-                            width={36}
-                            height={36}
+                            width={42}
+                            height={42}
                             priority
-                            className="h-9 w-9 rounded-xl object-contain"
+                            className="h-10 w-10 shrink-0 rounded-xl object-contain"
                         />
 
                         {!collapsed ? (
-                            <div className="min-w-0">
-                                <div className="truncate text-base font-black text-slate-900">
+                            <div className="min-w-0 max-w-full">
+                                <div className="break-words text-xl font-black leading-tight text-slate-900">
                                     {title}
                                 </div>
-                                <div className="text-xs font-medium text-slate-500">
+                                <div className="mt-1 text-sm font-medium text-slate-600">
                                     Learning platform
                                 </div>
                             </div>
@@ -77,10 +79,10 @@ export default function Sidebar({
                                 <Link
                                     key={item.href}
                                     href={item.href}
-                                    className={`flex items-center rounded-2xl px-3 py-3 transition ${collapsed ? "justify-center" : "gap-3"
+                                    className={`flex items-center rounded-2xl px-4 py-3.5 transition ${collapsed ? "justify-center" : "gap-3"
                                         } ${active
-                                            ? "bg-blue-50 text-blue-700"
-                                            : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                                            ? "bg-blue-100 text-blue-800 shadow-sm"
+                                            : "text-slate-700 hover:bg-white hover:text-slate-900"
                                         }`}
                                 >
                                     {item.icon ? (
@@ -89,14 +91,14 @@ export default function Sidebar({
                                             alt={item.label}
                                             width={20}
                                             height={20}
-                                            className="h-5 w-5 object-contain"
+                                            className="h-5 w-5 shrink-0 object-contain"
                                         />
                                     ) : (
-                                        <div className="h-5 w-5 rounded bg-slate-300" />
+                                        <div className="h-5 w-5 shrink-0 rounded bg-slate-300" />
                                     )}
 
                                     {!collapsed ? (
-                                        <span className="truncate text-sm font-bold">
+                                        <span className="truncate text-base font-bold">
                                             {item.label}
                                         </span>
                                     ) : null}
@@ -108,7 +110,7 @@ export default function Sidebar({
 
                 <div className="border-t border-slate-200 px-4 py-4">
                     <div
-                        className={`rounded-2xl bg-slate-50 p-3 ${collapsed ? "flex justify-center" : ""
+                        className={`rounded-2xl bg-white p-4 shadow-sm ${collapsed ? "flex justify-center" : ""
                             }`}
                     >
                         {collapsed ? (
@@ -120,19 +122,19 @@ export default function Sidebar({
                                 className="h-7 w-7 object-contain"
                             />
                         ) : (
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-start gap-3">
                                 <Image
                                     src="/branding/icon.png"
                                     alt="Mhike School"
                                     width={28}
                                     height={28}
-                                    className="h-7 w-7 object-contain"
+                                    className="h-7 w-7 shrink-0 object-contain"
                                 />
-                                <div>
-                                    <div className="text-sm font-extrabold text-slate-900">
-                                        Mhike School
+                                <div className="min-w-0 max-w-full">
+                                    <div className="break-words text-sm font-extrabold leading-tight text-slate-900">
+                                        {title}
                                     </div>
-                                    <div className="text-xs text-slate-500">
+                                    <div className="mt-1 text-xs text-slate-500">
                                         Multi-tenant LMS
                                     </div>
                                 </div>

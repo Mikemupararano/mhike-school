@@ -1,13 +1,13 @@
 "use client";
 
-export default function AdminPage() {
+export default function SchoolAdminClassesPage() {
     return (
         <div style={{ padding: 24 }}>
             <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800 }}>
-                Platform Admin Dashboard
+                School Admin Classes
             </h1>
             <p style={{ marginTop: 12, color: "#64748B" }}>
-                This page is now loading correctly.
+                This page is loading correctly.
             </p>
         </div>
     );
