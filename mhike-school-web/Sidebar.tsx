@@ -39,7 +39,7 @@ export default function Sidebar({
         >
             <div className="flex h-full flex-col">
                 <div
-                    className={collapsed ? "border-b px-4 py-6" : "border-b px-6 py-6"}
+                    className={collapsed ? "border-b px-4 py-6" : "border-b px-6 py-7"}
                     style={{ borderColor: "rgba(255,255,255,0.10)" }}
                 >
                     {collapsed ? (
@@ -47,7 +47,7 @@ export default function Sidebar({
                             <BrandLogo
                                 href="/"
                                 showText={false}
-                                iconSize={40}
+                                iconSize={42}
                                 className="shrink-0"
                             />
                         </div>
@@ -56,27 +56,27 @@ export default function Sidebar({
                             <BrandLogo
                                 href="/"
                                 showText={true}
-                                iconSize={44}
-                                textSizeClass="text-2xl"
+                                iconSize={46}
+                                textSizeClass="text-[2.15rem]"
                                 className="shrink-0"
                             />
-                            <div className="mt-2 text-sm font-medium text-slate-300">
+                            <div className="mt-3 text-[1rem] font-medium text-slate-300">
                                 {brand.tagline}
                             </div>
                         </div>
                     )}
                 </div>
 
-                <nav className="flex-1 overflow-y-auto px-4 py-5">
+                <nav className="flex-1 overflow-y-auto px-4 py-6">
                     {resolvedSections.map((section) => (
-                        <div key={section.title} className="mb-7">
+                        <div key={section.title} className="mb-8">
                             {!collapsed ? (
-                                <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300/70">
+                                <p className="mb-4 px-3 text-[0.95rem] font-semibold uppercase tracking-[0.18em] text-slate-300/80">
                                     {section.title}
                                 </p>
                             ) : null}
 
-                            <div className="grid gap-2">
+                            <div className="grid gap-2.5">
                                 {section.items.map((item) => {
                                     const active =
                                         pathname === item.href ||
@@ -98,7 +98,7 @@ export default function Sidebar({
                                             }}
                                         >
                                             <span
-                                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors"
+                                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors"
                                                 style={{
                                                     background: active
                                                         ? "rgba(255,255,255,0.15)"
@@ -109,7 +109,7 @@ export default function Sidebar({
                                             </span>
 
                                             {!collapsed ? (
-                                                <span className="truncate text-[15px] font-bold">
+                                                <span className="truncate text-[1.02rem] font-bold">
                                                     {item.label}
                                                 </span>
                                             ) : null}

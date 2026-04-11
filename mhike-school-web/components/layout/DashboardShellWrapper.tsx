@@ -1,22 +1,66 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import DashboardShell from "@/components/layout/DashboardShell";
 import { getToken, clearToken } from "@/lib/api";
-import { getCurrentUser, CurrentUser } from "@/lib/authApi";
+import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
+import { getSidebarSections } from "@/lib/navigation/sidebar";
 
-type SidebarItem = {
-    label: string;
-    href: string;
-    icon?: string;
+type DashboardShellWrapperProps = {
+    children: ReactNode;
 };
+
+type CurrentUserWithOptionalNames = CurrentUser & {
+    fullName?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    name?: string | null;
+};
+
+function formatEmailFallback(email?: string | null): string {
+    if (!email) return "User";
+
+    const localPart = email.split("@")[0] || "";
+    const cleaned = localPart.replace(/[._-]+/g, " ").trim();
+
+    if (!cleaned) return "User";
+
+    return cleaned
+        .split(" ")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+}
+
+function getDisplayName(user: CurrentUser): string {
+    const candidate = user as CurrentUserWithOptionalNames;
+
+    const fullNameFromSnakeCase = [candidate.first_name, candidate.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+
+    const fullNameFromCamelCase = [candidate.firstName, candidate.lastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+
+    const resolvedName =
+        candidate.full_name?.trim() ||
+        candidate.fullName?.trim() ||
+        fullNameFromSnakeCase ||
+        fullNameFromCamelCase ||
+        candidate.name?.trim();
+
+    return resolvedName || formatEmailFallback(user.email);
+}
 
 export default function DashboardShellWrapper({
     children,
-}: {
-    children: React.ReactNode;
-}) {
+}: DashboardShellWrapperProps) {
     const router = useRouter();
     const [user, setUser] = useState<CurrentUser | null>(null);
     const [loading, setLoading] = useState(true);
@@ -26,12 +70,14 @@ export default function DashboardShellWrapper({
             const token = getToken();
 
             if (!token) {
+                setLoading(false);
                 router.replace("/login");
                 return;
             }
 
             try {
                 const me = await getCurrentUser(token);
+                console.log("Current user payload:", me);
                 setUser(me);
             } catch (err) {
                 console.error("Auth error:", err);
@@ -45,7 +91,6 @@ export default function DashboardShellWrapper({
         void loadUser();
     }, [router]);
 
-    // ✅ Loading state
     if (loading) {
         return (
             <div className="flex h-screen items-center justify-center text-lg font-semibold">
@@ -54,71 +99,23 @@ export default function DashboardShellWrapper({
         );
     }
 
-    // ✅ Safety fallback
     if (!user) {
         return null;
     }
 
-    // ✅ School label logic
     const schoolLabel =
         user.role === "platform_admin"
             ? "Global platform"
             : user.school_name || "Unknown school";
 
-    // ✅ Role-based sidebar
-    let sidebarItems: SidebarItem[] = [];
-
-    switch (user.role) {
-        case "platform_admin":
-            sidebarItems = [
-                { label: "Dashboard", href: "/admin", icon: "/icons/dashboard.svg" },
-                { label: "Schools", href: "/admin/schools", icon: "/icons/class.svg" },
-                { label: "Users", href: "/admin/users", icon: "/icons/user.svg" },
-                { label: "Courses", href: "/admin/content/courses", icon: "/icons/book.svg" },
-                { label: "Notifications", href: "/notifications", icon: "/icons/bell.svg" },
-                { label: "Profile", href: "/profile", icon: "/icons/user.svg" },
-            ];
-            break;
-
-        case "school_admin":
-            sidebarItems = [
-                { label: "Dashboard", href: "/school-admin", icon: "/icons/dashboard.svg" },
-                { label: "Students", href: "/school-admin/students", icon: "/icons/user.svg" },
-                { label: "Teachers", href: "/school-admin/teachers", icon: "/icons/user.svg" },
-                { label: "Classes", href: "/school-admin/classes", icon: "/icons/class.svg" },
-                { label: "Users", href: "/school-admin/users", icon: "/icons/user.svg" },
-                { label: "Profile", href: "/profile", icon: "/icons/user.svg" },
-            ];
-            break;
-
-        case "teacher":
-            sidebarItems = [
-                { label: "Dashboard", href: "/teacher", icon: "/icons/dashboard.svg" },
-                { label: "Classes", href: "/teacher/classes", icon: "/icons/class.svg" },
-                { label: "Assignments", href: "/teacher/assignments", icon: "/icons/quiz.svg" },
-                { label: "Content", href: "/teacher/content", icon: "/icons/book.svg" },
-                { label: "Notifications", href: "/notifications", icon: "/icons/bell.svg" },
-                { label: "Profile", href: "/profile", icon: "/icons/user.svg" },
-            ];
-            break;
-
-        case "student":
-        default:
-            sidebarItems = [
-                { label: "Dashboard", href: "/student", icon: "/icons/dashboard.svg" },
-                { label: "Courses", href: "/courses", icon: "/icons/book.svg" },
-                { label: "Assignments", href: "/student/assignments", icon: "/icons/quiz.svg" },
-                { label: "Notifications", href: "/notifications", icon: "/icons/bell.svg" },
-                { label: "Profile", href: "/profile", icon: "/icons/user.svg" },
-            ];
-            break;
-    }
+    const displayName = getDisplayName(user);
+    const sidebarSections = getSidebarSections(user.role);
 
     return (
         <DashboardShell
-            userName={user.full_name || user.email}
+            userName={displayName}
             schoolName={schoolLabel}
-            sidebarItems={sidebarItems}
+            sidebarSections={sidebarSections}
         >
             {children}
         </DashboardShell>

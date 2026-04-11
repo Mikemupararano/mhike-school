@@ -3,19 +3,14 @@
 import React from "react";
 import Navbar from "@/components/layout/Navbar";
 import Sidebar from "@/components/layout/Sidebar";
-
-type SidebarItem = {
-    label: string;
-    href: string;
-    icon?: string;
-};
+import type { SidebarSection } from "@/lib/navigation/sidebar";
 
 type DashboardShellProps = {
     children: React.ReactNode;
     userName?: string;
     schoolName?: string;
     sidebarTitle?: string;
-    sidebarItems?: SidebarItem[];
+    sidebarSections?: SidebarSection[];
     showSidebar?: boolean;
     sidebarCollapsed?: boolean;
     showRefresh?: boolean;
@@ -30,7 +25,7 @@ export default function DashboardShell({
     userName = "User",
     schoolName,
     sidebarTitle,
-    sidebarItems,
+    sidebarSections,
     showSidebar = true,
     sidebarCollapsed = false,
     showRefresh = true,
@@ -56,16 +51,14 @@ export default function DashboardShell({
                 {showSidebar ? (
                     <Sidebar
                         title={resolvedSidebarTitle}
-                        items={sidebarItems}
+                        sections={sidebarSections}
                         collapsed={sidebarCollapsed}
-                        className="hidden border-r border-slate-200/80 bg-white/85 shadow-sm backdrop-blur lg:block"
+                        className="hidden lg:block"
                     />
                 ) : null}
 
                 <main className={`flex-1 p-4 sm:p-6 lg:p-8 ${contentClassName}`}>
-                    <div className="mx-auto w-full max-w-[1280px]">
-                        {children}
-                    </div>
+                    <div className="mx-auto w-full max-w-[1280px]">{children}</div>
                 </main>
             </div>
         </div>

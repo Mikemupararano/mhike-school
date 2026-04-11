@@ -136,22 +136,8 @@ export default function LoginPage() {
           justify-content: center;
         }
 
-        .hero-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 12px;
-          padding: 14px 20px;
-          border-radius: 999px;
-          background: rgba(255,255,255,0.10);
-          border: 1px solid ${BORDER};
-          font-size: 18px;
-          font-weight: 800;
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-        }
-
         .hero-title {
-          margin: 42px 0 22px;
+          margin: 0 0 22px;
           font-size: 76px;
           line-height: 1.02;
           font-weight: 900;
@@ -353,14 +339,8 @@ export default function LoginPage() {
             border-radius: 24px;
           }
 
-          .hero-badge {
-            font-size: 14px;
-            padding: 10px 14px;
-            gap: 10px;
-          }
-
           .hero-title {
-            margin: 26px 0 16px;
+            margin: 0 0 16px;
             font-size: 42px;
             line-height: 1.02;
           }
@@ -449,20 +429,6 @@ export default function LoginPage() {
         <div className="login-grid">
           <section className="left-card">
             <div>
-              <div className="hero-badge">
-                <span
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    background: "#93C5FD",
-                    boxShadow: "0 0 18px rgba(147,197,253,0.9)",
-                    flexShrink: 0,
-                  }}
-                />
-                Mhike School
-              </div>
-
               <h1 className="hero-title">
                 A premium learning platform for modern schools.
               </h1>

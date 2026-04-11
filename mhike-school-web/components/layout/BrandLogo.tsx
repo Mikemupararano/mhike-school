@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { brand, brandColors } from "@/lib/brand";
 
 type BrandLogoProps = {
     href?: string;
@@ -22,18 +23,22 @@ export default function BrandLogo({
         <div className={`flex items-center gap-3 sm:gap-4 ${className}`}>
             <Image
                 src="/logo-icon.svg"
-                alt="Mhike School"
+                alt={brand.name}
                 width={iconSize}
                 height={iconSize}
-                className="h-11 w-11 shrink-0 sm:h-[52px] sm:w-[52px] drop-shadow-[0_4px_16px_rgba(59,130,246,0.45)]"
                 priority={priority}
+                className="h-11 w-11 shrink-0 sm:h-[52px] sm:w-[52px]"
+                style={{
+                    filter: `drop-shadow(0 4px 16px ${brandColors.blue}73)`,
+                }}
             />
 
             {showText ? (
                 <span
-                    className={`${textSizeClass} leading-none font-extrabold tracking-tight text-white whitespace-nowrap`}
+                    className={`${textSizeClass} whitespace-nowrap font-extrabold leading-none tracking-tight text-white`}
                 >
-                    Mhike <span className="text-[#f6c453]">School</span>
+                    {brand.shortName}{" "}
+                    <span style={{ color: brandColors.gold }}>School</span>
                 </span>
             ) : null}
         </div>
@@ -42,7 +47,7 @@ export default function BrandLogo({
     return (
         <Link
             href={href}
-            aria-label="Mhike School home"
+            aria-label={`${brand.name} home`}
             className="inline-flex items-center"
         >
             {content}

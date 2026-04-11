@@ -81,11 +81,6 @@ TypeScript
 
 ## 🏗️ Project Structure
 
-## Full Project Structure
-### Latest Structure
-## 🏗️ Mhike School — Final Production File Structure
-
-```text
 mhike-school/
 │
 ├── docker-compose.yml
@@ -107,10 +102,16 @@ mhike-school/
 │   ├── public/
 │   │   ├── logo.png
 │   │   ├── favicon.ico
-│   │   ├── icons/
-│   │   │   ├── dashboard.svg
-│   │   │   ├── user.svg
-│   │   │   └── school.svg
+│   │   ├── logo-icon.svg                           # ✅ new brand icon
+│   │   ├── logo-navbar.svg                         # ✅ new navbar logo
+│   │   ├── logo-light.svg                          # ✅ light logo variant
+│   │   ├── logo-dark.svg                           # ✅ dark logo variant
+│   │   ├── apple-touch-icon.png                    # ✅ planned/branding asset
+│   │   ├── og-image.png                            # ✅ planned/social preview
+│   │   └── icons/
+│   │       ├── dashboard.svg
+│   │       ├── user.svg
+│   │       └── school.svg
 │   │
 │   ├── app/
 │   │   ├── globals.css
@@ -120,6 +121,7 @@ mhike-school/
 │   │   ├── not-found.tsx
 │   │   │
 │   │   ├── (auth)/
+│   │   │   ├── layout.tsx                          # ✅ auth layout with public navbar
 │   │   │   └── login/
 │   │   │       └── page.tsx
 │   │   │
@@ -163,6 +165,8 @@ mhike-school/
 │   ├── components/
 │   │   ├── layout/
 │   │   │   ├── Navbar.tsx
+│   │   │   ├── PublicNavbar.tsx                    # ✅ new public/auth navbar
+│   │   │   ├── BrandLogo.tsx                       # ✅ shared logo component
 │   │   │   ├── Sidebar.tsx
 │   │   │   ├── DashboardShell.tsx
 │   │   │   ├── PageHeader.tsx
@@ -170,6 +174,9 @@ mhike-school/
 │   │   │
 │   │   ├── ui/                                     # 🔥 DESIGN SYSTEM
 │   │   │   ├── index.ts
+│   │   │   ├── BrandButton.tsx                     # ✅ new branded button
+│   │   │   ├── BrandInput.tsx                      # ✅ new branded input
+│   │   │   ├── BrandCard.tsx                       # ✅ new branded card
 │   │   │   │
 │   │   │   ├── primitives/
 │   │   │   │   ├── Button.tsx
@@ -206,6 +213,7 @@ mhike-school/
 │   │   └── notifications/
 │   │
 │   ├── lib/
+│   │   ├── brand.ts                                # ✅ brand tokens + metadata
 │   │   ├── api/
 │   │   │   ├── client.ts
 │   │   │   └── auth.ts
@@ -232,14 +240,25 @@ mhike-school/
 │   │   ├── QueryProvider.tsx
 │   │   └── ThemeProvider.tsx
 │   │
-│   └── types/
-│       ├── user.ts
-│       ├── school.ts
-│       ├── course.ts
-│       ├── content.ts
-│       └── assignment.ts
+│   ├── types/
+│   │   ├── user.ts
+│   │   ├── school.ts
+│   │   ├── course.ts
+│   │   ├── content.ts
+│   │   └── assignment.ts
+│   │
+│   └── brand/                                      # ✅ brand asset pack
+│       ├── brand-guidelines.txt
+│       ├── logo/
+│       │   ├── logo-full.svg
+│       │   ├── logo-dark.svg
+│       │   ├── logo-light.svg
+│       │   └── logo-monochrome.svg
+│       ├── icon/
+│       ├── favicon/
+│       └── preview/
 │
-├── app/                                               # ⚙️ BACKEND (FastAPI)
+├── app/                                            # ⚙️ BACKEND (FastAPI)
 │   │
 │   ├── main.py
 │   │
@@ -251,8 +270,8 @@ mhike-school/
 │   │           ├── dashboard.py
 │   │           ├── schools.py
 │   │           ├── school_users.py
-│   │           ├── school_admin.py          # 🏫 TENANT ADMIN
-│   │           ├── platform_admin.py        # 🌍 PLATFORM ADMIN
+│   │           ├── school_admin.py
+│   │           ├── platform_admin.py
 │   │           ├── courses.py
 │   │           ├── topics.py
 │   │           ├── content_items.py
@@ -300,7 +319,6 @@ mhike-school/
 ├── alembic/
 ├── tests/
 └── scripts/
-```
 
 ---
 

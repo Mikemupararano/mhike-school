@@ -75,7 +75,7 @@ export default function Navbar({
                         style={{
                             display: "flex",
                             alignItems: "center",
-                            gap: 12,
+                            gap: 10,
                             padding: "8px 14px",
                             borderRadius: 999,
                             background: "rgba(255,255,255,0.08)",
