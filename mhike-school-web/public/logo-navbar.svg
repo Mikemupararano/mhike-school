@@ -1,0 +1,16 @@
+<svg viewBox="0 0 220 40" xmlns="http://www.w3.org/2000/svg">
+  <!-- Icon -->
+  <rect x="0" y="0" width="40" height="40" rx="10" fill="currentColor"/>
+  <path d="M10 12 L20 8 L20 30 L10 26 Z" fill="white"/>
+  <path d="M20 8 L30 12 L30 30 L20 26 Z" fill="white"/>
+
+  <!-- Text -->
+  <text x="50" y="26"
+        font-family="Inter, Arial, sans-serif"
+        font-size="18"
+        font-weight="700"
+        letter-spacing="0.3"
+        fill="currentColor">
+    Mhike <tspan font-weight="600">School</tspan>
+  </text>
+</svg>

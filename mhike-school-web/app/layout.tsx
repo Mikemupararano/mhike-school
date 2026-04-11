@@ -1,13 +1,25 @@
 import "./globals.css";
 import { AuthProvider } from "@/providers/AuthProvider";
+import { brand } from "@/lib/brand";
 
 export const metadata = {
-  title: "Mhike School",
-  description: "Mhike School LMS platform",
+  title: brand.name,
+  description: brand.description,
   icons: {
-    icon: "/branding/favicon.png",
-    shortcut: "/branding/favicon.png",
-    apple: "/branding/icon.png",
+    icon: "/logo-icon.svg",
+    shortcut: "/logo-icon.svg",
+    apple: "/apple-touch-icon.png",
+  },
+  openGraph: {
+    title: brand.name,
+    description: brand.description,
+    images: ["/og-image.png"],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: brand.name,
+    description: brand.description,
+    images: ["/og-image.png"],
   },
 };
 
@@ -23,6 +35,7 @@ export default function RootLayout({
           margin: 0,
           fontFamily: "Inter, Arial, sans-serif",
           background: "#f8fafc",
+          minHeight: "100vh",
         }}
       >
         <AuthProvider>{children}</AuthProvider>

@@ -1,0 +1,18 @@
+<svg width="420" height="120" viewBox="0 0 420 120" xmlns="http://www.w3.org/2000/svg">
+  <rect width="120" height="120" rx="24" fill="#0f2d4a"/>
+  
+  <!-- Book Icon -->
+  <path d="M30 30 L60 20 L60 100 L30 90 Z" fill="#ffffff"/>
+  <path d="M60 20 L90 30 L90 100 L60 90 Z" fill="#ffffff"/>
+  <line x1="60" y1="20" x2="60" y2="90" stroke="#0f2d4a" stroke-width="2"/>
+
+  <!-- Text -->
+  <text x="140" y="65"
+        font-family="Inter, Arial, sans-serif"
+        font-size="42"
+        font-weight="800"
+        letter-spacing="0.5"
+        fill="#0f2d4a">
+    Mhike <tspan fill="#f6c453" letter-spacing="1">School</tspan>
+  </text>
+</svg>

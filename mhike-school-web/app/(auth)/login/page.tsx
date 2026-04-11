@@ -1,476 +1,627 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { apiPost, saveToken } from "@/lib/api";
 import { getCurrentUser } from "@/lib/authApi";
 
 type LoginResponse = {
-    access_token: string;
-    token_type?: string;
+  access_token: string;
+  token_type?: string;
 };
 
+const DARK_BLUE = "#0f2d4a";
+const BORDER = "rgba(255,255,255,0.10)";
+const SOFT_TEXT = "rgba(255,255,255,0.84)";
+
 export default function LoginPage() {
-    const router = useRouter();
+  const router = useRouter();
 
-    const [mode, setMode] = useState<"school_user" | "platform_admin">("school_user");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [schoolId, setSchoolId] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState("");
+  const [mode, setMode] = useState<"school_user" | "platform_admin">("school_user");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [schoolId, setSchoolId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-    const needsSchoolId = mode === "school_user";
+  const needsSchoolId = mode === "school_user";
 
-    const subtitle = useMemo(() => {
-        return needsSchoolId
-            ? "Students, teachers, and school admins sign in with their school ID."
-            : "Platform administrators sign in without a school ID.";
-    }, [needsSchoolId]);
+  const subtitle = useMemo(() => {
+    return needsSchoolId
+      ? "Students, teachers, and school admins sign in with their school ID."
+      : "Platform administrators sign in without a school ID.";
+  }, [needsSchoolId]);
 
-    async function handleSubmit(e: React.FormEvent) {
-        e.preventDefault();
-        setError("");
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError("");
 
-        if (!email.trim() || !password.trim()) {
-            setError("Please enter your email and password.");
-            return;
-        }
-
-        if (needsSchoolId && !schoolId.trim()) {
-            setError("Please enter your school ID.");
-            return;
-        }
-
-        try {
-            setLoading(true);
-
-            const payload =
-                mode === "platform_admin"
-                    ? {
-                        email: email.trim(),
-                        password,
-                    }
-                    : {
-                        email: email.trim(),
-                        password,
-                        school_id: Number(schoolId),
-                    };
-
-            const res = await apiPost<LoginResponse>("/auth/login", payload);
-            saveToken(res.access_token);
-
-            const user = await getCurrentUser(res.access_token);
-
-            if (user.role === "platform_admin") {
-                router.push("/admin");
-            } else if (user.role === "admin" || user.role === "school_admin") {
-                router.push("/school-admin");
-            } else if (user.role === "teacher") {
-                router.push("/teacher");
-            } else {
-                router.push("/student");
-            }
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Login failed.");
-        } finally {
-            setLoading(false);
-        }
+    if (!email.trim() || !password.trim()) {
+      setError("Please enter your email and password.");
+      return;
     }
 
-    return (
-        <main
-            style={{
-                minHeight: "100vh",
-                display: "grid",
-                placeItems: "center",
-                padding: 32,
-                background:
-                    "radial-gradient(circle at 18% 18%, rgba(37,99,235,0.12), transparent 28%), radial-gradient(circle at 82% 24%, rgba(59,130,246,0.10), transparent 30%), linear-gradient(180deg, #F8FAFC 0%, #EEF4FA 100%)",
-            }}
-        >
-            <div
-                style={{
-                    width: "100%",
-                    maxWidth: 1280,
-                    display: "grid",
-                    gridTemplateColumns: "1.1fr 0.95fr",
-                    gap: 32,
-                    alignItems: "stretch",
-                }}
-            >
-                <section
-                    style={{
-                        borderRadius: 36,
-                        padding: 48,
-                        background:
-                            "linear-gradient(135deg, #0F172A 0%, #1D4ED8 55%, #60A5FA 100%)",
-                        color: "#FFFFFF",
-                        boxShadow: "0 40px 100px rgba(29,78,216,0.35)",
-                        position: "relative",
-                        overflow: "hidden",
-                        minHeight: 700,
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "space-between",
-                    }}
-                >
-                    <div
-                        style={{
-                            position: "absolute",
-                            inset: 0,
-                            background:
-                                "radial-gradient(circle at 80% 20%, rgba(255,255,255,0.18), transparent 18%), radial-gradient(circle at 22% 82%, rgba(255,255,255,0.10), transparent 22%)",
-                            pointerEvents: "none",
-                        }}
-                    />
+    if (needsSchoolId && !schoolId.trim()) {
+      setError("Please enter your school ID.");
+      return;
+    }
 
-                    <div style={{ position: "relative", zIndex: 1 }}>
-                        <div
-                            style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 12,
-                                padding: "12px 16px",
-                                borderRadius: 999,
-                                background: "rgba(255,255,255,0.12)",
-                                border: "1px solid rgba(255,255,255,0.18)",
-                                fontSize: 15,
-                                fontWeight: 800,
-                                backdropFilter: "blur(12px)",
-                                WebkitBackdropFilter: "blur(12px)",
-                            }}
-                        >
-                            <span
-                                style={{
-                                    width: 12,
-                                    height: 12,
-                                    borderRadius: "50%",
-                                    background: "#93C5FD",
-                                    boxShadow: "0 0 18px rgba(147,197,253,0.9)",
-                                    flexShrink: 0,
-                                }}
-                            />
-                            Mhike School
-                        </div>
+    if (needsSchoolId && Number.isNaN(Number(schoolId))) {
+      setError("School ID must be a valid number.");
+      return;
+    }
 
-                        <h1
-                            style={{
-                                margin: "34px 0 18px",
-                                fontSize: 64,
-                                lineHeight: 0.98,
-                                fontWeight: 900,
-                                letterSpacing: "-0.05em",
-                                maxWidth: 620,
-                            }}
-                        >
-                            A premium learning platform for modern schools.
-                        </h1>
+    try {
+      setLoading(true);
 
-                        <p
-                            style={{
-                                margin: 0,
-                                fontSize: 22,
-                                lineHeight: 1.65,
-                                color: "rgba(255,255,255,0.9)",
-                                maxWidth: 580,
-                            }}
-                        >
-                            Bring together students, teachers, school admins, and platform
-                            administrators in one polished, role-aware experience.
-                        </p>
-                    </div>
+      const payload =
+        mode === "platform_admin"
+          ? {
+            email: email.trim(),
+            password,
+          }
+          : {
+            email: email.trim(),
+            password,
+            school_id: Number(schoolId),
+          };
 
-                    <div
-                        style={{
-                            position: "relative",
-                            zIndex: 1,
-                            display: "grid",
-                            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                            gap: 16,
-                        }}
-                    >
-                        {[
-                            ["Secure sign-in", "Role-based access"],
-                            ["Multi-school ready", "Tenant-aware dashboards"],
-                            ["Elegant workflows", "Fast and focused UI"],
-                        ].map(([title, desc]) => (
-                            <div
-                                key={title}
-                                style={{
-                                    borderRadius: 24,
-                                    padding: 22,
-                                    background: "rgba(255,255,255,0.10)",
-                                    border: "1px solid rgba(255,255,255,0.14)",
-                                    backdropFilter: "blur(12px)",
-                                    WebkitBackdropFilter: "blur(12px)",
-                                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        fontSize: 18,
-                                        fontWeight: 900,
-                                        marginBottom: 8,
-                                        lineHeight: 1.25,
-                                    }}
-                                >
-                                    {title}
-                                </div>
-                                <div
-                                    style={{
-                                        fontSize: 15,
-                                        lineHeight: 1.6,
-                                        color: "rgba(255,255,255,0.82)",
-                                    }}
-                                >
-                                    {desc}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
+      const res = await apiPost<LoginResponse>("/auth/login", payload);
+      saveToken(res.access_token);
 
-                <section
-                    style={{
-                        borderRadius: 36,
-                        padding: 40,
-                        background: "rgba(255,255,255,0.9)",
-                        border: "1px solid rgba(255,255,255,0.7)",
-                        boxShadow: "0 30px 80px rgba(15,23,42,0.12)",
-                        backdropFilter: "blur(20px)",
-                        WebkitBackdropFilter: "blur(20px)",
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "center",
-                    }}
-                >
-                    <div style={{ marginBottom: 28 }}>
-                        <h2
-                            style={{
-                                margin: 0,
-                                fontSize: 48,
-                                lineHeight: 1.05,
-                                fontWeight: 900,
-                                letterSpacing: "-0.04em",
-                                color: "#0F172A",
-                            }}
-                        >
-                            Welcome back
-                        </h2>
+      const user = await getCurrentUser(res.access_token);
 
-                        <p
-                            style={{
-                                margin: "14px 0 0",
-                                fontSize: 18,
-                                lineHeight: 1.65,
-                                color: "#64748B",
-                            }}
-                        >
-                            Sign in to continue to your dashboard.
-                        </p>
-                    </div>
+      if (user.role === "platform_admin") {
+        router.push("/admin");
+      } else if (user.role === "admin" || user.role === "school_admin") {
+        router.push("/school-admin");
+      } else if (user.role === "teacher") {
+        router.push("/teacher");
+      } else {
+        router.push("/student");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns: "1fr 1fr",
-                            gap: 8,
-                            padding: 6,
-                            borderRadius: 20,
-                            background: "#EEF4FF",
-                            border: "1px solid #D6E4FF",
-                            marginBottom: 24,
-                        }}
-                    >
-                        <button
-                            type="button"
-                            onClick={() => setMode("school_user")}
-                            style={{
-                                height: 56,
-                                borderRadius: 16,
-                                border: "none",
-                                cursor: "pointer",
-                                fontWeight: 900,
-                                fontSize: 16,
-                                background:
-                                    mode === "school_user"
-                                        ? "linear-gradient(135deg, #2563EB, #3B82F6)"
-                                        : "transparent",
-                                color: mode === "school_user" ? "#FFFFFF" : "#1E293B",
-                                boxShadow:
-                                    mode === "school_user"
-                                        ? "0 8px 20px rgba(37,99,235,0.25)"
-                                        : "none",
-                                transition: "all 0.2s ease",
-                            }}
-                        >
-                            School User
-                        </button>
+  return (
+    <>
+      <style>{`
+        .login-shell {
+          min-height: calc(100vh - 6rem);
+          display: grid;
+          align-items: center;
+          padding: 32px 64px 48px;
+          background:
+            radial-gradient(circle at 18% 18%, rgba(37,99,235,0.10), transparent 28%),
+            radial-gradient(circle at 82% 24%, rgba(59,130,246,0.08), transparent 30%),
+            linear-gradient(180deg, #F8FAFC 0%, #EEF4FA 100%);
+        }
 
-                        <button
-                            type="button"
-                            onClick={() => setMode("platform_admin")}
-                            style={{
-                                height: 56,
-                                borderRadius: 16,
-                                border: "none",
-                                cursor: "pointer",
-                                fontWeight: 900,
-                                fontSize: 16,
-                                background:
-                                    mode === "platform_admin"
-                                        ? "linear-gradient(135deg, #2563EB, #3B82F6)"
-                                        : "transparent",
-                                color: mode === "platform_admin" ? "#FFFFFF" : "#1E293B",
-                                boxShadow:
-                                    mode === "platform_admin"
-                                        ? "0 8px 20px rgba(37,99,235,0.25)"
-                                        : "none",
-                                transition: "all 0.2s ease",
-                            }}
-                        >
-                            Platform Admin
-                        </button>
-                    </div>
+        .login-grid {
+          width: 100%;
+          max-width: 1800px;
+          margin: 0 auto;
+          display: grid;
+          grid-template-columns: 1.15fr 1fr;
+          gap: 48px;
+          align-items: stretch;
+        }
 
-                    <div
-                        style={{
-                            marginBottom: 24,
-                            padding: "18px 18px",
-                            borderRadius: 20,
-                            background: "#F8FAFC",
-                            border: "1px solid #E2E8F0",
-                            color: "#475569",
-                            fontSize: 16,
-                            lineHeight: 1.65,
-                        }}
-                    >
-                        {subtitle}
-                    </div>
+        .left-card,
+        .right-card {
+          border-radius: 36px;
+          background: ${DARK_BLUE};
+          color: #fff;
+          border: 1px solid ${BORDER};
+          box-shadow: 0 38px 90px rgba(15, 23, 42, 0.3);
+        }
 
-                    <form onSubmit={handleSubmit} style={{ display: "grid", gap: 18 }}>
-                        <label style={{ display: "grid", gap: 10 }}>
-                            <span
-                                style={{
-                                    fontSize: 15,
-                                    fontWeight: 900,
-                                    color: "#0F172A",
-                                }}
-                            >
-                                Email
-                            </span>
-                            <input
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                placeholder="you@school.com"
-                                autoComplete="email"
-                                style={inputStyle}
-                            />
-                        </label>
+        .left-card {
+          padding: 56px;
+          min-height: 780px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
 
-                        <label style={{ display: "grid", gap: 10 }}>
-                            <span
-                                style={{
-                                    fontSize: 15,
-                                    fontWeight: 900,
-                                    color: "#0F172A",
-                                }}
-                            >
-                                Password
-                            </span>
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Enter your password"
-                                autoComplete="current-password"
-                                style={inputStyle}
-                            />
-                        </label>
+        .right-card {
+          padding: 56px;
+          min-height: 780px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
 
-                        {needsSchoolId ? (
-                            <label style={{ display: "grid", gap: 10 }}>
-                                <span
-                                    style={{
-                                        fontSize: 15,
-                                        fontWeight: 900,
-                                        color: "#0F172A",
-                                    }}
-                                >
-                                    School ID
-                                </span>
-                                <input
-                                    type="number"
-                                    value={schoolId}
-                                    onChange={(e) => setSchoolId(e.target.value)}
-                                    placeholder="Enter your school ID"
-                                    inputMode="numeric"
-                                    style={inputStyle}
-                                />
-                            </label>
-                        ) : null}
+        .hero-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 12px;
+          padding: 14px 20px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.10);
+          border: 1px solid ${BORDER};
+          font-size: 18px;
+          font-weight: 800;
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
 
-                        {error ? (
-                            <div
-                                style={{
-                                    padding: "16px 18px",
-                                    borderRadius: 18,
-                                    background: "#FEF2F2",
-                                    border: "1px solid #FECACA",
-                                    color: "#991B1B",
-                                    fontSize: 15,
-                                    fontWeight: 700,
-                                    lineHeight: 1.55,
-                                }}
-                            >
-                                {error}
-                            </div>
-                        ) : null}
+        .hero-title {
+          margin: 42px 0 22px;
+          font-size: 76px;
+          line-height: 1.02;
+          font-weight: 900;
+          letter-spacing: -0.06em;
+          max-width: 920px;
+        }
 
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            style={{
-                                height: 60,
-                                borderRadius: 20,
-                                border: "none",
-                                cursor: loading ? "not-allowed" : "pointer",
-                                background: "linear-gradient(135deg, #1D4ED8, #2563EB)",
-                                color: "#FFFFFF",
-                                fontWeight: 900,
-                                fontSize: 18,
-                                boxShadow: "0 20px 40px rgba(37, 99, 235, 0.35)",
-                                opacity: loading ? 0.75 : 1,
-                                transition: "all 0.2s ease",
-                            }}
-                            onMouseEnter={(e) => {
-                                if (!loading) {
-                                    e.currentTarget.style.transform = "translateY(-2px)";
-                                }
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.transform = "translateY(0)";
-                            }}
-                        >
-                            {loading ? "Signing in..." : "Sign in"}
-                        </button>
-                    </form>
-                </section>
+        .hero-copy {
+          margin: 0;
+          font-size: 28px;
+          line-height: 1.6;
+          color: rgba(255,255,255,0.9);
+          max-width: 820px;
+        }
+
+        .feature-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 20px;
+          margin-top: 40px;
+        }
+
+        .feature-card {
+          border-radius: 24px;
+          padding: 24px;
+          background: rgba(255,255,255,0.08);
+          border: 1px solid ${BORDER};
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+
+        .feature-title {
+          font-size: 28px;
+          font-weight: 900;
+          margin-bottom: 10px;
+          line-height: 1.15;
+        }
+
+        .feature-copy {
+          font-size: 19px;
+          line-height: 1.65;
+          color: rgba(255,255,255,0.82);
+        }
+
+        .right-title {
+          margin: 0;
+          font-size: 64px;
+          line-height: 1;
+          font-weight: 900;
+          letter-spacing: -0.05em;
+          color: #fff;
+        }
+
+        .right-subtitle {
+          margin: 18px 0 0;
+          font-size: 24px;
+          line-height: 1.65;
+          color: ${SOFT_TEXT};
+        }
+
+        .mode-wrap {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          padding: 8px;
+          border-radius: 22px;
+          background: rgba(255,255,255,0.08);
+          border: 1px solid ${BORDER};
+          margin-bottom: 32px;
+        }
+
+        .mode-btn {
+          height: 68px;
+          border-radius: 18px;
+          border: none;
+          cursor: pointer;
+          font-weight: 900;
+          font-size: 20px;
+          transition: all 0.2s ease;
+        }
+
+        .subtitle-box {
+          margin-bottom: 32px;
+          padding: 22px 24px;
+          border-radius: 22px;
+          background: rgba(255,255,255,0.06);
+          border: 1px solid ${BORDER};
+          color: rgba(255,255,255,0.84);
+          font-size: 20px;
+          line-height: 1.7;
+        }
+
+        .form-grid {
+          display: grid;
+          gap: 24px;
+        }
+
+        .field {
+          display: grid;
+          gap: 12px;
+        }
+
+        .field-label {
+          font-size: 22px;
+          font-weight: 900;
+          color: #fff;
+        }
+
+        .submit-btn {
+          height: 74px;
+          border-radius: 22px;
+          border: none;
+          cursor: pointer;
+          background: linear-gradient(135deg, #1D4ED8, #2563EB);
+          color: #FFFFFF;
+          font-weight: 900;
+          font-size: 24px;
+          box-shadow: 0 20px 40px rgba(37, 99, 235, 0.35);
+          transition: all 0.2s ease;
+        }
+
+        .error-box {
+          padding: 18px 20px;
+          border-radius: 18px;
+          background: #FEF2F2;
+          border: 1px solid #FECACA;
+          color: #991B1B;
+          font-size: 18px;
+          font-weight: 700;
+          line-height: 1.6;
+        }
+
+        @media (max-width: 1199px) {
+          .login-shell {
+            padding: 28px 32px 40px;
+          }
+
+          .login-grid {
+            grid-template-columns: 1fr;
+            gap: 32px;
+            max-width: 980px;
+          }
+
+          .left-card,
+          .right-card {
+            min-height: unset;
+            padding: 40px;
+          }
+
+          .hero-title {
+            font-size: 58px;
+            max-width: 100%;
+          }
+
+          .hero-copy {
+            font-size: 22px;
+            max-width: 100%;
+          }
+
+          .feature-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            margin-top: 32px;
+          }
+
+          .feature-title {
+            font-size: 24px;
+          }
+
+          .feature-copy {
+            font-size: 17px;
+          }
+
+          .right-title {
+            font-size: 54px;
+          }
+
+          .right-subtitle {
+            font-size: 22px;
+          }
+
+          .field-label {
+            font-size: 20px;
+          }
+        }
+
+        @media (max-width: 767px) {
+          .login-shell {
+            padding: 20px 16px 28px;
+          }
+
+          .login-grid {
+            gap: 20px;
+          }
+
+          .left-card,
+          .right-card {
+            padding: 24px;
+            border-radius: 24px;
+          }
+
+          .hero-badge {
+            font-size: 14px;
+            padding: 10px 14px;
+            gap: 10px;
+          }
+
+          .hero-title {
+            margin: 26px 0 16px;
+            font-size: 42px;
+            line-height: 1.02;
+          }
+
+          .hero-copy {
+            font-size: 18px;
+            line-height: 1.55;
+          }
+
+          .feature-grid {
+            grid-template-columns: 1fr;
+            gap: 14px;
+            margin-top: 28px;
+          }
+
+          .feature-card {
+            padding: 18px;
+            border-radius: 18px;
+          }
+
+          .feature-title {
+            font-size: 22px;
+          }
+
+          .feature-copy {
+            font-size: 16px;
+          }
+
+          .right-title {
+            font-size: 44px;
+          }
+
+          .right-subtitle {
+            margin-top: 14px;
+            font-size: 18px;
+            line-height: 1.55;
+          }
+
+          .mode-wrap {
+            grid-template-columns: 1fr;
+            gap: 8px;
+            border-radius: 18px;
+            margin-bottom: 20px;
+          }
+
+          .mode-btn {
+            height: 58px;
+            font-size: 18px;
+            border-radius: 14px;
+          }
+
+          .subtitle-box {
+            margin-bottom: 20px;
+            padding: 16px 18px;
+            border-radius: 18px;
+            font-size: 16px;
+            line-height: 1.6;
+          }
+
+          .form-grid {
+            gap: 18px;
+          }
+
+          .field {
+            gap: 10px;
+          }
+
+          .field-label {
+            font-size: 18px;
+          }
+
+          .submit-btn {
+            height: 62px;
+            border-radius: 18px;
+            font-size: 20px;
+          }
+
+          .error-box {
+            font-size: 16px;
+            padding: 14px 16px;
+          }
+        }
+      `}</style>
+
+      <main className="login-shell">
+        <div className="login-grid">
+          <section className="left-card">
+            <div>
+              <div className="hero-badge">
+                <span
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    background: "#93C5FD",
+                    boxShadow: "0 0 18px rgba(147,197,253,0.9)",
+                    flexShrink: 0,
+                  }}
+                />
+                Mhike School
+              </div>
+
+              <h1 className="hero-title">
+                A premium learning platform for modern schools.
+              </h1>
+
+              <p className="hero-copy">
+                Bring together students, teachers, school admins, and platform
+                administrators in one polished, role-aware experience.
+              </p>
             </div>
-        </main>
-    );
+
+            <div className="feature-grid">
+              {[
+                ["Secure sign-in", "Role-based access"],
+                ["Multi-school ready", "Tenant-aware dashboards"],
+                ["Elegant workflows", "Fast and focused UI"],
+              ].map(([title, desc]) => (
+                <div key={title} className="feature-card">
+                  <div className="feature-title">{title}</div>
+                  <div className="feature-copy">{desc}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="right-card">
+            <div style={{ marginBottom: 32 }}>
+              <h2 className="right-title">Welcome back</h2>
+              <p className="right-subtitle">
+                Sign in to continue to your dashboard.
+              </p>
+            </div>
+
+            <div className="mode-wrap">
+              <button
+                type="button"
+                onClick={() => setMode("school_user")}
+                className="mode-btn"
+                style={{
+                  background:
+                    mode === "school_user"
+                      ? "linear-gradient(135deg, #2563EB, #3B82F6)"
+                      : "transparent",
+                  color:
+                    mode === "school_user"
+                      ? "#FFFFFF"
+                      : "rgba(255,255,255,0.85)",
+                  boxShadow:
+                    mode === "school_user"
+                      ? "0 8px 20px rgba(37,99,235,0.25)"
+                      : "none",
+                }}
+              >
+                School User
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMode("platform_admin")}
+                className="mode-btn"
+                style={{
+                  background:
+                    mode === "platform_admin"
+                      ? "linear-gradient(135deg, #2563EB, #3B82F6)"
+                      : "transparent",
+                  color:
+                    mode === "platform_admin"
+                      ? "#FFFFFF"
+                      : "rgba(255,255,255,0.85)",
+                  boxShadow:
+                    mode === "platform_admin"
+                      ? "0 8px 20px rgba(37,99,235,0.25)"
+                      : "none",
+                }}
+              >
+                Platform Admin
+              </button>
+            </div>
+
+            <div className="subtitle-box">{subtitle}</div>
+
+            <form onSubmit={handleSubmit} className="form-grid">
+              <label className="field">
+                <span className="field-label">Email</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@school.com"
+                  autoComplete="email"
+                  style={inputStyle}
+                />
+              </label>
+
+              <label className="field">
+                <span className="field-label">Password</span>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  style={inputStyle}
+                />
+              </label>
+
+              {needsSchoolId ? (
+                <label className="field">
+                  <span className="field-label">School ID</span>
+                  <input
+                    type="number"
+                    value={schoolId}
+                    onChange={(e) => setSchoolId(e.target.value)}
+                    placeholder="Enter your school ID"
+                    inputMode="numeric"
+                    style={inputStyle}
+                  />
+                </label>
+              ) : null}
+
+              {error ? <div className="error-box">{error}</div> : null}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="submit-btn"
+                style={{
+                  opacity: loading ? 0.75 : 1,
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) {
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                }}
+              >
+                {loading ? "Signing in..." : "Sign in"}
+              </button>
+            </form>
+          </section>
+        </div>
+      </main>
+    </>
+  );
 }
 
-const inputStyle: React.CSSProperties = {
-    height: 60,
-    borderRadius: 18,
-    border: "1px solid #CBD5E1",
-    background: "#FFFFFF",
-    padding: "0 18px",
-    fontSize: 16,
-    color: "#0F172A",
-    outline: "none",
-    boxShadow: "inset 0 1px 2px rgba(15, 23, 42, 0.04)",
+const inputStyle: CSSProperties = {
+  height: 78,
+  borderRadius: 22,
+  border: "1px solid rgba(255,255,255,0.18)",
+  background: "rgba(255,255,255,0.08)",
+  padding: "0 24px",
+  fontSize: 22,
+  color: "#FFFFFF",
+  outline: "none",
+  boxShadow:
+    "0 0 0 1px rgba(255,255,255,0.05), inset 0 1px 2px rgba(15, 23, 42, 0.10)",
+  width: "100%",
+  boxSizing: "border-box",
 };

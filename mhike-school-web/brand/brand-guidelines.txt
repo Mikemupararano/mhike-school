@@ -1,0 +1,5 @@
+Mhike School Brand Guidelines
+
+Primary Color: #0f2d4a
+Accent Color: #f6c453
+Font: Inter / Arial

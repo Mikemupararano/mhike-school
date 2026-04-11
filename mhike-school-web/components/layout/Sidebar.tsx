@@ -3,61 +3,56 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { getSidebarItems, type SidebarItem, type SidebarRole } from "@/lib/navigation/sidebar";
+import {
+    getSidebarSections,
+    type SidebarRole,
+    type SidebarSection,
+} from "@/lib/navigation/sidebar";
 
 type SidebarProps = {
     title?: string;
-    items?: SidebarItem[];
+    sections?: SidebarSection[];
     role?: SidebarRole;
     collapsed?: boolean;
     className?: string;
 };
 
-const fallbackItems: SidebarItem[] = [
-    { label: "Dashboard", href: "/dashboard", icon: "/icons/dashboard.svg" },
-    { label: "Courses", href: "/courses", icon: "/icons/book.svg" },
-    { label: "Classes", href: "/teacher/classes", icon: "/icons/class.svg" },
-    { label: "Assignments", href: "/teacher/assignments", icon: "/icons/quiz.svg" },
-    { label: "Notifications", href: "/notifications", icon: "/icons/bell.svg" },
-    { label: "Profile", href: "/profile", icon: "/icons/user.svg" },
-];
-
 export default function Sidebar({
     title = "Mhike School",
-    items,
+    sections,
     role = "teacher",
     collapsed = false,
     className = "",
 }: SidebarProps) {
     const pathname = usePathname();
-    const resolvedItems = items ?? getSidebarItems(role) ?? fallbackItems;
+    const resolvedSections = sections ?? getSidebarSections(role);
 
     return (
         <aside
-            className={`h-screen border-r border-slate-200 bg-slate-50 ${collapsed ? "w-20" : "w-80"
+            className={`h-screen border-r border-[#1e3a5f] bg-gradient-to-b from-[#0f2d4a] to-[#133554] text-white shadow-md ${collapsed ? "w-24" : "w-88"
                 } ${className}`}
         >
             <div className="flex h-full flex-col">
-                <div className="border-b border-slate-200 px-5 py-5">
+                <div className="border-b border-white/10 px-6 py-6">
                     <Link
                         href="/"
-                        className={`flex items-start ${collapsed ? "justify-center" : "gap-3"}`}
+                        className={`flex items-start ${collapsed ? "justify-center" : "gap-4"}`}
                     >
                         <Image
                             src="/branding/icon.png"
                             alt="Mhike School"
-                            width={42}
-                            height={42}
+                            width={44}
+                            height={44}
                             priority
-                            className="h-10 w-10 shrink-0 rounded-xl object-contain"
+                            className="h-11 w-11 shrink-0 rounded-xl object-contain"
                         />
 
                         {!collapsed ? (
                             <div className="min-w-0 max-w-full">
-                                <div className="break-words text-xl font-black leading-tight text-slate-900">
+                                <div className="break-words text-2xl font-extrabold leading-tight tracking-tight text-white">
                                     {title}
                                 </div>
-                                <div className="mt-1 text-sm font-medium text-slate-600">
+                                <div className="mt-1.5 text-sm font-medium text-slate-300">
                                     Learning platform
                                 </div>
                             </div>
@@ -65,73 +60,80 @@ export default function Sidebar({
                     </Link>
                 </div>
 
-                <nav className="flex-1 px-3 py-4">
-                    <div className="grid gap-2">
-                        {resolvedItems.map((item) => {
-                            const active =
-                                pathname === item.href ||
-                                (item.href !== "/" && pathname.startsWith(`${item.href}/`));
+                <nav className="flex-1 overflow-y-auto px-4 py-5">
+                    {resolvedSections.map((section) => (
+                        <div key={section.title} className="mb-7">
+                            {!collapsed ? (
+                                <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300/70">
+                                    {section.title}
+                                </p>
+                            ) : null}
 
-                            return (
-                                <Link
-                                    key={item.href}
-                                    href={item.href}
-                                    className={`flex items-center rounded-2xl px-4 py-3.5 transition ${collapsed ? "justify-center" : "gap-3"
-                                        } ${active
-                                            ? "bg-blue-100 text-blue-800 shadow-sm ring-1 ring-blue-200"
-                                            : "text-slate-700 hover:bg-white hover:text-slate-900"
-                                        }`}
-                                >
-                                    {item.icon ? (
-                                        <Image
-                                            src={item.icon}
-                                            alt={item.label}
-                                            width={20}
-                                            height={20}
-                                            className="h-5 w-5 shrink-0 object-contain"
-                                        />
-                                    ) : (
-                                        <div className="h-5 w-5 shrink-0 rounded bg-slate-300" />
-                                    )}
+                            <div className="grid gap-2">
+                                {section.items.map((item) => {
+                                    const active =
+                                        pathname === item.href ||
+                                        (item.href !== "/" && pathname.startsWith(`${item.href}/`));
 
-                                    {!collapsed ? (
-                                        <span className="truncate text-base font-bold">
-                                            {item.label}
-                                        </span>
-                                    ) : null}
-                                </Link>
-                            );
-                        })}
-                    </div>
+                                    const Icon = item.icon;
+
+                                    return (
+                                        <Link
+                                            key={item.href}
+                                            href={item.href}
+                                            className={`flex items-center rounded-2xl px-4 py-4 transition-all duration-200 ${collapsed ? "justify-center" : "gap-3.5"
+                                                } ${active
+                                                    ? "bg-white/12 text-white shadow-sm ring-1 ring-white/12"
+                                                    : "text-slate-200 hover:bg-white/6 hover:text-white"
+                                                }`}
+                                        >
+                                            <span
+                                                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${active ? "bg-white/15" : "bg-white/10"
+                                                    }`}
+                                            >
+                                                <Icon size={20} />
+                                            </span>
+
+                                            {!collapsed ? (
+                                                <span className="truncate text-[15px] font-bold">
+                                                    {item.label}
+                                                </span>
+                                            ) : null}
+                                        </Link>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
                 </nav>
 
-                <div className="border-t border-slate-200 px-4 py-4">
+                <div className="border-t border-white/10 px-4 py-5">
                     <div
-                        className={`rounded-2xl bg-white p-4 shadow-sm ${collapsed ? "flex justify-center" : ""
+                        className={`rounded-2xl bg-white/6 p-4 shadow-sm ring-1 ring-white/10 ${collapsed ? "flex justify-center" : ""
                             }`}
                     >
                         {collapsed ? (
                             <Image
                                 src="/branding/icon.png"
                                 alt="Mhike School"
-                                width={28}
-                                height={28}
-                                className="h-7 w-7 object-contain"
+                                width={30}
+                                height={30}
+                                className="h-8 w-8 object-contain"
                             />
                         ) : (
                             <div className="flex items-start gap-3">
                                 <Image
                                     src="/branding/icon.png"
                                     alt="Mhike School"
-                                    width={28}
-                                    height={28}
-                                    className="h-7 w-7 shrink-0 object-contain"
+                                    width={30}
+                                    height={30}
+                                    className="h-8 w-8 shrink-0 object-contain"
                                 />
                                 <div className="min-w-0 max-w-full">
-                                    <div className="break-words text-sm font-extrabold leading-tight text-slate-900">
+                                    <div className="break-words text-sm font-extrabold leading-tight text-white">
                                         {title}
                                     </div>
-                                    <div className="mt-1 text-xs text-slate-500">
+                                    <div className="mt-1 text-xs text-slate-300">
                                         Multi-tenant LMS
                                     </div>
                                 </div>
