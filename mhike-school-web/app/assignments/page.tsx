@@ -1,57 +1,40 @@
 "use client";
 
-import React from "react";
 import { useRouter } from "next/navigation";
 
 export default function AssignmentsPage() {
     const router = useRouter();
 
     return (
-        <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
+        <main className="mx-auto max-w-4xl p-6 sm:p-8">
             <button
                 onClick={() => router.push("/dashboard")}
-                style={{
-                    marginBottom: 16,
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    border: "1px solid #E5E7EB",
-                    background: "white",
-                    cursor: "pointer",
-                }}
+                className="mb-4 inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
             >
                 ← Back to Dashboard
             </button>
 
-            <h1 style={{ fontSize: 32, fontWeight: 900, marginBottom: 8 }}>Assignments</h1>
-            <p style={{ color: "#6B7280", marginTop: 0 }}>
+            <h1 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">
+                Assignments
+            </h1>
+            <p className="mt-2 text-base text-slate-600">
                 View and submit coursework.
             </p>
 
-            <section
-                style={{
-                    marginTop: 20,
-                    background: "white",
-                    border: "1px solid #E5E7EB",
-                    borderRadius: 18,
-                    padding: 20,
-                }}
-            >
-                <div style={{ fontSize: 22, fontWeight: 800 }}>Project Report Submission</div>
-                <p style={{ color: "#6B7280" }}>Due this week</p>
-                <button
-                    style={{
-                        padding: "12px 16px",
-                        borderRadius: 12,
-                        border: "none",
-                        background: "#2563EB",
-                        color: "white",
-                        fontWeight: 800,
-                        cursor: "pointer",
-                    }}
-                >
-                    Upload Submission
-                </button>
-            </section>
+            <div className="mt-6 space-y-4">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="text-lg font-bold text-slate-900">
+                        Project Report Submission
+                    </div>
+                    <p className="mt-1 text-sm text-slate-500">
+                        Due this week
+                    </p>
+
+                    <button className="mt-4 inline-flex items-center rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700">
+                        Upload Submission
+                    </button>
+                </div>
+            </div>
         </main>
     );
 }

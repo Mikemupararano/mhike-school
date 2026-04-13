@@ -1,18 +1,31 @@
 @import "tailwindcss";
 
-html,
+html {
+  font-size: 16px !important;
+}
+
 body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-}
-
-body {
   background: #f8fafc;
   color: #0f172a;
   font-family: Inter, Arial, sans-serif;
+  line-height: 1.6;
 }
 
-* {
+/* Fix scaling issues */
+:root {
+  font-size: 16px;
+}
+
+/* Prevent browser weird shrinking */
+body {
+  zoom: 1;
+}
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }

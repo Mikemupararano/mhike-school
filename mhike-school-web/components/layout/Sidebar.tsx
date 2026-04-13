@@ -60,7 +60,7 @@ export default function Sidebar({
                                 textSizeClass="text-2xl"
                                 className="shrink-0"
                             />
-                            <div className="mt-2 text-sm font-medium text-slate-300">
+                            <div className="mt-3 text-[17px] font-semibold text-slate-100">
                                 {brand.tagline}
                             </div>
                         </div>
@@ -71,7 +71,7 @@ export default function Sidebar({
                     {resolvedSections.map((section) => (
                         <div key={section.title} className="mb-7">
                             {!collapsed ? (
-                                <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300/70">
+                                <p className="mb-4 px-3 text-sm font-bold uppercase tracking-[0.18em] text-slate-100">
                                     {section.title}
                                 </p>
                             ) : null}
@@ -91,25 +91,25 @@ export default function Sidebar({
                                             className={`flex items-center rounded-2xl px-4 py-4 transition-all duration-200 ${collapsed ? "justify-center" : "gap-3.5"
                                                 } ${active
                                                     ? "text-white shadow-sm ring-1 ring-white/12"
-                                                    : "text-slate-200 hover:text-white"
+                                                    : "text-slate-100 hover:text-white"
                                                 }`}
                                             style={{
                                                 background: active ? "rgba(255,255,255,0.12)" : "transparent",
                                             }}
                                         >
                                             <span
-                                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors"
+                                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors"
                                                 style={{
                                                     background: active
                                                         ? "rgba(255,255,255,0.15)"
                                                         : "rgba(255,255,255,0.10)",
                                                 }}
                                             >
-                                                <Icon size={20} />
+                                                <Icon size={22} />
                                             </span>
 
                                             {!collapsed ? (
-                                                <span className="truncate text-[15px] font-bold">
+                                                <span className="truncate text-lg font-semibold">
                                                     {item.label}
                                                 </span>
                                             ) : null}

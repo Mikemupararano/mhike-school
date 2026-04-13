@@ -53,32 +53,38 @@ export default function DashboardShellWrapper({
     const router = useRouter();
     const [user, setUser] = useState<CurrentUser | null>(null);
     const [loading, setLoading] = useState(true);
+    const [shouldRedirectToLogin, setShouldRedirectToLogin] = useState(false);
 
     useEffect(() => {
         async function loadUser() {
             const token = getToken();
 
             if (!token) {
+                setShouldRedirectToLogin(true);
                 setLoading(false);
-                router.replace("/login");
                 return;
             }
 
             try {
                 const me = await getCurrentUser(token);
-                console.log("Current user payload:", me);
                 setUser(me);
             } catch (err) {
                 console.error("Auth error:", err);
                 clearToken();
-                router.replace("/login");
+                setShouldRedirectToLogin(true);
             } finally {
                 setLoading(false);
             }
         }
 
         void loadUser();
-    }, [router]);
+    }, []);
+
+    useEffect(() => {
+        if (!loading && shouldRedirectToLogin) {
+            router.replace("/login");
+        }
+    }, [loading, shouldRedirectToLogin, router]);
 
     if (loading) {
         return (
@@ -88,7 +94,7 @@ export default function DashboardShellWrapper({
         );
     }
 
-    if (!user) {
+    if (shouldRedirectToLogin || !user) {
         return null;
     }
 

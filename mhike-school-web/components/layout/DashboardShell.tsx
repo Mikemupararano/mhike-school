@@ -57,8 +57,8 @@ export default function DashboardShell({
                     />
                 ) : null}
 
-                <main className={`flex-1 p-4 sm:p-6 lg:p-8 ${contentClassName}`}>
-                    <div className="mx-auto w-full max-w-[1280px]">{children}</div>
+                <main className={`flex-1 p-6 sm:p-8 lg:p-10 xl:p-12 ${contentClassName}`}>
+                    <div className="w-full">{children}</div>
                 </main>
             </div>
         </div>
