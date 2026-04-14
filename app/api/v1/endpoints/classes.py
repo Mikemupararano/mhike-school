@@ -1,14 +1,15 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_school_id, get_current_user, require_role
 from app.db.session import get_db
 from app.models import User
+from app.models.user import UserRole
 from app.schemas.class_group import ClassGroupCreate, ClassGroupOut
-from app.services.class_service import ClassService
 from app.schemas.user import UserOut
+from app.services.class_service import ClassService
 
 router = APIRouter()
 
@@ -29,20 +30,31 @@ async def get_class(
     current_user: User = Depends(get_current_user),
     current_school_id: int = Depends(get_current_school_id),
 ):
-    class_group = await ClassService.get_class_by_id(db, class_id, current_school_id)
-    if class_group is None:
-        raise HTTPException(status_code=404, detail="Class not found")
-    return class_group
+    return await ClassService.get_class(db, class_id, current_school_id)
 
 
-@router.post("/", response_model=ClassGroupOut, status_code=201)
+@router.post("/", response_model=ClassGroupOut, status_code=status.HTTP_201_CREATED)
 async def create_class(
     payload: ClassGroupCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "teacher")),
+    current_user: User = Depends(
+        require_role(
+            UserRole.SCHOOL_ADMIN,
+            UserRole.PLATFORM_ADMIN,
+            UserRole.TEACHER,
+        )
+    ),
     current_school_id: int = Depends(get_current_school_id),
 ):
-    return await ClassService.create_class(db, payload, current_school_id)
+    class_group = await ClassService.create_class(
+        db=db,
+        name=payload.name,
+        school_id=current_school_id,
+        teacher_id=payload.teacher_id,
+    )
+    await db.commit()
+    await db.refresh(class_group)
+    return class_group
 
 
 @router.get("/{class_id}/students", response_model=List[UserOut])
@@ -52,13 +64,8 @@ async def get_class_students(
     current_user: User = Depends(get_current_user),
     current_school_id: int = Depends(get_current_school_id),
 ):
-    students = await ClassService.get_students_in_class(
+    return await ClassService.get_students_in_class(
         db,
         class_id,
         current_school_id,
     )
-
-    if students is None:
-        raise HTTPException(status_code=404, detail="Class not found")
-
-    return students

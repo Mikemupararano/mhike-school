@@ -12,11 +12,9 @@ import {
     type LucideIcon,
 } from "lucide-react";
 
-export type SidebarRole =
-    | "student"
-    | "teacher"
-    | "school_admin"
-    | "platform_admin";
+import { UserRole } from "@/types/user";
+
+export type SidebarRole = UserRole;
 
 export type SidebarItem = {
     label: string;
@@ -69,7 +67,11 @@ export const schoolAdminSidebar: SidebarSection[] = [
             { label: "Dashboard", href: "/school-admin", icon: LayoutDashboard },
             { label: "Users", href: "/school-admin/users", icon: Users },
             { label: "Classes", href: "/school-admin/classes", icon: School },
-            { label: "Announcements", href: "/school-admin/announcements", icon: Megaphone },
+            {
+                label: "Announcements",
+                href: "/school-admin/announcements",
+                icon: Megaphone,
+            },
             { label: "Branding", href: "/school-admin/branding", icon: Brush },
         ],
     },
@@ -105,20 +107,20 @@ export const platformAdminSidebar: SidebarSection[] = [
     },
 ];
 
-export function getSidebarSections(role?: string): SidebarSection[] {
+export function getSidebarSections(role?: SidebarRole | null): SidebarSection[] {
     switch (role) {
-        case "platform_admin":
+        case UserRole.PLATFORM_ADMIN:
             return platformAdminSidebar;
-        case "school_admin":
+        case UserRole.SCHOOL_ADMIN:
             return schoolAdminSidebar;
-        case "teacher":
+        case UserRole.TEACHER:
             return teacherSidebar;
-        case "student":
+        case UserRole.STUDENT:
         default:
             return studentSidebar;
     }
 }
 
-export function getSidebarItems(role?: string): SidebarItem[] {
+export function getSidebarItems(role?: SidebarRole | null): SidebarItem[] {
     return getSidebarSections(role).flatMap((section) => section.items);
 }
