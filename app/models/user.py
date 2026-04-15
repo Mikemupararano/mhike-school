@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
@@ -44,25 +45,41 @@ class User(Base):
         nullable=False,
     )
 
-    # Keep nullable=False if you do not want true hard anonymisation yet.
-    # If you want to blank credentials during anonymisation, make this nullable=True.
-    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    hashed_password: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
 
     role: Mapped[UserRole] = mapped_column(
-        SqlEnum(UserRole, name="user_role"),
+        SqlEnum(
+            UserRole,
+            name="user_role",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+            native_enum=False,
+            validate_strings=True,
+        ),
         default=UserRole.STUDENT,
         nullable=False,
         index=True,
     )
 
     status: Mapped[UserStatus] = mapped_column(
-        SqlEnum(UserStatus, name="user_status"),
+        SqlEnum(
+            UserStatus,
+            name="user_status",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+            native_enum=False,
+            validate_strings=True,
+        ),
         default=UserStatus.ACTIVE,
         nullable=False,
         index=True,
     )
 
-    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
 
     is_active: Mapped[bool] = mapped_column(
         Boolean,
@@ -76,33 +93,42 @@ class User(Base):
         index=True,
     )
 
-    deletion_requested_at: Mapped[DateTime | None] = mapped_column(
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
-    deleted_at: Mapped[DateTime | None] = mapped_column(
+    deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
-    anonymised_at: Mapped[DateTime | None] = mapped_column(
+    anonymised_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
-    retention_expires_at: Mapped[DateTime | None] = mapped_column(
+    retention_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
-    created_at: Mapped[DateTime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
 
-    school: Mapped["School"] = relationship("School", back_populates="users")
+    school: Mapped["School | None"] = relationship(
+        "School",
+        back_populates="users",
+    )
+
+    classes_taught: Mapped[list["ClassGroup"]] = relationship(
+        "ClassGroup",
+        back_populates="teacher",
+        foreign_keys="ClassGroup.teacher_id",
+    )
 
     @property
     def is_platform_admin(self) -> bool:
@@ -111,3 +137,19 @@ class User(Base):
     @property
     def is_school_admin(self) -> bool:
         return self.role == UserRole.SCHOOL_ADMIN
+
+    @property
+    def is_teacher(self) -> bool:
+        return self.role == UserRole.TEACHER
+
+    @property
+    def is_student(self) -> bool:
+        return self.role == UserRole.STUDENT
+
+    @property
+    def is_school_staff(self) -> bool:
+        return self.role in {UserRole.SCHOOL_ADMIN, UserRole.TEACHER}
+
+    @property
+    def can_teach(self) -> bool:
+        return self.role in {UserRole.SCHOOL_ADMIN, UserRole.TEACHER}

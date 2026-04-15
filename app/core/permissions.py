@@ -34,6 +34,38 @@ class PermissionService:
             )
 
     @staticmethod
+    def ensure_school_staff_or_platform_admin(current_user: User) -> None:
+        """
+        School staff includes school admins and teachers.
+        Platform admins are also allowed.
+        """
+        if current_user.role not in {
+            UserRole.SCHOOL_ADMIN,
+            UserRole.TEACHER,
+            UserRole.PLATFORM_ADMIN,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="School staff access required.",
+            )
+
+    @staticmethod
+    def ensure_can_teach(current_user: User) -> None:
+        """
+        For the current single-role model, both teachers and school admins
+        are allowed to perform teaching-related actions.
+        """
+        if current_user.role not in {
+            UserRole.SCHOOL_ADMIN,
+            UserRole.TEACHER,
+            UserRole.PLATFORM_ADMIN,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Teaching access required.",
+            )
+
+    @staticmethod
     def ensure_active_user(current_user: User) -> None:
         if not current_user.is_active or current_user.status != UserStatus.ACTIVE:
             raise HTTPException(
@@ -81,7 +113,8 @@ class PermissionService:
 
     @staticmethod
     def ensure_not_last_school_admin(
-        target_user: User, active_school_admin_count: int
+        target_user: User,
+        active_school_admin_count: int,
     ) -> None:
         """
         Prevent removing/deactivating/anonymising the final active school admin.

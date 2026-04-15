@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.permissions import PermissionService
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.assignment import (
     AssignmentCreate,
     AssignmentOut,
@@ -26,11 +27,8 @@ async def create_assignment_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can create assignments",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
 
     return await create_assignment(
         db=db,
@@ -48,11 +46,8 @@ async def list_my_teacher_assignments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can view this resource",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
 
     return await get_teacher_assignments(db, current_user)
 
@@ -62,7 +57,9 @@ async def list_my_student_assignments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "student":
+    PermissionService.ensure_active_user(current_user)
+
+    if current_user.role != UserRole.STUDENT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only students can view this resource",
@@ -77,9 +74,11 @@ async def get_assignment_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
+
     assignment = await get_assignment(db, assignment_id)
 
-    if current_user.role == "platform_admin":
+    if current_user.role == UserRole.PLATFORM_ADMIN:
         return assignment
 
     if assignment.school_id != current_user.school_id:
@@ -98,22 +97,22 @@ async def update_assignment_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can update assignments",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
 
     assignment = await get_assignment(db, assignment_id)
 
-    if current_user.role == "teacher" and assignment.created_by != current_user.id:
+    if (
+        current_user.role == UserRole.TEACHER
+        and assignment.created_by != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only update your own assignments",
         )
 
     if (
-        current_user.role != "platform_admin"
+        current_user.role != UserRole.PLATFORM_ADMIN
         and assignment.school_id != current_user.school_id
     ):
         raise HTTPException(
@@ -145,22 +144,22 @@ async def publish_assignment_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can publish assignments",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
 
     assignment = await get_assignment(db, assignment_id)
 
-    if current_user.role == "teacher" and assignment.created_by != current_user.id:
+    if (
+        current_user.role == UserRole.TEACHER
+        and assignment.created_by != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only publish your own assignments",
         )
 
     if (
-        current_user.role != "platform_admin"
+        current_user.role != UserRole.PLATFORM_ADMIN
         and assignment.school_id != current_user.school_id
     ):
         raise HTTPException(
@@ -182,22 +181,22 @@ async def delete_assignment_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can delete assignments",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
 
     assignment = await get_assignment(db, assignment_id)
 
-    if current_user.role == "teacher" and assignment.created_by != current_user.id:
+    if (
+        current_user.role == UserRole.TEACHER
+        and assignment.created_by != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only delete your own assignments",
         )
 
     if (
-        current_user.role != "platform_admin"
+        current_user.role != UserRole.PLATFORM_ADMIN
         and assignment.school_id != current_user.school_id
     ):
         raise HTTPException(

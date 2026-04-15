@@ -62,8 +62,19 @@ class ClassService:
         school_id: int,
         teacher_id: int | None = None,
     ) -> ClassGroup:
-        # Optional: validate teacher belongs to school
-        if teacher_id:
+        # Prevent duplicate class names within the same school
+        existing_result = await db.execute(
+            select(ClassGroup).where(
+                ClassGroup.name == name,
+                ClassGroup.school_id == school_id,
+            )
+        )
+        existing_class = existing_result.scalar_one_or_none()
+        if existing_class is not None:
+            raise ValueError("A class with this name already exists in this school")
+
+        # Optional teacher validation
+        if teacher_id is not None:
             teacher_result = await db.execute(
                 select(User).where(
                     User.id == teacher_id,
@@ -73,11 +84,8 @@ class ClassService:
             )
             teacher = teacher_result.scalar_one_or_none()
 
-            if not teacher:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid teacher for this school",
-                )
+            if teacher is None:
+                raise ValueError("Invalid teacher for this school")
 
         class_group = ClassGroup(
             name=name,
@@ -87,7 +95,6 @@ class ClassService:
 
         db.add(class_group)
         await db.flush()
-        await db.refresh(class_group)
 
         return class_group
 
@@ -112,16 +119,12 @@ class ClassService:
         )
         teacher = teacher_result.scalar_one_or_none()
 
-        if not teacher:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid teacher",
-            )
+        if teacher is None:
+            raise ValueError("Invalid teacher")
 
         class_group.teacher_id = teacher_id
 
         await db.flush()
-        await db.refresh(class_group)
 
         return class_group
 
@@ -134,7 +137,6 @@ class ClassService:
         class_id: int,
         school_id: int,
     ) -> list[User]:
-        # ✅ Secure class lookup
         class_group = await ClassService.get_class(db, class_id, school_id)
 
         result = await db.execute(
@@ -142,7 +144,8 @@ class ClassService:
             .join(Enrollment, Enrollment.user_id == User.id)
             .where(
                 Enrollment.class_id == class_group.id,
-                User.school_id == school_id,  # 🔒 extra safety
+                User.school_id == school_id,
+                User.role == UserRole.STUDENT,
             )
             .order_by(User.id)
         )
@@ -170,16 +173,15 @@ class ClassService:
         )
         student = student_result.scalar_one_or_none()
 
-        if not student:
+        if student is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid student",
             )
 
-        # Prevent duplicate enrollment
         existing = await db.execute(
             select(Enrollment).where(
-                Enrollment.class_id == class_id,
+                Enrollment.class_id == class_group.id,
                 Enrollment.user_id == student_id,
             )
         )
@@ -190,13 +192,12 @@ class ClassService:
             )
 
         enrollment = Enrollment(
-            class_id=class_id,
+            class_id=class_group.id,
             user_id=student_id,
         )
 
         db.add(enrollment)
         await db.flush()
-        await db.refresh(enrollment)
 
         return enrollment
 
@@ -210,17 +211,17 @@ class ClassService:
         student_id: int,
         school_id: int,
     ) -> None:
-        await ClassService.get_class(db, class_id, school_id)
+        class_group = await ClassService.get_class(db, class_id, school_id)
 
         result = await db.execute(
             select(Enrollment).where(
-                Enrollment.class_id == class_id,
+                Enrollment.class_id == class_group.id,
                 Enrollment.user_id == student_id,
             )
         )
         enrollment = result.scalar_one_or_none()
 
-        if not enrollment:
+        if enrollment is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Enrollment not found",

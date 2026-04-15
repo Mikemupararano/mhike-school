@@ -1,8 +1,9 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import User
 from app.core.security import hash_password
+from app.models import User
+from app.models.user import UserRole, UserStatus
 
 
 async def bootstrap_admin(
@@ -12,28 +13,38 @@ async def bootstrap_admin(
     password: str | None,
 ) -> None:
     """
-    Ensure the configured admin user exists.
+    Ensure the configured platform admin user exists.
 
     Behaviour:
     - If bootstrapping disabled → do nothing
     - If email/password missing → do nothing
-    - If user with this email exists → promote to admin
-    - If user does not exist → create admin
+    - If user with this email exists → promote to platform_admin
+    - If user does not exist → create platform_admin
     """
 
     if not enabled or not email or not password:
         return
 
-    # Check if the configured admin email already exists
     res = await db.execute(select(User).where(User.email == email))
     user = res.scalars().first()
 
-    # Promote existing user to admin
     if user:
         updated = False
 
-        if user.role != "admin":
-            user.role = "admin"
+        if user.role != UserRole.PLATFORM_ADMIN:
+            user.role = UserRole.PLATFORM_ADMIN
+            updated = True
+
+        if user.school_id is not None:
+            user.school_id = None
+            updated = True
+
+        if user.status != UserStatus.ACTIVE:
+            user.status = UserStatus.ACTIVE
+            updated = True
+
+        if not user.is_active:
+            user.is_active = True
             updated = True
 
         if not user.hashed_password:
@@ -45,11 +56,13 @@ async def bootstrap_admin(
 
         return
 
-    # Otherwise create new admin user
     admin_user = User(
         email=email,
         hashed_password=hash_password(password),
-        role="admin",
+        role=UserRole.PLATFORM_ADMIN,
+        status=UserStatus.ACTIVE,
+        is_active=True,
+        school_id=None,
     )
 
     db.add(admin_user)

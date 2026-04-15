@@ -1,11 +1,12 @@
 from datetime import datetime
+
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException, status
 
 from app.models.assignment import Assignment
 from app.models.course import Course
-from app.models.user import User
+from app.models.user import User, UserRole
 
 
 async def create_assignment(
@@ -24,14 +25,16 @@ async def create_assignment(
             detail="Course not found",
         )
 
-    if current_user.role == "teacher" and course.teacher_id != current_user.id:
+    # Teachers can only create assignments for their own courses
+    if current_user.role == UserRole.TEACHER and course.teacher_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only create assignments for your own courses",
         )
 
+    # School-level restriction (except platform admin)
     if (
-        current_user.role != "platform_admin"
+        current_user.role != UserRole.PLATFORM_ADMIN
         and course.school_id != current_user.school_id
     ):
         raise HTTPException(
@@ -63,11 +66,16 @@ async def get_teacher_assignments(
 ) -> list[Assignment]:
     query = select(Assignment)
 
-    if current_user.role == "teacher":
+    if current_user.role == UserRole.TEACHER:
+        # Teachers only see their own
         query = query.where(Assignment.created_by == current_user.id)
-    elif current_user.role == "platform_admin":
+
+    elif current_user.role == UserRole.PLATFORM_ADMIN:
+        # Platform admin sees everything
         query = query.order_by(Assignment.created_at.desc())
+
     else:
+        # School admin sees all assignments in their school
         query = query.where(Assignment.school_id == current_user.school_id)
 
     result = await db.execute(query.order_by(Assignment.created_at.desc()))

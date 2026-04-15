@@ -84,9 +84,22 @@ class SchoolUserService:
         )
 
         await repo.create(user)
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()
         return user
+
+    @staticmethod
+    async def create_user(
+        db: AsyncSession,
+        payload: UserCreate,
+        school_id: int,
+        actor: CurrentUser,
+    ) -> User:
+        payload.school_id = school_id
+        return await SchoolUserService.create_school_user(
+            db=db,
+            payload=payload,
+            current_user=actor,
+        )
 
     @staticmethod
     async def update_school_user(
@@ -131,16 +144,46 @@ class SchoolUserService:
             user.is_active = payload.status == UserStatus.ACTIVE
 
         await repo.save(user)
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()
         return user
+
+    @staticmethod
+    async def update_user(
+        db: AsyncSession,
+        user_id: int,
+        payload: UserUpdate,
+        school_id: int,
+        actor: CurrentUser,
+    ) -> User:
+        if actor.role == UserRole.SCHOOL_ADMIN and actor.school_id != school_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot update users outside your school.",
+            )
+
+        return await SchoolUserService.update_school_user(
+            db=db,
+            user_id=user_id,
+            payload=payload,
+            current_user=actor,
+        )
 
     @staticmethod
     async def deactivate_user(
         db: AsyncSession,
         user_id: int,
-        current_user: CurrentUser,
+        current_user: CurrentUser | None = None,
+        *,
+        school_id: int | None = None,
+        actor: CurrentUser | None = None,
     ) -> User:
+        current_actor = actor or current_user
+        if current_actor is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing actor context.",
+            )
+
         repo = UserRepository(db)
         user = await repo.get_by_id(user_id)
 
@@ -150,7 +193,13 @@ class SchoolUserService:
                 detail="User not found.",
             )
 
-        PermissionService.ensure_can_manage_school_user(current_user, user)
+        PermissionService.ensure_can_manage_school_user(current_actor, user)
+
+        if school_id is not None and user.school_id != school_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found in this school.",
+            )
 
         if user.school_id is not None:
             active_admin_count = await repo.count_school_admins(user.school_id)
@@ -162,16 +211,25 @@ class SchoolUserService:
         user.retention_expires_at = datetime.now(timezone.utc) + timedelta(days=90)
 
         await repo.save(user)
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()
         return user
 
     @staticmethod
     async def request_erasure(
         db: AsyncSession,
         user_id: int,
-        current_user: CurrentUser,
+        current_user: CurrentUser | None = None,
+        *,
+        school_id: int | None = None,
+        actor: CurrentUser | None = None,
     ) -> User:
+        current_actor = actor or current_user
+        if current_actor is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing actor context.",
+            )
+
         repo = UserRepository(db)
         user = await repo.get_by_id(user_id)
 
@@ -181,8 +239,14 @@ class SchoolUserService:
                 detail="User not found.",
             )
 
-        PermissionService.ensure_can_manage_school_user(current_user, user)
+        PermissionService.ensure_can_manage_school_user(current_actor, user)
         PermissionService.ensure_can_request_erasure(user)
+
+        if school_id is not None and user.school_id != school_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found in this school.",
+            )
 
         if user.school_id is not None:
             active_admin_count = await repo.count_school_admins(user.school_id)
@@ -193,16 +257,25 @@ class SchoolUserService:
         user.deletion_requested_at = datetime.now(timezone.utc)
 
         await repo.save(user)
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()
         return user
 
     @staticmethod
     async def anonymise_user(
         db: AsyncSession,
         user_id: int,
-        current_user: CurrentUser,
+        current_user: CurrentUser | None = None,
+        *,
+        school_id: int | None = None,
+        actor: CurrentUser | None = None,
     ) -> User:
+        current_actor = actor or current_user
+        if current_actor is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing actor context.",
+            )
+
         repo = UserRepository(db)
         user = await repo.get_by_id(user_id)
 
@@ -212,8 +285,14 @@ class SchoolUserService:
                 detail="User not found.",
             )
 
-        PermissionService.ensure_can_manage_school_user(current_user, user)
+        PermissionService.ensure_can_manage_school_user(current_actor, user)
         PermissionService.ensure_can_anonymise(user)
+
+        if school_id is not None and user.school_id != school_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found in this school.",
+            )
 
         if user.school_id is not None:
             active_admin_count = await repo.count_school_admins(user.school_id)
@@ -227,6 +306,5 @@ class SchoolUserService:
         user.anonymised_at = datetime.now(timezone.utc)
 
         await repo.save(user)
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()
         return user

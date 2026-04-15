@@ -4,17 +4,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user
+from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.course import Course
 from app.models.enrollment import Enrollment
 from app.models.school import School
-from app.models.user import User
+from app.models.user import User, UserRole, UserStatus
+from app.schemas.school import SchoolCreate, SchoolOut
+from app.schemas.user import UserCreate, UserOut
 
 router = APIRouter()
 
 
 def _ensure_platform_admin(current_user: User) -> None:
-    if current_user.role != "platform_admin":
+    if current_user.role != UserRole.PLATFORM_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform admin access required",
@@ -31,13 +34,13 @@ async def platform_admin_dashboard(
     total_users = await db.scalar(select(func.count()).select_from(User)) or 0
     total_students = (
         await db.scalar(
-            select(func.count()).select_from(User).where(User.role == "student")
+            select(func.count()).select_from(User).where(User.role == UserRole.STUDENT)
         )
         or 0
     )
     total_teachers = (
         await db.scalar(
-            select(func.count()).select_from(User).where(User.role == "teacher")
+            select(func.count()).select_from(User).where(User.role == UserRole.TEACHER)
         )
         or 0
     )
@@ -45,7 +48,7 @@ async def platform_admin_dashboard(
         await db.scalar(
             select(func.count())
             .select_from(User)
-            .where(User.role.in_(["admin", "platform_admin"]))
+            .where(User.role.in_([UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN]))
         )
         or 0
     )
@@ -80,7 +83,7 @@ async def platform_admin_dashboard(
     }
 
 
-@router.get("/schools")
+@router.get("/schools", response_model=list[SchoolOut])
 async def platform_admin_schools(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -95,66 +98,96 @@ async def platform_admin_schools(
         query = query.where(School.name.ilike(term))
 
     result = await db.execute(query)
-    schools = result.scalars().all()
+    return list(result.scalars().all())
 
-    items = []
-    for school in schools:
-        school_id = school.id
 
-        total_users = (
-            await db.scalar(
-                select(func.count())
-                .select_from(User)
-                .where(User.school_id == school_id)
-            )
-            or 0
+@router.post("/schools", response_model=SchoolOut, status_code=status.HTTP_201_CREATED)
+async def create_school(
+    payload: SchoolCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_platform_admin(current_user)
+
+    existing = await db.execute(
+        select(School).where(func.lower(School.name) == payload.name.strip().lower())
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A school with this name already exists",
         )
 
-        total_students = (
-            await db.scalar(
-                select(func.count())
-                .select_from(User)
-                .where(
-                    User.school_id == school_id,
-                    User.role == "student",
-                )
-            )
-            or 0
+    school = School(name=payload.name.strip())
+    db.add(school)
+    await db.commit()
+    await db.refresh(school)
+    return school
+
+
+@router.post(
+    "/schools/{school_id}/admins",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_school_admin(
+    school_id: int,
+    payload: UserCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_platform_admin(current_user)
+
+    school = await db.get(School, school_id)
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
         )
 
-        total_teachers = (
-            await db.scalar(
-                select(func.count())
-                .select_from(User)
-                .where(
-                    User.school_id == school_id,
-                    User.role == "teacher",
-                )
-            )
-            or 0
+    if payload.role != UserRole.SCHOOL_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This endpoint can only create school_admin users",
         )
 
-        total_courses = (
-            await db.scalar(
-                select(func.count())
-                .select_from(Course)
-                .where(Course.school_id == school_id)
-            )
-            or 0
+    existing = await db.execute(
+        select(User).where(
+            User.email == payload.email,
+            User.school_id == school_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A user with this email already exists in this school",
         )
 
-        items.append(
-            {
-                "id": school.id,
-                "name": school.name,
-                "total_users": total_users,
-                "total_students": total_students,
-                "total_teachers": total_teachers,
-                "total_courses": total_courses,
-            }
-        )
+    user = User(
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
+        role=UserRole.SCHOOL_ADMIN,
+        full_name=payload.full_name,
+        school_id=school_id,
+        status=UserStatus.ACTIVE,
+        is_active=True,
+    )
 
-    return items
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        school_id=user.school_id,
+        school_name=school.name,
+        is_active=user.is_active,
+        status=user.status,
+        created_at=user.created_at,
+    )
 
 
 @router.get("/users")
@@ -178,7 +211,14 @@ async def platform_admin_users(
         filters.append(User.school_id == school_id)
 
     if role:
-        filters.append(User.role == role)
+        try:
+            role_enum = UserRole(role)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role filter",
+            ) from e
+        filters.append(User.role == role_enum)
 
     if search:
         term = f"%{search.strip()}%"
@@ -210,6 +250,7 @@ async def platform_admin_users(
                 "school_id": user.school_id,
                 "school_name": user.school.name if user.school else None,
                 "is_active": user.is_active,
+                "status": user.status,
             }
             for user in users
         ],
@@ -286,20 +327,28 @@ async def platform_admin_update_user_role(
     _ensure_platform_admin(current_user)
 
     role = payload.get("role")
-    if role not in {"student", "teacher", "admin"}:
-        raise HTTPException(status_code=400, detail="Invalid role")
+    try:
+        role_enum = UserRole(role)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role",
+        ) from e
 
     user = await db.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if user.role == "platform_admin":
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if user.role == UserRole.PLATFORM_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot modify platform admin role",
         )
 
-    user.role = role
+    user.role = role_enum
     await db.commit()
     await db.refresh(user)
 
@@ -310,6 +359,7 @@ async def platform_admin_update_user_role(
         "role": user.role,
         "school_id": user.school_id,
         "is_active": user.is_active,
+        "status": user.status,
     }
 
 
@@ -324,11 +374,14 @@ async def platform_admin_toggle_user_active(
 
     user = await db.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if user.role == "platform_admin":
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if user.role == UserRole.PLATFORM_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot deactivate platform admin",
         )
 
@@ -343,6 +396,7 @@ async def platform_admin_toggle_user_active(
         "role": user.role,
         "school_id": user.school_id,
         "is_active": user.is_active,
+        "status": user.status,
     }
 
 
@@ -357,7 +411,10 @@ async def platform_admin_set_course_published(
 
     course = await db.get(Course, course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
 
     course.published = bool(payload.get("published"))
     await db.commit()
@@ -383,7 +440,10 @@ async def platform_admin_delete_course(
 
     course = await db.get(Course, course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
 
     await db.delete(course)
     await db.commit()

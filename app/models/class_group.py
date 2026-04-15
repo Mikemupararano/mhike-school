@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
@@ -14,7 +16,10 @@ class ClassGroup(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
 
     school_id: Mapped[int] = mapped_column(
         ForeignKey("schools.id"),
@@ -22,7 +27,6 @@ class ClassGroup(Base):
         nullable=False,
     )
 
-    # 👨‍🏫 Assign a teacher to the class
     teacher_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
         nullable=True,
@@ -35,13 +39,16 @@ class ClassGroup(Base):
         nullable=False,
     )
 
-    # =========================
-    # Relationships
-    # =========================
+    school: Mapped["School"] = relationship(
+        "School",
+        back_populates="classes",
+    )
 
-    school = relationship("School", back_populates="classes")
-
-    teacher = relationship("User", foreign_keys=[teacher_id])
+    teacher: Mapped["User | None"] = relationship(
+        "User",
+        back_populates="classes_taught",
+        foreign_keys=[teacher_id],
+    )
 
     enrollments: Mapped[list["Enrollment"]] = relationship(
         "Enrollment",
