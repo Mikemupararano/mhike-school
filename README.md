@@ -78,296 +78,6 @@ React
 TypeScript
 
 ## Project Structure
-
-## 🏗️ Project Structure
-
-mhike-school/
-│
-├── docker-compose.yml
-├── .env
-├── .env.example
-├── .gitignore
-├── README.md
-├── Makefile
-│
-├── mhike-school-web/                                # 🌐 FRONTEND (Next.js)
-│   │
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── next.config.js
-│   ├── tailwind.config.ts
-│   ├── postcss.config.js
-│   ├── .env.local
-│   │
-│   ├── public/
-│   │   ├── logo.png
-│   │   ├── favicon.ico
-│   │   ├── logo-icon.svg                           # ✅ new brand icon
-│   │   ├── logo-navbar.svg                         # ✅ new navbar logo
-│   │   ├── logo-light.svg                          # ✅ light logo variant
-│   │   ├── logo-dark.svg                           # ✅ dark logo variant
-│   │   ├── apple-touch-icon.png                    # ✅ planned/branding asset
-│   │   ├── og-image.png                            # ✅ planned/social preview
-│   │   └── icons/
-│   │       ├── dashboard.svg
-│   │       ├── user.svg
-│   │       └── school.svg
-│   │
-│   ├── app/
-│   │   ├── globals.css
-│   │   ├── layout.tsx
-│   │   ├── page.tsx
-│   │   ├── loading.tsx
-│   │   ├── not-found.tsx
-│   │   │
-│   │   ├── (auth)/
-│   │   │   ├── layout.tsx                          # ✅ auth layout with public navbar
-│   │   │   └── login/
-│   │   │       └── page.tsx
-│   │   │
-│   │   ├── (dashboard)/                            # 🔥 SHARED DASHBOARD LAYOUT
-│   │   │   ├── layout.tsx
-│   │   │   │
-│   │   │   ├── dashboard/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── profile/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── notifications/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── courses/
-│   │   │   │   ├── page.tsx
-│   │   │   │   └── [courseId]/
-│   │   │   │       └── page.tsx
-│   │   │   │
-│   │   │   ├── teacher/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── student/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── school-admin/                       # 🏫 TENANT ADMIN
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── users/
-│   │   │   │   ├── classes/
-│   │   │   │   ├── announcements/
-│   │   │   │   └── branding/
-│   │   │   │
-│   │   │   └── admin/                              # 🌍 PLATFORM ADMIN
-│   │   │       ├── page.tsx
-│   │   │       ├── schools/
-│   │   │       ├── users/
-│   │   │       ├── content/
-│   │   │       └── audit-logs/
-│   │
-│   ├── components/
-│   │   ├── layout/
-│   │   │   ├── Navbar.tsx
-│   │   │   ├── PublicNavbar.tsx                    # ✅ new public/auth navbar
-│   │   │   ├── BrandLogo.tsx                       # ✅ shared logo component
-│   │   │   ├── Sidebar.tsx
-│   │   │   ├── DashboardShell.tsx
-│   │   │   ├── PageHeader.tsx
-│   │   │   └── ProtectedRoute.tsx
-│   │   │
-│   │   ├── ui/                                     # 🔥 DESIGN SYSTEM
-│   │   │   ├── index.ts
-│   │   │   ├── BrandButton.tsx                     # ✅ new branded button
-│   │   │   ├── BrandInput.tsx                      # ✅ new branded input
-│   │   │   ├── BrandCard.tsx                       # ✅ new branded card
-│   │   │   │
-│   │   │   ├── primitives/
-│   │   │   │   ├── Button.tsx
-│   │   │   │   ├── Input.tsx
-│   │   │   │   ├── Select.tsx
-│   │   │   │   ├── TextArea.tsx
-│   │   │   │   └── Badge.tsx
-│   │   │   │
-│   │   │   ├── display/
-│   │   │   │   ├── Card.tsx
-│   │   │   │   ├── Section.tsx
-│   │   │   │   ├── StatCard.tsx
-│   │   │   │   └── EmptyState.tsx
-│   │   │   │
-│   │   │   ├── feedback/
-│   │   │   │   ├── Loader.tsx
-│   │   │   │   ├── Toast.tsx
-│   │   │   │   └── Modal.tsx
-│   │   │   │
-│   │   │   ├── navigation/
-│   │   │   │   ├── Tabs.tsx
-│   │   │   │   └── Pagination.tsx
-│   │   │   │
-│   │   │   └── data/
-│   │   │       └── Table.tsx
-│   │   │
-│   │   ├── school/
-│   │   ├── content/
-│   │   ├── assignments/
-│   │   ├── teacher/
-│   │   ├── student/
-│   │   ├── admin/
-│   │   ├── school-admin/
-│   │   └── notifications/
-│   │
-│   ├── lib/
-│   │   ├── brand.ts                                # ✅ brand tokens + metadata
-│   │   ├── api/
-│   │   │   ├── client.ts
-│   │   │   └── auth.ts
-│   │   │
-│   │   ├── services/
-│   │   │   ├── admin.ts
-│   │   │   ├── school.ts
-│   │   │   ├── course.ts
-│   │   │   ├── content.ts
-│   │   │   ├── assignment.ts
-│   │   │   └── notification.ts
-│   │   │
-│   │   └── utils/
-│   │       └── helpers.ts
-│   │
-│   ├── hooks/
-│   │   ├── useAuth.ts
-│   │   ├── useDebounce.ts
-│   │   ├── useNotifications.ts
-│   │   └── useSchoolTheme.ts
-│   │
-│   ├── providers/
-│   │   ├── AuthProvider.tsx
-│   │   ├── QueryProvider.tsx
-│   │   └── ThemeProvider.tsx
-│   │
-│   ├── types/
-│   │   ├── user.ts
-│   │   ├── school.ts
-│   │   ├── course.ts
-│   │   ├── content.ts
-│   │   └── assignment.ts
-│   │
-│   └── brand/                                      # ✅ brand asset pack
-│       ├── brand-guidelines.txt
-│       ├── logo/
-│       │   ├── logo-full.svg
-│       │   ├── logo-dark.svg
-│       │   ├── logo-light.svg
-│       │   └── logo-monochrome.svg
-│       ├── icon/
-│       ├── favicon/
-│       └── preview/
-│
-├── app/                                            # ⚙️ BACKEND (FastAPI)
-│   │
-│   ├── main.py
-│   │
-│   ├── api/
-│   │   └── v1/
-│   │       ├── api.py
-│   │       └── endpoints/
-│   │           ├── auth.py
-│   │           ├── dashboard.py
-│   │           ├── schools.py
-│   │           ├── school_users.py
-│   │           ├── school_admin.py
-│   │           ├── platform_admin.py
-│   │           ├── courses.py
-│   │           ├── topics.py
-│   │           ├── content_items.py
-│   │           ├── assignments.py
-│   │           └── notifications.py
-│   │
-│   ├── core/
-│   │   ├── config.py
-│   │   ├── security.py
-│   │   └── permissions.py
-│   │
-│   ├── db/
-│   │   ├── session.py
-│   │   └── base.py
-│   │
-│   ├── models/
-│   │   ├── user.py
-│   │   ├── school.py
-│   │   ├── course.py
-│   │   ├── content_item.py
-│   │   └── assignment.py
-│   │
-│   ├── schemas/
-│   │   ├── user.py
-│   │   ├── school.py
-│   │   ├── course.py
-│   │   └── content.py
-│   │
-│   ├── repositories/
-│   │   ├── user.py
-│   │   ├── school.py
-│   │   ├── course.py
-│   │   └── content.py
-│   │
-│   ├── services/
-│   │   ├── auth_service.py
-│   │   ├── school_service.py
-│   │   ├── course_service.py
-│   │   ├── content_service.py
-│   │   └── assignment_service.py
-│   │
-│   └── utils/
-│       └── helpers.py
-│
-├── alembic/
-├── tests/
-└── scripts/
-
----
-
-## 🏆 Why this is FINAL (no more restructuring)
-
-This structure gives you:
-
-### ✅ Clear ownership boundaries
-
-* `admin` → platform
-* `school-admin` → tenant
-
-### ✅ Scalable frontend
-
-* Route groups (`(dashboard)`)
-* Design system (`ui/`)
-* Feature separation
-
-### ✅ Scalable backend
-
-* endpoints → services → repositories
-* clean domain separation
-
-### ✅ No duplication
-
-* one UI system
-* one layout system
-* one API structure
-
----
-
-## 👊 You are now at production architecture
-
-This is **Stripe / Linear / Notion-level structure direction**.
-
----
-
-## 🚀 Next (high impact)
-
-If you want to go one level higher:
-
-👉 I can design your **RBAC + permissions system (frontend + backend)**
-👉 Or your **API contract + types sync (FastAPI ↔ Next.js)**
-
-Those are the two things that turn this from “clean code” into **real SaaS infrastructure**.
-
-
-```text
-Old
 mhike-school/
 │
 ├── docker-compose.yml
@@ -417,7 +127,7 @@ mhike-school/
 │   │   │       └── page.tsx
 │   │   │
 │   │   ├── (dashboard)/
-│   │   │   ├── layout.tsx                                 # shared sidebar/navbar shell
+│   │   │   ├── layout.tsx
 │   │   │   │
 │   │   │   ├── dashboard/
 │   │   │   │   └── page.tsx
@@ -483,13 +193,17 @@ mhike-school/
 │   │   │   │   ├── branding/
 │   │   │   │   │   └── page.tsx
 │   │   │   │   ├── users/
-│   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── page.tsx
+│   │   │   │   │   └── create/
+│   │   │   │   │       └── page.tsx
 │   │   │   │   ├── teachers/
 │   │   │   │   │   └── page.tsx
 │   │   │   │   ├── students/
 │   │   │   │   │   └── page.tsx
 │   │   │   │   ├── classes/
-│   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── page.tsx
+│   │   │   │   │   └── [classId]/
+│   │   │   │   │       └── page.tsx
 │   │   │   │   ├── announcements/
 │   │   │   │   │   └── page.tsx
 │   │   │   │   └── audit-logs/
@@ -499,6 +213,8 @@ mhike-school/
 │   │   │       ├── page.tsx
 │   │   │       ├── schools/
 │   │   │       │   ├── page.tsx
+│   │   │       │   ├── create/
+│   │   │       │   │   └── page.tsx
 │   │   │       │   └── [schoolId]/
 │   │   │       │       └── page.tsx
 │   │   │       ├── audit-logs/
@@ -533,13 +249,14 @@ mhike-school/
 │   │   │                   └── page.tsx
 │   │
 │   ├── components/
+│   │   ├── auth/
+│   │   │   └── RoleGate.tsx
 │   │   ├── layout/
 │   │   │   ├── Navbar.tsx
 │   │   │   ├── Sidebar.tsx
 │   │   │   ├── DashboardShell.tsx
 │   │   │   ├── PageHeader.tsx
 │   │   │   └── ProtectedRoute.tsx
-│   │   │
 │   │   ├── ui/
 │   │   │   ├── index.ts
 │   │   │   ├── primitives/
@@ -562,44 +279,36 @@ mhike-school/
 │   │   │   │   └── Pagination.tsx
 │   │   │   └── data/
 │   │   │       └── Table.tsx
-│   │   │
 │   │   ├── school/
 │   │   │   ├── cards/
 │   │   │   ├── forms/
 │   │   │   └── tables/
-│   │   │
 │   │   ├── content/
 │   │   │   ├── cards/
 │   │   │   ├── editors/
 │   │   │   ├── tables/
 │   │   │   └── filters/
-│   │   │
 │   │   ├── assignments/
 │   │   │   ├── builder/
 │   │   │   ├── cards/
 │   │   │   └── tables/
-│   │   │
 │   │   ├── teacher/
 │   │   │   ├── dashboard/
 │   │   │   └── components/
-│   │   │
 │   │   ├── student/
 │   │   │   ├── dashboard/
 │   │   │   └── components/
-│   │   │
 │   │   ├── admin/
 │   │   │   ├── dashboard/
 │   │   │   └── tables/
-│   │   │
 │   │   ├── school-admin/
 │   │   │   └── components/
-│   │   │
 │   │   └── notifications/
 │   │       ├── NotificationBell.tsx
 │   │       ├── NotificationPanel.tsx
 │   │       └── NotificationItem.tsx
 │   │
-│   ├── features/                                         # optional but scalable
+│   ├── features/
 │   │   ├── auth/
 │   │   ├── courses/
 │   │   ├── users/
@@ -615,7 +324,10 @@ mhike-school/
 │   │   │   ├── admin.ts
 │   │   │   ├── notification.ts
 │   │   │   ├── assignment.ts
-│   │   │   └── content.ts
+│   │   │   ├── content.ts
+│   │   │   ├── school-admin.ts
+│   │   │   ├── classes.ts
+│   │   │   └── platform-admin.ts
 │   │   └── utils/
 │   │       ├── helpers.ts
 │   │       └── format.ts
@@ -824,7 +536,8 @@ mhike-school/
 │       ├── 0014_create_quiz_attempt_answers.py
 │       ├── 0015_create_announcements.py
 │       ├── 0016_create_notifications.py
-│       └── 0017_create_audit_logs.py
+│       ├── 0017_create_audit_logs.py
+│       └── d3ed01427113_add_user_lifecycle_fields.py
 │
 ├── tests/
 │   ├── __init__.py
@@ -860,16 +573,77 @@ mhike-school/
 │   ├── test_announcements.py
 │   └── test_notifications.py
 │
-└── scripts/
-    ├── create_platform_admin.py
-    ├── create_school_admin.py
-    ├── reset_db.py
-    ├── seed_exam_boards.py
-    ├── seed_courses.py
-    ├── seed_topics.py
-    ├── seed_content.py
-    └── seed_school.py
-```
+├── scripts/
+│   ├── create_platform_admin.py
+│   ├── create_school_admin.py
+│   ├── reset_db.py
+│   ├── seed_exam_boards.py
+│   ├── seed_courses.py
+│   ├── seed_topics.py
+│   ├── seed_content.py
+│   └── seed_school.py
+│
+└── compliance/
+    ├── gdpr/
+    │   ├── gdpr_policy_v1.md
+    │   ├── data_retention_policy.md
+    │   └── data_erasure_workflow.md
+    ├── policies/
+    │   ├── privacy_policy.md
+    │   └── acceptable_use_policy.md
+    ├── templates/
+    │   ├── dsar_request_template.md
+    │   └── breach_notification_template.md
+    ├── mhike_gdpr_policy.docx
+    └── mhike_gdpr_policy.pdf
+
+
+
+---
+
+## 🏆 Why this is FINAL (no more restructuring)
+
+This structure gives you:
+
+### ✅ Clear ownership boundaries
+
+* `admin` → platform
+* `school-admin` → tenant
+
+### ✅ Scalable frontend
+
+* Route groups (`(dashboard)`)
+* Design system (`ui/`)
+* Feature separation
+
+### ✅ Scalable backend
+
+* endpoints → services → repositories
+* clean domain separation
+
+### ✅ No duplication
+
+* one UI system
+* one layout system
+* one API structure
+
+---
+
+## 👊 You are now at production architecture
+
+This is **Stripe / Linear / Notion-level structure direction**.
+
+---
+
+## 🚀 Next (high impact)
+
+If you want to go one level higher:
+
+👉 I can design your **RBAC + permissions system (frontend + backend)**
+👉 Or your **API contract + types sync (FastAPI ↔ Next.js)**
+
+Those are the two things that turn this from “clean code” into **real SaaS infrastructure**.
+
 
 ## Final recommendation
 
