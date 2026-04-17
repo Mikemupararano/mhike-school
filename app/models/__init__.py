@@ -1,30 +1,31 @@
-from app.models.user import User
-from app.models.school import School
-from app.models.course import Course
-from app.models.enrollment import Enrollment
-from app.models.module import Module
-from app.models.lesson import Lesson
-from app.models.progress import Progress
-from app.models.quiz import QuizQuestion, QuizOption
-from app.models.class_group import ClassGroup
-
-# ✅ NEW
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
+from app.models.class_group import ClassGroup
+from app.models.course import Course
+from app.models.enrollment import Enrollment
+from app.models.lesson import Lesson
+from app.models.module import Module
+from app.models.progress import Progress
+from app.models.quiz import QuizQuestion, QuizOption
+from app.models.school import School
+from app.models.user import User, UserRole, UserStatus
+from app.models.user_role import UserRoleAssignment
 
 
 __all__ = [
-    "User",
-    "School",
+    "Assignment",
+    "AssignmentSubmission",
+    "ClassGroup",
     "Course",
     "Enrollment",
-    "Module",
     "Lesson",
+    "Module",
     "Progress",
     "QuizQuestion",
     "QuizOption",
-    "ClassGroup",
-    # ✅ NEW
-    "Assignment",
-    "AssignmentSubmission",
+    "School",
+    "User",
+    "UserRole",
+    "UserStatus",
+    "UserRoleAssignment",
 ]

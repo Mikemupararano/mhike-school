@@ -8,10 +8,13 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 from app.db.base import Base
-from app import models  # noqa: F401 (import models for metadata)
+from app import models  # noqa: F401
+
 
 config = context.config
-fileConfig(config.config_file_name)
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
 
@@ -28,7 +31,10 @@ def run_migrations_offline():
 
 
 def do_run_migrations(connection: Connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

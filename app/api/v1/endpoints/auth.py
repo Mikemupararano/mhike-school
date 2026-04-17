@@ -30,6 +30,8 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
             "email": user.email,
             "full_name": user.full_name,
             "role": user.role,
+            "roles": user.roles,
+            "status": user.status,
             "school_id": user.school_id,
             "school_name": school_name,
             "is_active": user.is_active,
@@ -39,7 +41,7 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.post("/login", response_model=TokenOut)
@@ -50,7 +52,7 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.get("/me", response_model=UserOut)
@@ -65,6 +67,8 @@ async def me(
         "email": current_user.email,
         "full_name": current_user.full_name,
         "role": current_user.role,
+        "roles": current_user.roles,
+        "status": current_user.status,
         "school_id": current_user.school_id,
         "school_name": school_name,
         "is_active": current_user.is_active,

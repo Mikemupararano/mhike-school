@@ -50,6 +50,9 @@ class User(Base):
         nullable=True,
     )
 
+    # Keep this temporarily during the migration to multi-role support.
+    # Existing code may still depend on it until services/schemas/frontend
+    # are fully switched over to roles[].
     role: Mapped[UserRole] = mapped_column(
         SqlEnum(
             UserRole,
@@ -130,26 +133,57 @@ class User(Base):
         foreign_keys="ClassGroup.teacher_id",
     )
 
+    user_roles: Mapped[list["UserRoleAssignment"]] = relationship(
+        "UserRoleAssignment",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def roles(self) -> list[str]:
+        """
+        Transitional multi-role accessor.
+
+        During migration:
+        - Prefer roles from the user_roles association table if present
+        - Fall back to the legacy single role column otherwise
+        """
+        if self.user_roles:
+            return [assignment.role.value for assignment in self.user_roles]
+        return [self.role.value] if self.role else []
+
     @property
     def is_platform_admin(self) -> bool:
-        return self.role == UserRole.PLATFORM_ADMIN
+        return UserRole.PLATFORM_ADMIN.value in self.roles
 
     @property
     def is_school_admin(self) -> bool:
-        return self.role == UserRole.SCHOOL_ADMIN
+        return UserRole.SCHOOL_ADMIN.value in self.roles
 
     @property
     def is_teacher(self) -> bool:
-        return self.role == UserRole.TEACHER
+        return UserRole.TEACHER.value in self.roles
 
     @property
     def is_student(self) -> bool:
-        return self.role == UserRole.STUDENT
+        return UserRole.STUDENT.value in self.roles
 
     @property
     def is_school_staff(self) -> bool:
-        return self.role in {UserRole.SCHOOL_ADMIN, UserRole.TEACHER}
+        return any(
+            role in self.roles
+            for role in {
+                UserRole.SCHOOL_ADMIN.value,
+                UserRole.TEACHER.value,
+            }
+        )
 
     @property
     def can_teach(self) -> bool:
-        return self.role in {UserRole.SCHOOL_ADMIN, UserRole.TEACHER}
+        return any(
+            role in self.roles
+            for role in {
+                UserRole.SCHOOL_ADMIN.value,
+                UserRole.TEACHER.value,
+            }
+        )

@@ -28,9 +28,14 @@ async def get_current_user(
 
         user_id = payload.get("sub")
         school_id = payload.get("school_id")
-        role = payload.get("role")
 
-        if user_id is None or role is None:
+        # Transitional support:
+        # - legacy tokens may contain a single "role"
+        # - newer tokens may contain "roles"
+        token_role = payload.get("role")
+        token_roles = payload.get("roles")
+
+        if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",
@@ -44,15 +49,38 @@ async def get_current_user(
                 detail="Invalid token payload",
             ) from exc
 
-        try:
-            role = UserRole(role)
-        except ValueError as exc:
+        parsed_roles: set[UserRole] = set()
+
+        if token_roles is not None:
+            if not isinstance(token_roles, list) or not token_roles:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token payload",
+                )
+            try:
+                parsed_roles = {UserRole(role) for role in token_roles}
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token payload",
+                ) from exc
+        elif token_role is not None:
+            try:
+                parsed_roles = {UserRole(token_role)}
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token payload",
+                ) from exc
+        else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",
-            ) from exc
+            )
 
-        if role == UserRole.PLATFORM_ADMIN:
+        is_platform_admin_token = UserRole.PLATFORM_ADMIN in parsed_roles
+
+        if is_platform_admin_token:
             if school_id is not None:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -78,9 +106,16 @@ async def get_current_user(
             detail="Invalid token",
         ) from exc
 
-    query = select(User).options(selectinload(User.school)).where(User.id == user_id)
+    query = (
+        select(User)
+        .options(
+            selectinload(User.school),
+            selectinload(User.user_roles),
+        )
+        .where(User.id == user_id)
+    )
 
-    if role == UserRole.PLATFORM_ADMIN:
+    if is_platform_admin_token:
         query = query.where(User.school_id.is_(None))
     else:
         query = query.where(User.school_id == school_id)
@@ -106,6 +141,15 @@ async def get_current_user(
             detail="Account is inactive",
         )
 
+    user_role_values = set(user.roles)
+    token_role_values = {role.value for role in parsed_roles}
+
+    if not token_role_values.intersection(user_role_values):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token role no longer valid for user",
+        )
+
     return user
 
 
@@ -122,7 +166,10 @@ async def get_current_school_id(
 
 def require_role(*roles: UserRole):
     async def _dep(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles:
+        allowed_roles = {role.value for role in roles}
+        current_roles = set(current_user.roles)
+
+        if not current_roles.intersection(allowed_roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden",

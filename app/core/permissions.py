@@ -10,7 +10,7 @@ class PermissionService:
         Platform admins may access across schools.
         All other users are restricted to their own school.
         """
-        if current_user.role == UserRole.PLATFORM_ADMIN:
+        if current_user.is_platform_admin:
             return
 
         if current_user.school_id is None:
@@ -27,7 +27,7 @@ class PermissionService:
 
     @staticmethod
     def ensure_school_admin_or_platform_admin(current_user: User) -> None:
-        if current_user.role not in {UserRole.SCHOOL_ADMIN, UserRole.PLATFORM_ADMIN}:
+        if not (current_user.is_school_admin or current_user.is_platform_admin):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="School admin access required.",
@@ -39,11 +39,11 @@ class PermissionService:
         School staff includes school admins and teachers.
         Platform admins are also allowed.
         """
-        if current_user.role not in {
-            UserRole.SCHOOL_ADMIN,
-            UserRole.TEACHER,
-            UserRole.PLATFORM_ADMIN,
-        }:
+        if not (
+            current_user.is_school_admin
+            or current_user.is_teacher
+            or current_user.is_platform_admin
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="School staff access required.",
@@ -52,14 +52,10 @@ class PermissionService:
     @staticmethod
     def ensure_can_teach(current_user: User) -> None:
         """
-        For the current single-role model, both teachers and school admins
-        are allowed to perform teaching-related actions.
+        Teaching actions are allowed for teachers, school admins,
+        and platform admins.
         """
-        if current_user.role not in {
-            UserRole.SCHOOL_ADMIN,
-            UserRole.TEACHER,
-            UserRole.PLATFORM_ADMIN,
-        }:
+        if not (current_user.can_teach or current_user.is_platform_admin):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Teaching access required.",
@@ -80,7 +76,7 @@ class PermissionService:
         - school_admin, teacher, student must belong to a school
         - platform_admin must not belong to a school
         """
-        if user.role == UserRole.PLATFORM_ADMIN:
+        if user.is_platform_admin:
             if user.school_id is not None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -102,7 +98,7 @@ class PermissionService:
         """
         PermissionService.ensure_school_admin_or_platform_admin(current_user)
 
-        if current_user.role == UserRole.PLATFORM_ADMIN:
+        if current_user.is_platform_admin:
             return
 
         if current_user.school_id != target_user.school_id:
@@ -119,7 +115,7 @@ class PermissionService:
         """
         Prevent removing/deactivating/anonymising the final active school admin.
         """
-        if target_user.role != UserRole.SCHOOL_ADMIN:
+        if not target_user.is_school_admin:
             return
 
         if target_user.school_id is None:
