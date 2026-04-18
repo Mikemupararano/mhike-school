@@ -9,11 +9,25 @@ import React, {
     useState,
 } from "react";
 
+export type UserRole =
+    | "platform_admin"
+    | "school_admin"
+    | "teacher"
+    | "student";
+
+export type UserStatus =
+    | "active"
+    | "deactivated"
+    | "pending_erasure"
+    | "anonymised";
+
 type User = {
     id: number;
     email: string;
     full_name?: string | null;
-    role: string;
+    role: UserRole;
+    roles: UserRole[];
+    status: UserStatus;
     school_id?: number | null;
     school_name?: string | null;
     is_active: boolean;
@@ -27,6 +41,11 @@ type AuthContextType = {
     setToken: (token: string | null) => Promise<User | null>;
     refreshUser: () => Promise<User | null>;
     logout: () => void;
+    hasRole: (role: UserRole) => boolean;
+    isPlatformAdmin: boolean;
+    isSchoolAdmin: boolean;
+    isTeacher: boolean;
+    isStudent: boolean;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -54,8 +73,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             throw new Error("Failed to fetch current user");
         }
 
-        const data: User = await res.json();
-        return data;
+        const data = (await res.json()) as User;
+
+        return {
+            ...data,
+            roles: Array.isArray(data.roles)
+                ? data.roles
+                : data.role
+                    ? [data.role]
+                    : [],
+        };
     }, []);
 
     const clearAuth = useCallback(() => {
@@ -185,6 +212,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
     }, [fetchCurrentUser]);
 
+    const hasRole = useCallback(
+        (role: UserRole) => {
+            if (!user) return false;
+            return Array.isArray(user.roles) && user.roles.includes(role);
+        },
+        [user]
+    );
+
+    const isPlatformAdmin = hasRole("platform_admin");
+    const isSchoolAdmin = hasRole("school_admin");
+    const isTeacher = hasRole("teacher");
+    const isStudent = hasRole("student");
+
     const value = useMemo<AuthContextType>(
         () => ({
             token,
@@ -193,8 +233,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setToken,
             refreshUser,
             logout,
+            hasRole,
+            isPlatformAdmin,
+            isSchoolAdmin,
+            isTeacher,
+            isStudent,
         }),
-        [token, user, loading, setToken, refreshUser, logout]
+        [
+            token,
+            user,
+            loading,
+            setToken,
+            refreshUser,
+            logout,
+            hasRole,
+            isPlatformAdmin,
+            isSchoolAdmin,
+            isTeacher,
+            isStudent,
+        ]
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

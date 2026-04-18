@@ -1,4 +1,3 @@
-// 🔐 Roles (must match backend exactly)
 export enum UserRole {
     PLATFORM_ADMIN = "platform_admin",
     SCHOOL_ADMIN = "school_admin",
@@ -6,7 +5,6 @@ export enum UserRole {
     STUDENT = "student",
 }
 
-// 📊 Status (GDPR lifecycle)
 export enum UserStatus {
     ACTIVE = "active",
     DEACTIVATED = "deactivated",
@@ -14,18 +12,19 @@ export enum UserStatus {
     ANONYMISED = "anonymised",
 }
 
-// 👤 Core User (matches UserOut from backend)
 export interface User {
-    id: number
-    email: string
-    full_name?: string | null
+    id: number;
+    email: string;
+    full_name?: string | null;
 
-    role: UserRole
-    status: UserStatus
+    role: UserRole;
+    roles: UserRole[];
 
-    school_id?: number | null
-    school_name?: string | null
+    status: UserStatus;
 
-    is_active: boolean
-    created_at: string // ISO string
+    school_id?: number | null;
+    school_name?: string | null;
+
+    is_active: boolean;
+    created_at: string;
 }

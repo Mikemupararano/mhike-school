@@ -111,10 +111,13 @@ export function getSidebarSections(role?: SidebarRole | null): SidebarSection[] 
     switch (role) {
         case UserRole.PLATFORM_ADMIN:
             return platformAdminSidebar;
+
         case UserRole.SCHOOL_ADMIN:
             return schoolAdminSidebar;
+
         case UserRole.TEACHER:
             return teacherSidebar;
+
         case UserRole.STUDENT:
         default:
             return studentSidebar;

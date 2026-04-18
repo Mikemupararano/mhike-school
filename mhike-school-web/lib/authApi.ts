@@ -1,9 +1,14 @@
 import { apiGet } from "@/lib/api";
+import { UserRole, UserStatus } from "@/types/user";
 
 export type CurrentUser = {
     id: number;
     email: string;
-    role: "student" | "teacher" | "admin" | "school_admin" | "platform_admin" | string;
+
+    role: UserRole;
+    roles: UserRole[];
+
+    status: UserStatus;
 
     full_name?: string | null;
     fullName?: string | null;
@@ -15,8 +20,20 @@ export type CurrentUser = {
 
     school_id?: number | null;
     school_name?: string | null;
+
+    is_active: boolean;
+    created_at: string;
 };
 
 export async function getCurrentUser(token?: string): Promise<CurrentUser> {
-    return apiGet<CurrentUser>("/auth/me", token);
+    const data = await apiGet<CurrentUser>("/auth/me", token);
+
+    return {
+        ...data,
+        roles: Array.isArray(data.roles)
+            ? data.roles
+            : data.role
+                ? [data.role]
+                : [],
+    };
 }

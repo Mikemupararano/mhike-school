@@ -3,14 +3,14 @@
 import { ReactNode, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
-import { UserRole } from '@/types/user'
-import { useAuth } from '@/hooks/useAuth'
+import { UserRole } from '@/providers/AuthProvider'
+import { useAuth } from '@/providers/AuthProvider'
 
 type RoleGateProps = {
   allowedRoles: UserRole[]
   children: ReactNode
   fallback?: ReactNode
-  redirectTo?: string // ✅ optional improvement
+  redirectTo?: string
 }
 
 export default function RoleGate({
@@ -19,28 +19,32 @@ export default function RoleGate({
   fallback = null,
   redirectTo = '/login',
 }: RoleGateProps) {
-  const { user, isLoading } = useAuth()
+  const { user, loading } = useAuth()
   const router = useRouter()
 
-  // ✅ Handle redirect safely (no side-effects in render)
   useEffect(() => {
-    if (!isLoading && !user) {
+    if (!loading && !user) {
       router.replace(redirectTo)
     }
-  }, [user, isLoading, router, redirectTo])
+  }, [user, loading, router, redirectTo])
 
-  // ⏳ Loading state
-  if (isLoading) {
+  if (loading) {
     return <div className="p-4">Loading...</div>
   }
 
-  // 🚫 Not logged in (while redirecting)
   if (!user) {
     return null
   }
 
-  // 🔒 Role check
-  if (!allowedRoles.includes(user.role)) {
+  const userRoles = Array.isArray(user.roles)
+    ? user.roles
+    : user.role
+      ? [user.role]
+      : []
+
+  const isAllowed = allowedRoles.some((role) => userRoles.includes(role))
+
+  if (!isAllowed) {
     return (
       fallback ?? (
         <div className="p-4 text-red-500">
@@ -50,6 +54,5 @@ export default function RoleGate({
     )
   }
 
-  // ✅ Allowed
   return <>{children}</>
 }

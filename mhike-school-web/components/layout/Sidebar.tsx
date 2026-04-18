@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
 import BrandLogo from "@/components/layout/BrandLogo";
 import { brand, brandColors, brandShadows } from "@/lib/brand";
 import {
@@ -21,12 +22,18 @@ type SidebarProps = {
 export default function Sidebar({
     title = brand.name,
     sections,
-    role = "teacher",
+    role,
     collapsed = false,
     className = "",
 }: SidebarProps) {
     const pathname = usePathname();
-    const resolvedSections = sections ?? getSidebarSections(role);
+
+    // Prefer explicit sections when provided.
+    // Otherwise resolve from role.
+    // Transitional fallback remains "teacher" so the UI does not crash
+    // if a caller still fails to pass role.
+    const resolvedRole: SidebarRole = role ?? "teacher";
+    const resolvedSections = sections ?? getSidebarSections(resolvedRole);
 
     return (
         <aside
@@ -55,7 +62,7 @@ export default function Sidebar({
                         <div className="min-w-0 max-w-full">
                             <BrandLogo
                                 href="/"
-                                showText={true}
+                                showText
                                 iconSize={44}
                                 textSizeClass="text-2xl"
                                 className="shrink-0"
@@ -80,7 +87,8 @@ export default function Sidebar({
                                 {section.items.map((item) => {
                                     const active =
                                         pathname === item.href ||
-                                        (item.href !== "/" && pathname.startsWith(`${item.href}/`));
+                                        (item.href !== "/" &&
+                                            pathname.startsWith(`${item.href}/`));
 
                                     const Icon = item.icon;
 
@@ -94,7 +102,9 @@ export default function Sidebar({
                                                     : "text-slate-100 hover:text-white"
                                                 }`}
                                             style={{
-                                                background: active ? "rgba(255,255,255,0.12)" : "transparent",
+                                                background: active
+                                                    ? "rgba(255,255,255,0.12)"
+                                                    : "transparent",
                                             }}
                                         >
                                             <span

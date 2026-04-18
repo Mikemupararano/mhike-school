@@ -2,10 +2,12 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+
 import DashboardShell from "@/components/layout/DashboardShell";
 import { getToken, clearToken } from "@/lib/api";
 import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
 import { getSidebarSections } from "@/lib/navigation/sidebar";
+import { UserRole } from "@/types/user";
 
 type DashboardShellWrapperProps = {
     children: ReactNode;
@@ -58,6 +60,28 @@ function getDisplayName(user: CurrentUser): string {
     return resolvedName || formatEmailFallback(user.email);
 }
 
+function resolvePrimaryRole(user: CurrentUser): UserRole {
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+
+    if (roles.includes(UserRole.PLATFORM_ADMIN)) {
+        return UserRole.PLATFORM_ADMIN;
+    }
+
+    if (roles.includes(UserRole.SCHOOL_ADMIN)) {
+        return UserRole.SCHOOL_ADMIN;
+    }
+
+    if (roles.includes(UserRole.TEACHER)) {
+        return UserRole.TEACHER;
+    }
+
+    if (roles.includes(UserRole.STUDENT)) {
+        return UserRole.STUDENT;
+    }
+
+    return user.role;
+}
+
 export default function DashboardShellWrapper({
     children,
 }: DashboardShellWrapperProps) {
@@ -77,7 +101,6 @@ export default function DashboardShellWrapper({
 
             try {
                 const me = await getCurrentUser(token);
-                console.log("Current user payload:", me);
                 setUser(me);
             } catch (err) {
                 console.error("Auth error:", err);
@@ -103,13 +126,15 @@ export default function DashboardShellWrapper({
         return null;
     }
 
+    const resolvedRole = resolvePrimaryRole(user);
+
     const schoolLabel =
-        user.role === "platform_admin"
+        resolvedRole === UserRole.PLATFORM_ADMIN
             ? "Global platform"
             : user.school_name || "Unknown school";
 
     const displayName = getDisplayName(user);
-    const sidebarSections = getSidebarSections(user.role);
+    const sidebarSections = getSidebarSections(resolvedRole);
 
     return (
         <DashboardShell
