@@ -15,13 +15,21 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> User:
+    authorization = authorization.strip() if authorization else None
+
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid Authorization header",
         )
 
-    token = authorization.split(" ", 1)[1]
+    token = authorization.split(" ", 1)[1].strip()
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header",
+        )
 
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
@@ -141,7 +149,9 @@ async def get_current_user(
             detail="Account is inactive",
         )
 
-    user_role_values = set(user.roles)
+    user_role_values = {
+        role.value if isinstance(role, UserRole) else str(role) for role in user.roles
+    }
     token_role_values = {role.value for role in parsed_roles}
 
     if not token_role_values.intersection(user_role_values):
@@ -167,7 +177,10 @@ async def get_current_school_id(
 def require_role(*roles: UserRole):
     async def _dep(current_user: User = Depends(get_current_user)) -> User:
         allowed_roles = {role.value for role in roles}
-        current_roles = set(current_user.roles)
+        current_roles = {
+            role.value if isinstance(role, UserRole) else str(role)
+            for role in current_user.roles
+        }
 
         if not current_roles.intersection(allowed_roles):
             raise HTTPException(
