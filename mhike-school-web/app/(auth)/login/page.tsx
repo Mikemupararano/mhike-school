@@ -4,6 +4,7 @@ import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { apiPost, saveToken } from "@/lib/api";
 import { getCurrentUser } from "@/lib/authApi";
+import { UserRole } from "@/types/user";
 
 type LoginResponse = {
   access_token: string;
@@ -32,11 +33,31 @@ export default function LoginPage() {
       : "Platform administrators sign in without a school ID.";
   }, [needsSchoolId]);
 
+  function resolveRedirectPath(user: Awaited<ReturnType<typeof getCurrentUser>>): string {
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+
+    if (roles.includes(UserRole.PLATFORM_ADMIN) || user.role === UserRole.PLATFORM_ADMIN) {
+      return "/admin";
+    }
+
+    if (roles.includes(UserRole.SCHOOL_ADMIN) || user.role === UserRole.SCHOOL_ADMIN) {
+      return "/school-admin";
+    }
+
+    if (roles.includes(UserRole.TEACHER) || user.role === UserRole.TEACHER) {
+      return "/teacher";
+    }
+
+    return "/student";
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
 
-    if (!email.trim() || !password.trim()) {
+    const trimmedEmail = email.trim().toLowerCase();
+
+    if (!trimmedEmail || !password.trim()) {
       setError("Please enter your email and password.");
       return;
     }
@@ -57,11 +78,11 @@ export default function LoginPage() {
       const payload =
         mode === "platform_admin"
           ? {
-            email: email.trim(),
+            email: trimmedEmail,
             password,
           }
           : {
-            email: email.trim(),
+            email: trimmedEmail,
             password,
             school_id: Number(schoolId),
           };
@@ -70,16 +91,9 @@ export default function LoginPage() {
       saveToken(res.access_token);
 
       const user = await getCurrentUser(res.access_token);
+      const redirectPath = resolveRedirectPath(user);
 
-      if (user.role === "platform_admin") {
-        router.push("/admin");
-      } else if (user.role === "admin" || user.role === "school_admin") {
-        router.push("/school-admin");
-      } else if (user.role === "teacher") {
-        router.push("/teacher");
-      } else {
-        router.push("/student");
-      }
+      router.push(redirectPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
     } finally {

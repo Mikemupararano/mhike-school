@@ -12,13 +12,25 @@ class UserRepository:
 
     async def get_by_id(self, user_id: int) -> User | None:
         result = await self.db.execute(
-            select(User).options(selectinload(User.school)).where(User.id == user_id)
+            select(User)
+            .options(
+                selectinload(User.school),
+                selectinload(User.user_roles),
+            )
+            .where(User.id == user_id)
         )
         return result.scalar_one_or_none()
 
     async def get_by_email(self, email: str, school_id: int | None) -> User | None:
+        normalized_email = email.strip().lower()
+
         query = (
-            select(User).options(selectinload(User.school)).where(User.email == email)
+            select(User)
+            .options(
+                selectinload(User.school),
+                selectinload(User.user_roles),
+            )
+            .where(User.email == normalized_email)
         )
 
         if school_id is None:
@@ -39,11 +51,16 @@ class UserRepository:
     ) -> list[User]:
         query = (
             select(User)
-            .options(selectinload(User.school))
+            .options(
+                selectinload(User.school),
+                selectinload(User.user_roles),
+            )
             .where(User.school_id == school_id)
             .order_by(User.created_at.desc())
         )
 
+        # Transitional Option A:
+        # still filtering via legacy primary role column
         if role is not None:
             query = query.where(User.role == role)
 
@@ -60,7 +77,7 @@ class UserRepository:
         result = await self.db.execute(
             select(func.count(User.id)).where(
                 User.school_id == school_id,
-                User.role == UserRole.SCHOOL_ADMIN,
+                User.role == UserRole.SCHOOL_ADMIN,  # legacy primary role column
                 User.is_active.is_(True),
                 User.status == UserStatus.ACTIVE,
             )
@@ -70,13 +87,19 @@ class UserRepository:
     async def create(self, user: User) -> User:
         self.db.add(user)
         await self.db.flush()
-        await self.db.refresh(user)
+        await self.db.refresh(
+            user,
+            attribute_names=["school", "user_roles"],
+        )
         return user
 
     async def save(self, user: User) -> User:
         self.db.add(user)
         await self.db.flush()
-        await self.db.refresh(user)
+        await self.db.refresh(
+            user,
+            attribute_names=["school", "user_roles"],
+        )
         return user
 
     async def delete(self, user: User) -> None:
