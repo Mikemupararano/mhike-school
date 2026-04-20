@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import require_role
 from app.db.session import get_db
 from app.models import User
 from app.models.user import UserRole
@@ -32,18 +32,22 @@ def _resolve_school_scope(
 ) -> int:
     if current_user.role == UserRole.PLATFORM_ADMIN:
         if school_id is None:
-            raise ValueError(
-                "school_id is required for platform admin on this endpoint."
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="school_id is required for platform admin on this endpoint.",
             )
         return school_id
 
     if current_user.school_id is None:
-        raise ValueError("Current user is not assigned to a school.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current user is not assigned to a school.",
+        )
 
     return int(current_user.school_id)
 
 
-@router.get("/school-admin/users", response_model=list[UserOut])
+@router.get("/users", response_model=list[UserOut])
 async def list_users(
     school_id: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
@@ -57,7 +61,7 @@ async def list_users(
 
 
 @router.post(
-    "/school-admin/users",
+    "/users",
     response_model=UserOut,
     status_code=status.HTTP_201_CREATED,
 )
@@ -84,7 +88,7 @@ async def create_user(
     return _to_user_out(user)
 
 
-@router.patch("/school-admin/users/{user_id}", response_model=UserOut)
+@router.patch("/users/{user_id}", response_model=UserOut)
 async def update_user(
     user_id: int,
     payload: UserUpdate,
@@ -110,7 +114,7 @@ async def update_user(
     return _to_user_out(user)
 
 
-@router.post("/school-admin/users/{user_id}/deactivate", response_model=UserOut)
+@router.post("/users/{user_id}/deactivate", response_model=UserOut)
 async def deactivate_user(
     user_id: int,
     school_id: int | None = Query(default=None),
@@ -134,7 +138,7 @@ async def deactivate_user(
     return _to_user_out(user)
 
 
-@router.post("/school-admin/users/{user_id}/request-erasure", response_model=UserOut)
+@router.post("/users/{user_id}/request-erasure", response_model=UserOut)
 async def request_erasure(
     user_id: int,
     school_id: int | None = Query(default=None),
@@ -158,7 +162,7 @@ async def request_erasure(
     return _to_user_out(user)
 
 
-@router.post("/school-admin/users/{user_id}/anonymise", response_model=UserOut)
+@router.post("/users/{user_id}/anonymise", response_model=UserOut)
 async def anonymise_user(
     user_id: int,
     school_id: int | None = Query(default=None),
