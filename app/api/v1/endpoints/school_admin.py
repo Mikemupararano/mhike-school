@@ -19,7 +19,7 @@ def _to_user_out(user: User) -> UserOut:
         role=user.role,
         roles=user.roles,
         school_id=user.school_id,
-        school_name=None,
+        school_name=user.school.name if user.school else None,
         is_active=user.is_active,
         status=user.status,
         created_at=user.created_at,

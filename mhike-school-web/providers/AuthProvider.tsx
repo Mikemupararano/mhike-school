@@ -9,30 +9,7 @@ import React, {
     useState,
 } from "react";
 
-export type UserRole =
-    | "platform_admin"
-    | "school_admin"
-    | "teacher"
-    | "student";
-
-export type UserStatus =
-    | "active"
-    | "deactivated"
-    | "pending_erasure"
-    | "anonymised";
-
-type User = {
-    id: number;
-    email: string;
-    full_name?: string | null;
-    role: UserRole;
-    roles: UserRole[];
-    status: UserStatus;
-    school_id?: number | null;
-    school_name?: string | null;
-    is_active: boolean;
-    created_at: string;
-};
+import { User, UserRole } from "@/types/user";
 
 type AuthContextType = {
     token: string | null;
@@ -51,13 +28,21 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = "mhike_token";
-const ME_URL = "http://localhost:8000/api/v1/auth/me";
+
+const API_BASE =
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
+    "http://localhost:8000/api/v1";
+
+const ME_URL = `${API_BASE}/auth/me`;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [token, setTokenState] = useState<string | null>(null);
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
+    /* =========================
+       Fetch current user
+    ========================= */
     const fetchCurrentUser = useCallback(async (activeToken: string): Promise<User> => {
         const res = await fetch(ME_URL, {
             method: "GET",
@@ -85,26 +70,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
     }, []);
 
+    /* =========================
+       Clear auth
+    ========================= */
     const clearAuth = useCallback(() => {
         if (typeof window !== "undefined") {
             sessionStorage.removeItem(TOKEN_KEY);
         }
+
         setTokenState(null);
         setUser(null);
     }, []);
 
+    /* =========================
+       Refresh user
+    ========================= */
     const refreshUser = useCallback(async (): Promise<User | null> => {
         if (typeof window === "undefined") {
-            setTokenState(null);
-            setUser(null);
+            clearAuth();
             return null;
         }
 
         const activeToken = sessionStorage.getItem(TOKEN_KEY);
 
         if (!activeToken) {
-            setTokenState(null);
-            setUser(null);
+            clearAuth();
             return null;
         }
 
@@ -119,6 +109,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     }, [clearAuth, fetchCurrentUser]);
 
+    /* =========================
+       Set token (FIXED)
+    ========================= */
     const setToken = useCallback(
         async (value: string | null): Promise<User | null> => {
             setLoading(true);
@@ -130,11 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
 
             try {
-                setUser(null);
-                setTokenState(null);
-
                 if (typeof window !== "undefined") {
-                    sessionStorage.removeItem(TOKEN_KEY);
                     sessionStorage.setItem(TOKEN_KEY, value);
                 }
 
@@ -154,11 +143,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         [clearAuth, fetchCurrentUser]
     );
 
+    /* =========================
+       Logout
+    ========================= */
     const logout = useCallback(() => {
         clearAuth();
         setLoading(false);
     }, [clearAuth]);
 
+    /* =========================
+       Init auth on load
+    ========================= */
     useEffect(() => {
         let mounted = true;
 
@@ -167,8 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             if (typeof window === "undefined") {
                 if (mounted) {
-                    setTokenState(null);
-                    setUser(null);
+                    clearAuth();
                     setLoading(false);
                 }
                 return;
@@ -178,8 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             if (!storedToken) {
                 if (mounted) {
-                    setTokenState(null);
-                    setUser(null);
+                    clearAuth();
                     setLoading(false);
                 }
                 return;
@@ -194,9 +187,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 }
             } catch {
                 if (mounted) {
-                    sessionStorage.removeItem(TOKEN_KEY);
-                    setTokenState(null);
-                    setUser(null);
+                    clearAuth();
                 }
             } finally {
                 if (mounted) {
@@ -210,8 +201,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return () => {
             mounted = false;
         };
-    }, [fetchCurrentUser]);
+    }, [fetchCurrentUser, clearAuth]);
 
+    /* =========================
+       Role helpers
+    ========================= */
     const hasRole = useCallback(
         (role: UserRole) => {
             if (!user) return false;
@@ -220,11 +214,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         [user]
     );
 
-    const isPlatformAdmin = hasRole("platform_admin");
-    const isSchoolAdmin = hasRole("school_admin");
-    const isTeacher = hasRole("teacher");
-    const isStudent = hasRole("student");
+    const isPlatformAdmin = hasRole(UserRole.PLATFORM_ADMIN);
+    const isSchoolAdmin = hasRole(UserRole.SCHOOL_ADMIN);
+    const isTeacher = hasRole(UserRole.TEACHER);
+    const isStudent = hasRole(UserRole.STUDENT);
 
+    /* =========================
+       Context value
+    ========================= */
     const value = useMemo<AuthContextType>(
         () => ({
             token,

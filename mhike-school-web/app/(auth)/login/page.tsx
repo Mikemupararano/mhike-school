@@ -3,7 +3,7 @@
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { apiPost, saveToken } from "@/lib/api";
-import { getCurrentUser } from "@/lib/authApi";
+import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
 import { UserRole } from "@/types/user";
 
 type LoginResponse = {
@@ -14,6 +14,22 @@ type LoginResponse = {
 const DARK_BLUE = "#0f2d4a";
 const BORDER = "rgba(255,255,255,0.10)";
 const SOFT_TEXT = "rgba(255,255,255,0.84)";
+
+function resolveRedirectPath(user: CurrentUser): string {
+  const roles = Array.isArray(user.roles) ? user.roles : [];
+
+  if (roles.includes(UserRole.PLATFORM_ADMIN)) return "/admin";
+  if (roles.includes(UserRole.SCHOOL_ADMIN)) return "/school-admin";
+  if (roles.includes(UserRole.TEACHER)) return "/teacher";
+  if (roles.includes(UserRole.STUDENT)) return "/student";
+
+  // Legacy fallback
+  if (user.role === UserRole.PLATFORM_ADMIN) return "/admin";
+  if (user.role === UserRole.SCHOOL_ADMIN) return "/school-admin";
+  if (user.role === UserRole.TEACHER) return "/teacher";
+
+  return "/student";
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,37 +43,22 @@ export default function LoginPage() {
 
   const needsSchoolId = mode === "school_user";
 
-  const subtitle = useMemo(() => {
-    return needsSchoolId
-      ? "Students, teachers, and school admins sign in with their school ID."
-      : "Platform administrators sign in without a school ID.";
-  }, [needsSchoolId]);
-
-  function resolveRedirectPath(user: Awaited<ReturnType<typeof getCurrentUser>>): string {
-    const roles = Array.isArray(user.roles) ? user.roles : [];
-
-    if (roles.includes(UserRole.PLATFORM_ADMIN) || user.role === UserRole.PLATFORM_ADMIN) {
-      return "/admin";
-    }
-
-    if (roles.includes(UserRole.SCHOOL_ADMIN) || user.role === UserRole.SCHOOL_ADMIN) {
-      return "/school-admin";
-    }
-
-    if (roles.includes(UserRole.TEACHER) || user.role === UserRole.TEACHER) {
-      return "/teacher";
-    }
-
-    return "/student";
-  }
+  const subtitle = useMemo(
+    () =>
+      needsSchoolId
+        ? "Students, teachers, and school admins sign in with their school ID."
+        : "Platform administrators sign in without a school ID.",
+    [needsSchoolId]
+  );
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
 
     const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPassword = password.trim();
 
-    if (!trimmedEmail || !password.trim()) {
+    if (!trimmedEmail || !trimmedPassword) {
       setError("Please enter your email and password.");
       return;
     }
@@ -77,13 +78,10 @@ export default function LoginPage() {
 
       const payload =
         mode === "platform_admin"
-          ? {
-            email: trimmedEmail,
-            password,
-          }
+          ? { email: trimmedEmail, password: trimmedPassword }
           : {
             email: trimmedEmail,
-            password,
+            password: trimmedPassword,
             school_id: Number(schoolId),
           };
 
@@ -91,9 +89,7 @@ export default function LoginPage() {
       saveToken(res.access_token);
 
       const user = await getCurrentUser(res.access_token);
-      const redirectPath = resolveRedirectPath(user);
-
-      router.push(redirectPath);
+      router.push(resolveRedirectPath(user));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
     } finally {
@@ -573,9 +569,7 @@ export default function LoginPage() {
                   cursor: loading ? "not-allowed" : "pointer",
                 }}
                 onMouseEnter={(e) => {
-                  if (!loading) {
-                    e.currentTarget.style.transform = "translateY(-2px)";
-                  }
+                  if (!loading) e.currentTarget.style.transform = "translateY(-2px)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.transform = "translateY(0)";
