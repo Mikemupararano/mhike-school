@@ -3,10 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.permissions import PermissionService
 from app.db.session import get_db
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.assignment_submission import (
     AssignmentSubmissionGrade,
     AssignmentSubmissionOut,
@@ -31,11 +32,8 @@ async def submit_assignment_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "student":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only students can submit assignments",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_has_role(current_user, UserRole.STUDENT)
 
     return await submit_assignment(
         db=db,
@@ -52,11 +50,8 @@ async def get_my_submission_for_assignment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "student":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only students can view their own submission",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_has_role(current_user, UserRole.STUDENT)
 
     result = await db.execute(
         select(AssignmentSubmission).where(
@@ -72,11 +67,7 @@ async def get_my_submission_for_assignment(
             detail="Submission not found",
         )
 
-    if submission.school_id != current_user.school_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Submission does not belong to your school",
-        )
+    PermissionService.ensure_same_school(current_user, submission.school_id)
 
     return submission
 
@@ -90,39 +81,32 @@ async def list_submissions_for_assignment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can view submissions",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
 
     assignment = await db.get(Assignment, assignment_id)
+
     if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assignment not found",
         )
 
-    if (
-        current_user.role != "platform_admin"
-        and assignment.school_id != current_user.school_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assignment does not belong to your school",
-        )
+    PermissionService.ensure_same_school(current_user, assignment.school_id)
 
-    if current_user.role == "teacher" and assignment.created_by != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only view submissions for your own assignments",
-        )
+    if current_user.is_teacher and not current_user.is_school_admin:
+        if assignment.created_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view submissions for your own assignments",
+            )
 
     result = await db.execute(
         select(AssignmentSubmission)
         .where(AssignmentSubmission.assignment_id == assignment_id)
         .order_by(AssignmentSubmission.submitted_at.desc())
     )
+
     return list(result.scalars().all())
 
 
@@ -136,11 +120,8 @@ async def grade_submission_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can grade submissions",
-        )
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
 
     return await grade_submission(
         db=db,

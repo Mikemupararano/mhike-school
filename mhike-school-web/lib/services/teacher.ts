@@ -31,6 +31,10 @@ async function apiFetch<T>(
     return res.json();
 }
 
+/* =========================
+   Types
+========================= */
+
 export type TeacherDashboard = {
     teacher_id: number;
     total_courses: number;
@@ -39,6 +43,38 @@ export type TeacherDashboard = {
     pending_submissions: number;
 };
 
+export type TeacherCourse = {
+    id: number;
+    title: string;
+    students: number;
+    assignments: number;
+};
+
+export type TeacherAssignment = {
+    id: number;
+    course_id: number;
+    school_id: number;
+    created_by: number;
+    title: string;
+    description?: string | null;
+    due_date?: string | null;
+    max_score: number;
+    is_published: boolean;
+    created_at: string;
+};
+
+/* =========================
+   API Calls
+========================= */
+
 export async function getTeacherDashboard(): Promise<TeacherDashboard> {
     return apiFetch<TeacherDashboard>("/teacher-dashboard/me");
+}
+
+export async function getTeacherCourses(): Promise<TeacherCourse[]> {
+    return apiFetch<TeacherCourse[]>("/teacher-dashboard/courses");
+}
+
+export async function getTeacherAssignments(): Promise<TeacherAssignment[]> {
+    return apiFetch<TeacherAssignment[]>("/assignments/me");
 }

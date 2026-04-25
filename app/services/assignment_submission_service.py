@@ -4,9 +4,10 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import PermissionService
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
-from app.models.user import User
+from app.models.user import User, UserRole
 
 
 async def submit_assignment(
@@ -16,24 +17,18 @@ async def submit_assignment(
     submission_text: str | None,
     attachment_url: str | None,
 ) -> AssignmentSubmission:
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_has_role(current_user, UserRole.STUDENT)
+
     assignment = await db.get(Assignment, assignment_id)
+
     if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assignment not found",
         )
 
-    if current_user.role != "student":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only students can submit assignments",
-        )
-
-    if assignment.school_id != current_user.school_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assignment does not belong to your school",
-        )
+    PermissionService.ensure_same_school(current_user, assignment.school_id)
 
     if not assignment.is_published:
         raise HTTPException(
@@ -41,13 +36,13 @@ async def submit_assignment(
             detail="Assignment is not published",
         )
 
-    existing_result = await db.execute(
+    result = await db.execute(
         select(AssignmentSubmission).where(
             AssignmentSubmission.assignment_id == assignment_id,
             AssignmentSubmission.student_id == current_user.id,
         )
     )
-    existing_submission = existing_result.scalar_one_or_none()
+    existing_submission = result.scalar_one_or_none()
 
     if existing_submission:
         existing_submission.submission_text = submission_text
@@ -57,6 +52,7 @@ async def submit_assignment(
 
         await db.commit()
         await db.refresh(existing_submission)
+
         return existing_submission
 
     submission = AssignmentSubmission(
@@ -83,7 +79,11 @@ async def grade_submission(
     score: int,
     feedback: str | None,
 ) -> AssignmentSubmission:
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
+
     submission = await db.get(AssignmentSubmission, submission_id)
+
     if not submission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -91,32 +91,21 @@ async def grade_submission(
         )
 
     assignment = await db.get(Assignment, submission.assignment_id)
+
     if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assignment not found",
         )
 
-    if current_user.role not in {"teacher", "admin", "platform_admin"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers or admins can grade submissions",
-        )
+    PermissionService.ensure_same_school(current_user, submission.school_id)
 
-    if (
-        current_user.role != "platform_admin"
-        and submission.school_id != current_user.school_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Submission does not belong to your school",
-        )
-
-    if current_user.role == "teacher" and assignment.created_by != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only grade submissions for your own assignments",
-        )
+    if current_user.is_teacher and not current_user.is_school_admin:
+        if assignment.created_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only grade submissions for your own assignments",
+            )
 
     if score < 0 or score > assignment.max_score:
         raise HTTPException(

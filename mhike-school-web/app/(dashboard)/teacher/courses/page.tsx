@@ -1,19 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
+import {
+    getTeacherCourses,
+    type TeacherCourse,
+} from "@/lib/services/teacher";
 import { UserRole } from "@/types/user";
-
-/**
- * Placeholder type — replace with real API type later
- */
-type TeacherCourse = {
-    id: number;
-    title: string;
-    students: number;
-    assignments: number;
-};
 
 export default function TeacherCoursesPage() {
     return (
@@ -38,27 +33,8 @@ function TeacherCoursesContent() {
         async function loadCourses() {
             try {
                 setError(null);
-
-                /**
-                 * 🔥 TODO: Replace with real API call
-                 * e.g. await getTeacherCourses()
-                 */
-                const mockData: TeacherCourse[] = [
-                    {
-                        id: 1,
-                        title: "Physics A-Level",
-                        students: 24,
-                        assignments: 6,
-                    },
-                    {
-                        id: 2,
-                        title: "GCSE Chemistry",
-                        students: 18,
-                        assignments: 4,
-                    },
-                ];
-
-                setCourses(mockData);
+                const data = await getTeacherCourses();
+                setCourses(data);
             } catch (err) {
                 setError(
                     err instanceof Error
@@ -91,14 +67,16 @@ function TeacherCoursesContent() {
             {!isLoading && !error && (
                 <div className="mt-6 space-y-4">
                     {courses.length === 0 ? (
-                        <p>No courses found.</p>
+                        <div className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-500">
+                            No courses found.
+                        </div>
                     ) : (
                         courses.map((course) => (
                             <div
                                 key={course.id}
                                 className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
                             >
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-4">
                                     <div>
                                         <h2 className="text-xl font-bold">
                                             {course.title}
@@ -111,12 +89,19 @@ function TeacherCoursesContent() {
                                     </div>
 
                                     <div className="flex gap-2">
-                                        <button className="rounded-lg border px-3 py-1 text-sm hover:bg-slate-50">
+                                        <Link
+                                            href={`/courses/${course.id}`}
+                                            className="rounded-lg border px-3 py-1 text-sm hover:bg-slate-50"
+                                        >
                                             View
-                                        </button>
-                                        <button className="rounded-lg bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700">
+                                        </Link>
+
+                                        <Link
+                                            href={`/teacher/courses/${course.id}`}
+                                            className="rounded-lg bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+                                        >
                                             Manage
-                                        </button>
+                                        </Link>
                                     </div>
                                 </div>
                             </div>

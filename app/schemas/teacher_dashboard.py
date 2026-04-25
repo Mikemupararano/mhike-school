@@ -7,3 +7,11 @@ class TeacherDashboardOut(BaseModel):
     total_students: int
     total_assignments: int
     pending_submissions: int
+
+
+# ✅ NEW: Courses list for teacher
+class TeacherCourseOut(BaseModel):
+    id: int
+    title: str
+    students: int
+    assignments: int

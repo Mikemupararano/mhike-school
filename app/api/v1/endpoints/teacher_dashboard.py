@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_role
 from app.db.session import get_db
 from app.models.user import User, UserRole
-from app.schemas.teacher_dashboard import TeacherDashboardOut
+from app.schemas.teacher_dashboard import TeacherCourseOut, TeacherDashboardOut
 from app.services.teacher_dashboard_service import TeacherDashboardService
 
 router = APIRouter()
@@ -22,6 +22,23 @@ async def get_teacher_dashboard(
     ),
 ):
     return await TeacherDashboardService.get_teacher_dashboard(
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.get("/courses", response_model=list[TeacherCourseOut])
+async def list_teacher_courses(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.TEACHER,
+            UserRole.SCHOOL_ADMIN,
+            UserRole.PLATFORM_ADMIN,
+        )
+    ),
+):
+    return await TeacherDashboardService.list_teacher_courses(
         db=db,
         current_user=current_user,
     )
