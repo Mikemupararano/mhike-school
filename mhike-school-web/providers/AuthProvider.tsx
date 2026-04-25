@@ -9,6 +9,7 @@ import React, {
     useState,
 } from "react";
 
+import { apiGet } from "@/lib/api";
 import { User, UserRole } from "@/types/user";
 
 type AuthContextType = {
@@ -31,18 +32,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = "mhike_token";
 
-const API_BASE =
-    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
-    "http://localhost:8000/api/v1";
-
-const ME_URL = `${API_BASE}/auth/me`;
-
 function normaliseUser(data: User): User {
-    const roles = Array.isArray(data.roles) && data.roles.length > 0
-        ? data.roles
-        : data.role
-            ? [data.role]
-            : [];
+    const roles =
+        Array.isArray(data.roles) && data.roles.length > 0
+            ? data.roles
+            : data.role
+                ? [data.role]
+                : [];
 
     return {
         ...data,
@@ -55,23 +51,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
-    const fetchCurrentUser = useCallback(async (activeToken: string): Promise<User> => {
-        const res = await fetch(ME_URL, {
-            method: "GET",
-            headers: {
-                Authorization: `Bearer ${activeToken}`,
-                "Content-Type": "application/json",
-                "Cache-Control": "no-store",
-            },
-            cache: "no-store",
-        });
-
-        if (!res.ok) {
-            throw new Error("Failed to fetch current user");
-        }
-
-        return normaliseUser((await res.json()) as User);
-    }, []);
+    const fetchCurrentUser = useCallback(
+        async (activeToken: string): Promise<User> => {
+            const currentUser = await apiGet<User>("/auth/me", activeToken);
+            return normaliseUser(currentUser);
+        },
+        [],
+    );
 
     const clearAuth = useCallback(() => {
         if (typeof window !== "undefined") {
@@ -134,7 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setLoading(false);
             }
         },
-        [clearAuth, fetchCurrentUser]
+        [clearAuth, fetchCurrentUser],
     );
 
     const logout = useCallback(() => {
@@ -192,17 +178,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [fetchCurrentUser, clearAuth]);
 
     const hasRole = useCallback(
-        (role: UserRole) => {
-            return user?.roles?.includes(role) ?? false;
-        },
-        [user]
+        (role: UserRole) => user?.roles?.includes(role) ?? false,
+        [user],
     );
 
     const hasAnyRole = useCallback(
-        (roles: UserRole[]) => {
-            return roles.some((role) => user?.roles?.includes(role));
-        },
-        [user]
+        (roles: UserRole[]) =>
+            roles.some((role) => user?.roles?.includes(role)),
+        [user],
     );
 
     const isPlatformAdmin = hasRole(UserRole.PLATFORM_ADMIN);
@@ -246,7 +229,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             isTeacher,
             isStudent,
             canTeach,
-        ]
+        ],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

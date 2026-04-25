@@ -40,6 +40,10 @@ async def test_engine():
 
 @pytest_asyncio.fixture()
 async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
     async_session = async_sessionmaker(
         bind=test_engine,
         class_=AsyncSession,
@@ -119,7 +123,7 @@ def make_token(user: User) -> str:
         data={
             "sub": str(user.id),
             "school_id": user.school_id,
-            "role": user.primary_role,
+            "role": user.role.value,
             "roles": user.roles,
         }
     )
