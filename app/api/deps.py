@@ -11,6 +11,77 @@ from app.models import User
 from app.models.user import UserRole, UserStatus
 
 
+def _raise_invalid_token() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid token payload",
+    )
+
+
+def _normalise_token_roles(payload: dict) -> set[UserRole]:
+    token_roles = payload.get("roles")
+    token_role = payload.get("role")
+
+    if token_roles is not None:
+        if not isinstance(token_roles, list) or not token_roles:
+            _raise_invalid_token()
+
+        try:
+            return {UserRole(role) for role in token_roles}
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+            ) from exc
+
+    if token_role is not None:
+        try:
+            return {UserRole(token_role)}
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+            ) from exc
+
+    _raise_invalid_token()
+
+
+def _validate_token_school_rules(
+    parsed_roles: set[UserRole],
+    school_id: int | str | None,
+) -> int | None:
+    is_platform_admin = UserRole.PLATFORM_ADMIN in parsed_roles
+
+    has_school_role = bool(
+        parsed_roles.intersection(
+            {
+                UserRole.SCHOOL_ADMIN,
+                UserRole.TEACHER,
+                UserRole.STUDENT,
+            }
+        )
+    )
+
+    if is_platform_admin and has_school_role:
+        _raise_invalid_token()
+
+    if is_platform_admin:
+        if school_id is not None:
+            _raise_invalid_token()
+        return None
+
+    if school_id is None:
+        _raise_invalid_token()
+
+    try:
+        return int(school_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        ) from exc
+
+
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None),
@@ -32,22 +103,15 @@ async def get_current_user(
         )
 
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[ALGORITHM],
+        )
 
         user_id = payload.get("sub")
-        school_id = payload.get("school_id")
-
-        # Transitional support:
-        # - legacy tokens may contain a single "role"
-        # - newer tokens may contain "roles"
-        token_role = payload.get("role")
-        token_roles = payload.get("roles")
-
         if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-            )
+            _raise_invalid_token()
 
         try:
             user_id = int(user_id)
@@ -57,56 +121,11 @@ async def get_current_user(
                 detail="Invalid token payload",
             ) from exc
 
-        parsed_roles: set[UserRole] = set()
-
-        if token_roles is not None:
-            if not isinstance(token_roles, list) or not token_roles:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token payload",
-                )
-            try:
-                parsed_roles = {UserRole(role) for role in token_roles}
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token payload",
-                ) from exc
-        elif token_role is not None:
-            try:
-                parsed_roles = {UserRole(token_role)}
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token payload",
-                ) from exc
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-            )
-
-        is_platform_admin_token = UserRole.PLATFORM_ADMIN in parsed_roles
-
-        if is_platform_admin_token:
-            if school_id is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token payload",
-                )
-        else:
-            if school_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token payload",
-                )
-            try:
-                school_id = int(school_id)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token payload",
-                ) from exc
+        parsed_roles = _normalise_token_roles(payload)
+        school_id = _validate_token_school_rules(
+            parsed_roles=parsed_roles,
+            school_id=payload.get("school_id"),
+        )
 
     except JWTError as exc:
         raise HTTPException(
@@ -123,7 +142,7 @@ async def get_current_user(
         .where(User.id == user_id)
     )
 
-    if is_platform_admin_token:
+    if UserRole.PLATFORM_ADMIN in parsed_roles:
         query = query.where(User.school_id.is_(None))
     else:
         query = query.where(User.school_id == school_id)
@@ -137,24 +156,16 @@ async def get_current_user(
             detail="User not found",
         )
 
-    if not user.is_active:
+    if not user.is_active or user.status != UserStatus.ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
 
-    if user.status in {UserStatus.DEACTIVATED, UserStatus.ANONYMISED}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is inactive",
-        )
-
-    user_role_values = {
-        role.value if isinstance(role, UserRole) else str(role) for role in user.roles
-    }
+    user_role_values = set(user.roles)
     token_role_values = {role.value for role in parsed_roles}
 
-    if not token_role_values.intersection(user_role_values):
+    if not token_role_values.issubset(user_role_values):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token role no longer valid for user",
@@ -171,22 +182,21 @@ async def get_current_school_id(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User is not assigned to a school",
         )
+
     return int(current_user.school_id)
 
 
 def require_role(*roles: UserRole):
     async def _dep(current_user: User = Depends(get_current_user)) -> User:
         allowed_roles = {role.value for role in roles}
-        current_roles = {
-            role.value if isinstance(role, UserRole) else str(role)
-            for role in current_user.roles
-        }
+        current_roles = set(current_user.roles)
 
         if not current_roles.intersection(allowed_roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden",
             )
+
         return current_user
 
     return _dep

@@ -28,8 +28,9 @@ export type SidebarSection = {
 };
 
 /* =========================
-   STUDENT
+   SIDEBAR DEFINITIONS
 ========================= */
+
 export const studentSidebar: SidebarSection[] = [
     {
         title: "Main",
@@ -42,9 +43,6 @@ export const studentSidebar: SidebarSection[] = [
     },
 ];
 
-/* =========================
-   TEACHER
-========================= */
 export const teacherSidebar: SidebarSection[] = [
     {
         title: "Teaching",
@@ -57,9 +55,6 @@ export const teacherSidebar: SidebarSection[] = [
     },
 ];
 
-/* =========================
-   SCHOOL ADMIN
-========================= */
 export const schoolAdminSidebar: SidebarSection[] = [
     {
         title: "Management",
@@ -84,9 +79,6 @@ export const schoolAdminSidebar: SidebarSection[] = [
     },
 ];
 
-/* =========================
-   PLATFORM ADMIN
-========================= */
 export const platformAdminSidebar: SidebarSection[] = [
     {
         title: "Platform",
@@ -107,8 +99,40 @@ export const platformAdminSidebar: SidebarSection[] = [
     },
 ];
 
-export function getSidebarSections(role?: SidebarRole | null): SidebarSection[] {
-    switch (role) {
+/* =========================
+   ROLE PRIORITY (IMPORTANT)
+========================= */
+
+function resolvePrimaryRole(roles: UserRole[]): UserRole {
+    if (roles.includes(UserRole.PLATFORM_ADMIN)) {
+        return UserRole.PLATFORM_ADMIN;
+    }
+
+    if (roles.includes(UserRole.SCHOOL_ADMIN)) {
+        return UserRole.SCHOOL_ADMIN;
+    }
+
+    if (roles.includes(UserRole.TEACHER)) {
+        return UserRole.TEACHER;
+    }
+
+    return UserRole.STUDENT;
+}
+
+/* =========================
+   MULTI-ROLE SAFE FUNCTIONS
+========================= */
+
+export function getSidebarSections(
+    role?: SidebarRole | null,
+    roles?: UserRole[]
+): SidebarSection[] {
+    const resolvedRole =
+        roles && roles.length > 0
+            ? resolvePrimaryRole(roles)
+            : role ?? UserRole.STUDENT;
+
+    switch (resolvedRole) {
         case UserRole.PLATFORM_ADMIN:
             return platformAdminSidebar;
 
@@ -124,6 +148,9 @@ export function getSidebarSections(role?: SidebarRole | null): SidebarSection[] 
     }
 }
 
-export function getSidebarItems(role?: SidebarRole | null): SidebarItem[] {
-    return getSidebarSections(role).flatMap((section) => section.items);
+export function getSidebarItems(
+    role?: SidebarRole | null,
+    roles?: UserRole[]
+): SidebarItem[] {
+    return getSidebarSections(role, roles).flatMap((section) => section.items);
 }

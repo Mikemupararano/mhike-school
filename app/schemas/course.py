@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class CourseCreate(BaseModel):
@@ -13,5 +13,4 @@ class CourseOut(BaseModel):
     teacher_id: int
     published: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

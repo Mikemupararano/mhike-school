@@ -1,18 +1,15 @@
-import { User, CreateUserInput, UpdateUserInput } from "@/types/user";
+import { User, type CreateUserInput, type UpdateUserInput } from "@/types/user";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
+  "http://localhost:8000/api/v1";
 
-/* =========================
-   Helper
-========================= */
-async function apiFetch<T>(
-  url: string,
-  options: RequestInit = {}
-): Promise<T> {
+const TOKEN_KEY = "mhike_token";
+
+async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   const token =
     typeof window !== "undefined"
-      ? sessionStorage.getItem("mhike_token")
+      ? sessionStorage.getItem(TOKEN_KEY)
       : null;
 
   const res = await fetch(`${API_BASE}${url}`, {
@@ -22,65 +19,61 @@ async function apiFetch<T>(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
+    cache: "no-store",
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({}));
-    throw new Error(error.detail || "API request failed");
+    const error = await res.json().catch(() => null);
+    throw new Error(error?.detail || "API request failed");
   }
 
   if (res.status === 204) {
     return null as T;
   }
 
-  return res.json();
+  return (await res.json()) as T;
 }
 
-/* =========================
-   School Admin Service
-========================= */
-
-// 👥 Get users
 export async function getSchoolUsers(): Promise<User[]> {
   return apiFetch<User[]>("/school-admin/users");
 }
 
-// ➕ Create user
-export async function createSchoolUser(
-  data: CreateUserInput
-): Promise<User> {
+export async function createSchoolUser(data: CreateUserInput): Promise<User> {
   return apiFetch<User>("/school-admin/users", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: JSON.stringify({
+      ...data,
+      roles: data.roles,
+      role: data.role ?? data.roles[0],
+    }),
   });
 }
 
-// ✏️ Update user
 export async function updateSchoolUser(
   userId: number,
-  data: UpdateUserInput
+  data: UpdateUserInput,
 ): Promise<User> {
   return apiFetch<User>(`/school-admin/users/${userId}`, {
     method: "PATCH",
-    body: JSON.stringify(data),
+    body: JSON.stringify({
+      ...data,
+      role: data.role ?? data.roles?.[0],
+    }),
   });
 }
 
-// ⛔ Deactivate user
 export async function deactivateUser(userId: number): Promise<User> {
   return apiFetch<User>(`/school-admin/users/${userId}/deactivate`, {
     method: "POST",
   });
 }
 
-// 🗑 Request erasure (GDPR)
 export async function requestErasure(userId: number): Promise<User> {
   return apiFetch<User>(`/school-admin/users/${userId}/request-erasure`, {
     method: "POST",
   });
 }
 
-// 🧼 Anonymise user (GDPR)
 export async function anonymiseUser(userId: number): Promise<User> {
   return apiFetch<User>(`/school-admin/users/${userId}/anonymise`, {
     method: "POST",

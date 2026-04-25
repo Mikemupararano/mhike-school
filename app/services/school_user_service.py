@@ -11,6 +11,7 @@ from app.models.user import User, UserRole, UserStatus
 from app.models.user_role import UserRoleAssignment
 from app.repositories.user import UserRepository
 from app.schemas.user import UserCreate, UserUpdate
+from app.services.audit_log_service import AuditLogService
 
 
 class SchoolUserService:
@@ -39,29 +40,24 @@ class SchoolUserService:
     ) -> User:
         repo = UserRepository(db)
 
-        PermissionService.ensure_school_admin_or_platform_admin(current_user)
         PermissionService.ensure_active_user(current_user)
+        PermissionService.ensure_school_admin_or_platform_admin(current_user)
 
         target_school_id = payload.school_id or current_user.school_id
+
         if target_school_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="school_id is required.",
             )
 
-        if (
-            payload.role == UserRole.PLATFORM_ADMIN
-            or UserRole.PLATFORM_ADMIN in payload.roles
-        ):
+        if UserRole.PLATFORM_ADMIN in payload.roles:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Platform admins cannot be created from school admin flows.",
             )
 
-        if (
-            current_user.role == UserRole.SCHOOL_ADMIN
-            and current_user.school_id != target_school_id
-        ):
+        if current_user.is_school_admin and current_user.school_id != target_school_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot create users outside your school.",
@@ -80,7 +76,7 @@ class SchoolUserService:
             email=payload.email.strip().lower(),
             hashed_password=get_password_hash(payload.password),
             full_name=payload.full_name.strip() if payload.full_name else None,
-            role=primary_role,  # legacy primary role column kept during transition
+            role=primary_role,
             status=UserStatus.ACTIVE,
             is_active=True,
             school_id=target_school_id,
@@ -89,17 +85,31 @@ class SchoolUserService:
         await repo.create(user)
         await db.flush()
 
-        # Multi-role table source of truth
         for role in payload.roles:
-            db.add(
-                UserRoleAssignment(
-                    user_id=user.id,
-                    role=role,
-                )
-            )
-        await db.flush()
+            db.add(UserRoleAssignment(user_id=user.id, role=role))
 
+        await db.flush()
         await db.refresh(user, attribute_names=["school", "user_roles"])
+
+        await AuditLogService.log_user_created(
+            db,
+            actor=current_user,
+            target_user=user,
+        )
+
+        await AuditLogService.log(
+            db,
+            actor=current_user,
+            action="user_roles_assigned",
+            entity_type="user",
+            entity_id=user.id,
+            target_user=user,
+            school_id=user.school_id,
+            metadata={
+                "roles": [role.value for role in payload.roles],
+            },
+        )
+
         return user
 
     @staticmethod
@@ -135,20 +145,36 @@ class SchoolUserService:
         PermissionService.ensure_active_user(current_user)
         PermissionService.ensure_can_manage_school_user(current_user, user)
 
+        old_roles = list(user.roles)
+        changes: dict[str, object] = {}
+
         if payload.full_name is not None:
-            user.full_name = payload.full_name.strip() if payload.full_name else None
+            new_full_name = payload.full_name.strip() if payload.full_name else None
+            if user.full_name != new_full_name:
+                changes["full_name"] = {
+                    "old": user.full_name,
+                    "new": new_full_name,
+                }
+            user.full_name = new_full_name
 
         if payload.email is not None:
             normalized_email = payload.email.strip().lower()
             existing_user = await repo.get_by_email(normalized_email, user.school_id)
+
             if existing_user and existing_user.id != user.id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="A user with this email already exists in this school.",
                 )
+
+            if user.email != normalized_email:
+                changes["email"] = {
+                    "old": user.email,
+                    "new": normalized_email,
+                }
+
             user.email = normalized_email
 
-        # Multi-role update
         if payload.roles is not None:
             if UserRole.PLATFORM_ADMIN in payload.roles:
                 raise HTTPException(
@@ -156,20 +182,22 @@ class SchoolUserService:
                     detail="Cannot promote a school user to platform admin here.",
                 )
 
+            new_roles = [role.value for role in payload.roles]
+
             await db.execute(
                 delete(UserRoleAssignment).where(UserRoleAssignment.user_id == user.id)
             )
 
             for role in payload.roles:
-                db.add(
-                    UserRoleAssignment(
-                        user_id=user.id,
-                        role=role,
-                    )
-                )
+                db.add(UserRoleAssignment(user_id=user.id, role=role))
 
-            # Keep legacy primary role aligned
             user.role = payload.role or payload.roles[0]
+
+            if sorted(old_roles) != sorted(new_roles):
+                changes["roles"] = {
+                    "old": old_roles,
+                    "new": new_roles,
+                }
 
         elif payload.role is not None:
             if payload.role == UserRole.PLATFORM_ADMIN:
@@ -178,34 +206,76 @@ class SchoolUserService:
                     detail="Cannot promote a school user to platform admin here.",
                 )
 
-            user.role = payload.role
-
-            # Transitional behavior:
-            # if only legacy role is updated, keep user_roles table aligned to a single role
             await db.execute(
                 delete(UserRoleAssignment).where(UserRoleAssignment.user_id == user.id)
             )
-            db.add(
-                UserRoleAssignment(
-                    user_id=user.id,
-                    role=payload.role,
-                )
-            )
+
+            db.add(UserRoleAssignment(user_id=user.id, role=payload.role))
+            user.role = payload.role
+
+            new_roles = [payload.role.value]
+
+            if sorted(old_roles) != sorted(new_roles):
+                changes["roles"] = {
+                    "old": old_roles,
+                    "new": new_roles,
+                }
 
         if payload.status is not None:
+            if user.status != payload.status:
+                changes["status"] = {
+                    "old": user.status.value,
+                    "new": payload.status.value,
+                }
+
             user.status = payload.status
             user.is_active = payload.status == UserStatus.ACTIVE
 
         if payload.is_active is not None:
+            if user.is_active != payload.is_active:
+                changes["is_active"] = {
+                    "old": user.is_active,
+                    "new": payload.is_active,
+                }
+
             user.is_active = payload.is_active
+
             if not payload.is_active and user.status == UserStatus.ACTIVE:
+                changes["status"] = {
+                    "old": UserStatus.ACTIVE.value,
+                    "new": UserStatus.DEACTIVATED.value,
+                }
                 user.status = UserStatus.DEACTIVATED
+
             elif payload.is_active and user.status == UserStatus.DEACTIVATED:
+                changes["status"] = {
+                    "old": UserStatus.DEACTIVATED.value,
+                    "new": UserStatus.ACTIVE.value,
+                }
                 user.status = UserStatus.ACTIVE
 
         await repo.save(user)
         await db.flush()
         await db.refresh(user, attribute_names=["school", "user_roles"])
+
+        if changes:
+            await AuditLogService.log_user_updated(
+                db,
+                actor=current_user,
+                target_user=user,
+                changes=changes,
+            )
+
+        if "roles" in changes:
+            role_change = changes["roles"]
+            await AuditLogService.log_role_changed(
+                db,
+                actor=current_user,
+                target_user=user,
+                old_roles=role_change["old"],
+                new_roles=role_change["new"],
+            )
+
         return user
 
     @staticmethod
@@ -216,7 +286,7 @@ class SchoolUserService:
         school_id: int,
         actor: User,
     ) -> User:
-        if actor.role == UserRole.SCHOOL_ADMIN and actor.school_id != school_id:
+        if actor.is_school_admin and actor.school_id != school_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot update users outside your school.",
@@ -239,6 +309,7 @@ class SchoolUserService:
         actor: User | None = None,
     ) -> User:
         current_actor = actor or current_user
+
         if current_actor is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -274,6 +345,24 @@ class SchoolUserService:
 
         await repo.save(user)
         await db.flush()
+
+        await AuditLogService.log(
+            db,
+            actor=current_actor,
+            action="user_deactivated",
+            entity_type="user",
+            entity_id=user.id,
+            target_user=user,
+            school_id=user.school_id,
+            metadata={
+                "retention_expires_at": (
+                    user.retention_expires_at.isoformat()
+                    if user.retention_expires_at
+                    else None
+                ),
+            },
+        )
+
         return user
 
     @staticmethod
@@ -286,6 +375,7 @@ class SchoolUserService:
         actor: User | None = None,
     ) -> User:
         current_actor = actor or current_user
+
         if current_actor is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -321,6 +411,24 @@ class SchoolUserService:
 
         await repo.save(user)
         await db.flush()
+
+        await AuditLogService.log(
+            db,
+            actor=current_actor,
+            action="user_erasure_requested",
+            entity_type="user",
+            entity_id=user.id,
+            target_user=user,
+            school_id=user.school_id,
+            metadata={
+                "deletion_requested_at": (
+                    user.deletion_requested_at.isoformat()
+                    if user.deletion_requested_at
+                    else None
+                ),
+            },
+        )
+
         return user
 
     @staticmethod
@@ -333,6 +441,7 @@ class SchoolUserService:
         actor: User | None = None,
     ) -> User:
         current_actor = actor or current_user
+
         if current_actor is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -362,6 +471,9 @@ class SchoolUserService:
             active_admin_count = await repo.count_school_admins(user.school_id)
             PermissionService.ensure_not_last_school_admin(user, active_admin_count)
 
+        original_email = user.email
+        original_roles = list(user.roles)
+
         user.full_name = f"Deleted User {user.id}"
         user.email = f"deleted-{user.id}@redacted.local"
         user.hashed_password = None
@@ -371,4 +483,28 @@ class SchoolUserService:
 
         await repo.save(user)
         await db.flush()
+
+        await AuditLogService.log_user_anonymised(
+            db,
+            actor=current_actor,
+            target_user=user,
+        )
+
+        await AuditLogService.log(
+            db,
+            actor=current_actor,
+            action="user_personal_data_scrubbed",
+            entity_type="user",
+            entity_id=user.id,
+            target_user=user,
+            school_id=user.school_id,
+            metadata={
+                "previous_email": original_email,
+                "roles_at_anonymisation": original_roles,
+                "anonymised_at": (
+                    user.anonymised_at.isoformat() if user.anonymised_at else None
+                ),
+            },
+        )
+
         return user

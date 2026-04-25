@@ -19,10 +19,12 @@ type AuthContextType = {
     refreshUser: () => Promise<User | null>;
     logout: () => void;
     hasRole: (role: UserRole) => boolean;
+    hasAnyRole: (roles: UserRole[]) => boolean;
     isPlatformAdmin: boolean;
     isSchoolAdmin: boolean;
     isTeacher: boolean;
     isStudent: boolean;
+    canTeach: boolean;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,14 +37,24 @@ const API_BASE =
 
 const ME_URL = `${API_BASE}/auth/me`;
 
+function normaliseUser(data: User): User {
+    const roles = Array.isArray(data.roles) && data.roles.length > 0
+        ? data.roles
+        : data.role
+            ? [data.role]
+            : [];
+
+    return {
+        ...data,
+        roles: Array.from(new Set(roles)),
+    };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [token, setTokenState] = useState<string | null>(null);
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
-    /* =========================
-       Fetch current user
-    ========================= */
     const fetchCurrentUser = useCallback(async (activeToken: string): Promise<User> => {
         const res = await fetch(ME_URL, {
             method: "GET",
@@ -58,21 +70,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             throw new Error("Failed to fetch current user");
         }
 
-        const data = (await res.json()) as User;
-
-        return {
-            ...data,
-            roles: Array.isArray(data.roles)
-                ? data.roles
-                : data.role
-                    ? [data.role]
-                    : [],
-        };
+        return normaliseUser((await res.json()) as User);
     }, []);
 
-    /* =========================
-       Clear auth
-    ========================= */
     const clearAuth = useCallback(() => {
         if (typeof window !== "undefined") {
             sessionStorage.removeItem(TOKEN_KEY);
@@ -82,9 +82,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
     }, []);
 
-    /* =========================
-       Refresh user
-    ========================= */
     const refreshUser = useCallback(async (): Promise<User | null> => {
         if (typeof window === "undefined") {
             clearAuth();
@@ -109,9 +106,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     }, [clearAuth, fetchCurrentUser]);
 
-    /* =========================
-       Set token (FIXED)
-    ========================= */
     const setToken = useCallback(
         async (value: string | null): Promise<User | null> => {
             setLoading(true);
@@ -127,9 +121,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     sessionStorage.setItem(TOKEN_KEY, value);
                 }
 
-                setTokenState(value);
-
                 const currentUser = await fetchCurrentUser(value);
+
+                setTokenState(value);
                 setUser(currentUser);
 
                 return currentUser;
@@ -143,17 +137,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         [clearAuth, fetchCurrentUser]
     );
 
-    /* =========================
-       Logout
-    ========================= */
     const logout = useCallback(() => {
         clearAuth();
         setLoading(false);
     }, [clearAuth]);
 
-    /* =========================
-       Init auth on load
-    ========================= */
     useEffect(() => {
         let mounted = true;
 
@@ -203,13 +191,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
     }, [fetchCurrentUser, clearAuth]);
 
-    /* =========================
-       Role helpers
-    ========================= */
     const hasRole = useCallback(
         (role: UserRole) => {
-            if (!user) return false;
-            return Array.isArray(user.roles) && user.roles.includes(role);
+            return user?.roles?.includes(role) ?? false;
+        },
+        [user]
+    );
+
+    const hasAnyRole = useCallback(
+        (roles: UserRole[]) => {
+            return roles.some((role) => user?.roles?.includes(role));
         },
         [user]
     );
@@ -219,9 +210,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const isTeacher = hasRole(UserRole.TEACHER);
     const isStudent = hasRole(UserRole.STUDENT);
 
-    /* =========================
-       Context value
-    ========================= */
+    const canTeach = hasAnyRole([
+        UserRole.PLATFORM_ADMIN,
+        UserRole.SCHOOL_ADMIN,
+        UserRole.TEACHER,
+    ]);
+
     const value = useMemo<AuthContextType>(
         () => ({
             token,
@@ -231,10 +225,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             refreshUser,
             logout,
             hasRole,
+            hasAnyRole,
             isPlatformAdmin,
             isSchoolAdmin,
             isTeacher,
             isStudent,
+            canTeach,
         }),
         [
             token,
@@ -244,10 +240,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             refreshUser,
             logout,
             hasRole,
+            hasAnyRole,
             isPlatformAdmin,
             isSchoolAdmin,
             isTeacher,
             isStudent,
+            canTeach,
         ]
     );
 

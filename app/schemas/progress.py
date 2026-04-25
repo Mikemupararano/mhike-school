@@ -1,5 +1,6 @@
-from pydantic import BaseModel
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
 
 
 class ProgressOut(BaseModel):
@@ -9,8 +10,7 @@ class ProgressOut(BaseModel):
     completed: bool
     last_seen_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MarkLessonIn(BaseModel):

@@ -10,6 +10,8 @@ import {
     type SidebarRole,
     type SidebarSection,
 } from "@/lib/navigation/sidebar";
+import { useAuth } from "@/providers/AuthProvider";
+import { UserRole } from "@/types/user";
 
 type SidebarProps = {
     title?: string;
@@ -19,6 +21,26 @@ type SidebarProps = {
     className?: string;
 };
 
+function resolveSidebarRole(userRoles: UserRole[]): SidebarRole {
+    if (userRoles.includes(UserRole.PLATFORM_ADMIN)) {
+        return "platform_admin";
+    }
+
+    if (userRoles.includes(UserRole.SCHOOL_ADMIN)) {
+        return "school_admin";
+    }
+
+    if (userRoles.includes(UserRole.TEACHER)) {
+        return "teacher";
+    }
+
+    if (userRoles.includes(UserRole.STUDENT)) {
+        return "student";
+    }
+
+    return "student";
+}
+
 export default function Sidebar({
     title = brand.name,
     sections,
@@ -27,16 +49,16 @@ export default function Sidebar({
     className = "",
 }: SidebarProps) {
     const pathname = usePathname();
+    const { user } = useAuth();
 
-    // Prefer explicit sections when provided.
-    // Otherwise resolve from role.
-    // Transitional fallback remains "teacher" so the UI does not crash
-    // if a caller still fails to pass role.
-    const resolvedRole: SidebarRole = role ?? "teacher";
+    const resolvedRole: SidebarRole =
+        role ?? resolveSidebarRole(user?.roles ?? []);
+
     const resolvedSections = sections ?? getSidebarSections(resolvedRole);
 
     return (
         <aside
+            aria-label={`${title} sidebar navigation`}
             className={`h-screen text-white ${collapsed ? "w-24" : "w-80"} ${className}`}
             style={{
                 borderRight: `1px solid ${brandColors.navySoft}`,
@@ -77,11 +99,11 @@ export default function Sidebar({
                 <nav className="flex-1 overflow-y-auto px-4 py-5">
                     {resolvedSections.map((section) => (
                         <div key={section.title} className="mb-7">
-                            {!collapsed ? (
+                            {!collapsed && (
                                 <p className="mb-4 px-3 text-sm font-bold uppercase tracking-[0.18em] text-slate-100">
                                     {section.title}
                                 </p>
-                            ) : null}
+                            )}
 
                             <div className="grid gap-2">
                                 {section.items.map((item) => {
@@ -96,6 +118,8 @@ export default function Sidebar({
                                         <Link
                                             key={item.href}
                                             href={item.href}
+                                            aria-current={active ? "page" : undefined}
+                                            title={collapsed ? item.label : undefined}
                                             className={`flex items-center rounded-2xl px-4 py-4 transition-all duration-200 ${collapsed ? "justify-center" : "gap-3.5"
                                                 } ${active
                                                     ? "text-white shadow-sm ring-1 ring-white/12"
@@ -118,11 +142,11 @@ export default function Sidebar({
                                                 <Icon size={22} />
                                             </span>
 
-                                            {!collapsed ? (
+                                            {!collapsed && (
                                                 <span className="truncate text-lg font-semibold">
                                                     {item.label}
                                                 </span>
-                                            ) : null}
+                                            )}
                                         </Link>
                                     );
                                 })}

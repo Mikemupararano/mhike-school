@@ -5,9 +5,39 @@ from app.models.user import User, UserRole, UserStatus
 
 class PermissionService:
     @staticmethod
-    def ensure_same_school(current_user: User, resource_school_id: int | None) -> None:
+    def ensure_active_user(current_user: User) -> None:
+        if not current_user.is_active or current_user.status != UserStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is inactive.",
+            )
+
+    @staticmethod
+    def ensure_has_role(current_user: User, role: UserRole | str) -> None:
+        if not current_user.has_role(role):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied.",
+            )
+
+    @staticmethod
+    def ensure_has_any_role(
+        current_user: User,
+        roles: list[UserRole | str] | set[UserRole | str],
+    ) -> None:
+        if not current_user.has_any_role(roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied.",
+            )
+
+    @staticmethod
+    def ensure_same_school(
+        current_user: User,
+        resource_school_id: int | None,
+    ) -> None:
         """
-        Platform admins may access across schools.
+        Platform admins may access resources across schools.
         All other users are restricted to their own school.
         """
         if current_user.is_platform_admin:
@@ -19,62 +49,113 @@ class PermissionService:
                 detail="Current user is not assigned to a school.",
             )
 
-        if resource_school_id is None or current_user.school_id != resource_school_id:
+        if resource_school_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Resource is not assigned to a school.",
+            )
+
+        if current_user.school_id != resource_school_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cross-school access denied.",
             )
 
     @staticmethod
-    def ensure_school_admin_or_platform_admin(current_user: User) -> None:
-        if not (current_user.is_school_admin or current_user.is_platform_admin):
+    def ensure_platform_admin(current_user: User) -> None:
+        if not current_user.is_platform_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Platform admin access required.",
+            )
+
+    @staticmethod
+    def ensure_school_admin(current_user: User) -> None:
+        if not current_user.is_school_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="School admin access required.",
             )
 
     @staticmethod
-    def ensure_school_staff_or_platform_admin(current_user: User) -> None:
-        """
-        School staff includes school admins and teachers.
-        Platform admins are also allowed.
-        """
-        if not (
-            current_user.is_school_admin
-            or current_user.is_teacher
-            or current_user.is_platform_admin
-        ):
+    def ensure_teacher(current_user: User) -> None:
+        if not current_user.is_teacher:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="School staff access required.",
+                detail="Teacher access required.",
             )
+
+    @staticmethod
+    def ensure_student(current_user: User) -> None:
+        if not current_user.is_student:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Student access required.",
+            )
+
+    @staticmethod
+    def ensure_school_admin_or_platform_admin(current_user: User) -> None:
+        """
+        Allows:
+        - platform_admin
+        - school_admin
+
+        A user may also have teacher at the same time:
+        ["school_admin", "teacher"]
+        """
+        PermissionService.ensure_has_any_role(
+            current_user,
+            {
+                UserRole.PLATFORM_ADMIN,
+                UserRole.SCHOOL_ADMIN,
+            },
+        )
+
+    @staticmethod
+    def ensure_school_staff_or_platform_admin(current_user: User) -> None:
+        """
+        Allows:
+        - platform_admin
+        - school_admin
+        - teacher
+        """
+        PermissionService.ensure_has_any_role(
+            current_user,
+            {
+                UserRole.PLATFORM_ADMIN,
+                UserRole.SCHOOL_ADMIN,
+                UserRole.TEACHER,
+            },
+        )
 
     @staticmethod
     def ensure_can_teach(current_user: User) -> None:
         """
-        Teaching actions are allowed for teachers, school admins,
-        and platform admins.
-        """
-        if not (current_user.can_teach or current_user.is_platform_admin):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Teaching access required.",
-            )
+        Allows teaching actions for:
+        - platform_admin
+        - school_admin
+        - teacher
 
-    @staticmethod
-    def ensure_active_user(current_user: User) -> None:
-        if not current_user.is_active or current_user.status != UserStatus.ACTIVE:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is inactive.",
-            )
+        This correctly supports users with both:
+        ["school_admin", "teacher"]
+        """
+        PermissionService.ensure_has_any_role(
+            current_user,
+            {
+                UserRole.PLATFORM_ADMIN,
+                UserRole.SCHOOL_ADMIN,
+                UserRole.TEACHER,
+            },
+        )
 
     @staticmethod
     def ensure_user_belongs_to_school(user: User) -> None:
         """
-        For this phase of the product:
-        - school_admin, teacher, student must belong to a school
-        - platform_admin must not belong to a school
+        Current product rule:
+        - platform_admin users must not belong to a school.
+        - school_admin, teacher, and student users must belong to a school.
+
+        A user with roles ["school_admin", "teacher"] must belong to a school.
         """
         if user.is_platform_admin:
             if user.school_id is not None:
@@ -91,15 +172,31 @@ class PermissionService:
             )
 
     @staticmethod
-    def ensure_can_manage_school_user(current_user: User, target_user: User) -> None:
+    def ensure_can_manage_school_user(
+        current_user: User,
+        target_user: User,
+    ) -> None:
         """
-        School admins can manage users in their own school.
-        Platform admins can manage any user.
+        Allows:
+        - platform_admin to manage any user
+        - school_admin to manage users in their own school
         """
         PermissionService.ensure_school_admin_or_platform_admin(current_user)
 
         if current_user.is_platform_admin:
             return
+
+        if current_user.school_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Current user is not assigned to a school.",
+            )
+
+        if target_user.school_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Target user is not assigned to a school.",
+            )
 
         if current_user.school_id != target_user.school_id:
             raise HTTPException(
@@ -113,7 +210,8 @@ class PermissionService:
         active_school_admin_count: int,
     ) -> None:
         """
-        Prevent removing/deactivating/anonymising the final active school admin.
+        Prevent removing, deactivating, anonymising, or demoting
+        the final active school admin in a school.
         """
         if not target_user.is_school_admin:
             return
@@ -121,30 +219,37 @@ class PermissionService:
         if target_user.school_id is None:
             return
 
-        if active_school_admin_count <= 1 and target_user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Each school must have at least one active school admin.",
-            )
+        if target_user.is_active and target_user.status == UserStatus.ACTIVE:
+            if active_school_admin_count <= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Each school must have at least one active school admin.",
+                )
 
     @staticmethod
     def ensure_can_request_erasure(target_user: User) -> None:
-        """
-        Basic guard for GDPR workflow entry.
-        """
         if target_user.status == UserStatus.ANONYMISED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User has already been anonymised.",
+            )
+
+        if target_user.status == UserStatus.PENDING_ERASURE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User is already pending erasure.",
             )
 
     @staticmethod
     def ensure_can_anonymise(target_user: User) -> None:
-        """
-        Basic guard before anonymisation.
-        """
         if target_user.status == UserStatus.ANONYMISED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User has already been anonymised.",
+            )
+
+        if target_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Active users must be deactivated before anonymisation.",
             )

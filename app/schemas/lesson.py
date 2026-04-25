@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class LessonCreate(BaseModel):
@@ -10,11 +10,10 @@ class LessonCreate(BaseModel):
 
 class LessonOut(BaseModel):
     id: int
-    module_id: int  # ✅ REQUIRED for frontend navigation
+    module_id: int  # REQUIRED for frontend navigation
     title: str
     content_type: str
     content: str | None = None
     order: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

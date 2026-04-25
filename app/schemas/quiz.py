@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class QuizOptionCreate(BaseModel):
@@ -19,8 +19,7 @@ class QuizOptionOut(BaseModel):
     is_correct: bool
     order: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuizOptionPublicOut(BaseModel):
@@ -28,8 +27,7 @@ class QuizOptionPublicOut(BaseModel):
     option_text: str
     order: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuizQuestionCreate(BaseModel):
@@ -49,8 +47,7 @@ class QuizQuestionOut(BaseModel):
     order: int
     options: list[QuizOptionOut] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuizQuestionPublicOut(BaseModel):
@@ -59,8 +56,7 @@ class QuizQuestionPublicOut(BaseModel):
     order: int
     options: list[QuizOptionPublicOut] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuizSubmitIn(BaseModel):

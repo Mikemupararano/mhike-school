@@ -17,7 +17,7 @@ def _to_user_out(user: User) -> UserOut:
         email=user.email,
         full_name=user.full_name,
         role=user.role,
-        roles=user.roles,
+        roles=[UserRole(r) for r in user.roles],  # ✅ FIXED
         school_id=user.school_id,
         school_name=user.school.name if user.school else None,
         is_active=user.is_active,
@@ -30,7 +30,8 @@ def _resolve_school_scope(
     current_user: User,
     school_id: int | None,
 ) -> int:
-    if current_user.role == UserRole.PLATFORM_ADMIN:
+    # ✅ FIXED: use multi-role property
+    if current_user.is_platform_admin:
         if school_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

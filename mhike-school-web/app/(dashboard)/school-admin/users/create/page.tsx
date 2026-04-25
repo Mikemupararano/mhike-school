@@ -1,66 +1,139 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 
-import RoleGate from '@/components/auth/RoleGate'
-import { UserRole } from '@/types/user'
-import { createPlatformSchool } from '@/lib/services/platform-admin'
+import RoleGate from "@/components/auth/RoleGate";
+import { UserRole } from "@/types/user";
+import { createSchoolUser } from "@/lib/services/school-admin";
 
-export default function CreateSchoolPage() {
+const ROLE_OPTIONS = [
+  UserRole.SCHOOL_ADMIN,
+  UserRole.TEACHER,
+  UserRole.STUDENT,
+];
+
+export default function CreateUserPage() {
   return (
-    <RoleGate allowedRoles={[UserRole.PLATFORM_ADMIN]}>
-      <CreateSchoolForm />
+    <RoleGate allowedRoles={[UserRole.SCHOOL_ADMIN, UserRole.PLATFORM_ADMIN]}>
+      <CreateUserForm />
     </RoleGate>
-  )
+  );
 }
 
-function CreateSchoolForm() {
-  const router = useRouter()
+function CreateUserForm() {
+  const router = useRouter();
 
-  const [name, setName] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [password, setPassword] = useState("");
+  const [roles, setRoles] = useState<UserRole[]>([UserRole.STUDENT]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit =
+    email.trim().length > 3 &&
+    password.length >= 6 &&
+    roles.length > 0 &&
+    !isLoading;
+
+  function toggleRole(role: UserRole) {
+    setRoles((prev) =>
+      prev.includes(role)
+        ? prev.filter((r) => r !== role)
+        : [...prev, role]
+    );
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
 
     try {
-      setIsLoading(true)
+      setIsLoading(true);
 
-      await createPlatformSchool({
-        name,
-      })
+      await createSchoolUser({
+        email: email.trim(),
+        full_name: fullName.trim() || undefined,
+        password,
+        roles,
+      });
 
-      router.push('/admin/schools')
+      router.push("/school-admin/users");
+      router.refresh();
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to create school'
-      setError(message)
+      setError(err instanceof Error ? err.message : "Failed to create user.");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
   }
 
   return (
-    <div className="p-6 max-w-xl">
-      <h1 className="text-3xl font-extrabold">Create School</h1>
+    <div className="max-w-xl p-6">
+      <h1 className="text-3xl font-extrabold">Create User</h1>
       <p className="mt-2 text-slate-500">
-        Add a new school to the platform.
+        Add a new user to your school.
       </p>
 
       <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        {/* EMAIL */}
         <div>
-          <label className="block text-sm font-medium">School Name</label>
+          <label className="block text-sm font-medium">Email</label>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+          />
+        </div>
+
+        {/* NAME */}
+        <div>
+          <label className="block text-sm font-medium">Full name</label>
           <input
             type="text"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
             className="mt-1 w-full rounded-lg border px-3 py-2"
-            placeholder="Kent School"
           />
+        </div>
+
+        {/* PASSWORD */}
+        <div>
+          <label className="block text-sm font-medium">Password</label>
+          <input
+            type="password"
+            required
+            minLength={6}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+          />
+        </div>
+
+        {/* ROLES (MULTI ROLE ✅) */}
+        <div>
+          <label className="block text-sm font-medium mb-2">
+            Roles
+          </label>
+
+          <div className="flex flex-wrap gap-2">
+            {ROLE_OPTIONS.map((role) => (
+              <button
+                type="button"
+                key={role}
+                onClick={() => toggleRole(role)}
+                className={`rounded-full px-3 py-1 text-sm border ${roles.includes(role)
+                  ? "bg-blue-600 text-white"
+                  : "bg-white text-slate-700"
+                  }`}
+              >
+                {role.replace("_", " ")}
+              </button>
+            ))}
+          </div>
         </div>
 
         {error && (
@@ -70,15 +143,15 @@ function CreateSchoolForm() {
         <div className="flex gap-3">
           <button
             type="submit"
-            disabled={isLoading}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
+            disabled={!canSubmit}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
           >
-            {isLoading ? 'Creating...' : 'Create School'}
+            {isLoading ? "Creating..." : "Create user"}
           </button>
 
           <button
             type="button"
-            onClick={() => router.push('/admin/schools')}
+            onClick={() => router.push("/school-admin/users")}
             className="rounded-lg border px-4 py-2"
           >
             Cancel
@@ -86,5 +159,5 @@ function CreateSchoolForm() {
         </div>
       </form>
     </div>
-  )
+  );
 }

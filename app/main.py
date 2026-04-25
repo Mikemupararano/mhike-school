@@ -8,6 +8,7 @@ from app.api.v1.api import api_router
 from app.core.bootstrap import bootstrap_admin
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.exceptions.handlers import register_exception_handlers
 
 API_PREFIX = "/api/v1"
 
@@ -31,6 +32,8 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": False},
 )
 
+register_exception_handlers(app)
+
 
 def custom_openapi():
     if app.openapi_schema:
@@ -43,7 +46,6 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # Ensure components exist
     components = openapi_schema.setdefault("components", {})
     security_schemes = components.setdefault("securitySchemes", {})
 
@@ -53,7 +55,6 @@ def custom_openapi():
         "bearerFormat": "JWT",
     }
 
-    # Apply Bearer auth globally
     openapi_schema["security"] = [{"BearerAuth": []}]
 
     app.openapi_schema = openapi_schema
@@ -63,7 +64,6 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -76,17 +76,18 @@ app.add_middleware(
 )
 
 
-# ✅ Register API routes
 app.include_router(api_router, prefix=API_PREFIX)
 
 
-# Root endpoint
 @app.get("/", tags=["root"])
 async def root():
     return {
-        "app": settings.app_name,
-        "status": "ok",
-        "docs": "/docs",
-        "openapi": "/openapi.json",
-        "api_prefix": API_PREFIX,
+        "success": True,
+        "data": {
+            "app": settings.app_name,
+            "status": "ok",
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+            "api_prefix": API_PREFIX,
+        },
     }

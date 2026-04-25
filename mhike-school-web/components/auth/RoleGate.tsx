@@ -19,30 +19,36 @@ export default function RoleGate({
   fallback = null,
   redirectTo = "/login",
 }: RoleGateProps) {
-  const { user, loading } = useAuth();
+  const { user, loading, hasAnyRole } = useAuth();
   const router = useRouter();
 
+  /* =========================
+     Redirect unauthenticated
+  ========================= */
   useEffect(() => {
     if (!loading && !user) {
       router.replace(redirectTo);
     }
   }, [user, loading, router, redirectTo]);
 
+  /* =========================
+     Loading state
+  ========================= */
   if (loading) {
     return <div className="p-4">Loading...</div>;
   }
 
+  /* =========================
+     Not logged in
+  ========================= */
   if (!user) {
     return null;
   }
 
-  const userRoles = Array.isArray(user.roles)
-    ? user.roles
-    : user.role
-      ? [user.role]
-      : [];
-
-  const isAllowed = allowedRoles.some((role) => userRoles.includes(role));
+  /* =========================
+     Role check (multi-role safe)
+  ========================= */
+  const isAllowed = hasAnyRole(allowedRoles);
 
   if (!isAllowed) {
     return (
