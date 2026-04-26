@@ -1,4 +1,6 @@
+# =========================
 # Python
+# =========================
 __pycache__/
 *.py[cod]
 *.pyo
@@ -9,31 +11,64 @@ __pycache__/
 venv/
 env/
 
-# Environment variables
-.env
-.env.*
-
-# Alembic cache
-*.log
-
-# IDE files
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Docker volumes
-mhike_pgdata/
-
-# Node (for frontend)
-node_modules/
-.next/
-
-# Python testing
+# Python testing & coverage
 .pytest_cache/
 .coverage
 htmlcov/
 
+# SQLite (local dev only)
 *.sqlite3
+
+# Logs
+*.log
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Debug / local scripts (DO NOT COMMIT)
+# =========================
+check_platform_admin.py
+reset_platform_admin.py
+
+# Optional: ignore all local dev scripts
+# scripts/dev/
+
+# =========================
+# Node / Next.js (frontend)
+# =========================
+node_modules/
+.next/
+out/
+dist/
+
+# Build artifacts
+*.tsbuildinfo
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Docker
+# =========================
+mhike_pgdata/
+*.pid
+
+# =========================
+# Misc
+# =========================
+coverage/
+.cache/
