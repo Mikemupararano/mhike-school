@@ -78,6 +78,8 @@ React
 TypeScript
 
 ## Project Structure
+## Project Structure
+
 mhike-school/
 │
 ├── docker-compose.yml
@@ -87,7 +89,7 @@ mhike-school/
 ├── README.md
 ├── Makefile
 │
-├── mhike-school-web/                                         # Next.js frontend
+├── mhike-school-web/                              # Next.js frontend
 │   ├── package.json
 │   ├── package-lock.json
 │   ├── tsconfig.json
@@ -96,6 +98,7 @@ mhike-school/
 │   ├── tailwind.config.ts
 │   ├── .env.local
 │   ├── .env.example
+│   ├── README.md
 │   │
 │   ├── public/
 │   │   ├── logo.png
@@ -126,127 +129,70 @@ mhike-school/
 │   │   │   └── login/
 │   │   │       └── page.tsx
 │   │   │
-│   │   ├── (dashboard)/
-│   │   │   ├── layout.tsx
-│   │   │   │
-│   │   │   ├── dashboard/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── profile/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── notifications/
-│   │   │   │   └── page.tsx
-│   │   │   │
-│   │   │   ├── courses/
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── exam-boards/
-│   │   │   │   │   └── [examBoardId]/
-│   │   │   │   │       └── page.tsx
-│   │   │   │   ├── [courseId]/
-│   │   │   │   │   ├── page.tsx
-│   │   │   │   │   └── topics/
-│   │   │   │   │       └── [topicId]/
-│   │   │   │   │           └── page.tsx
-│   │   │   │   └── content/
-│   │   │   │       └── [contentItemId]/
-│   │   │   │           └── page.tsx
-│   │   │   │
-│   │   │   ├── teacher/
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── classes/
-│   │   │   │   │   ├── page.tsx
-│   │   │   │   │   └── [classId]/
-│   │   │   │   │       └── page.tsx
-│   │   │   │   ├── content/
-│   │   │   │   │   ├── page.tsx
-│   │   │   │   │   ├── notes/
-│   │   │   │   │   │   ├── create/
-│   │   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   │   └── [contentItemId]/
-│   │   │   │   │   │       └── page.tsx
-│   │   │   │   │   └── quizzes/
-│   │   │   │   │       ├── create/
-│   │   │   │   │       │   └── page.tsx
-│   │   │   │   │       └── [contentItemId]/
-│   │   │   │   │           └── page.tsx
-│   │   │   │   └── assignments/
-│   │   │   │       ├── page.tsx
-│   │   │   │       ├── create/
-│   │   │   │       │   └── page.tsx
-│   │   │   │       └── [assignmentId]/
-│   │   │   │           └── page.tsx
-│   │   │   │
-│   │   │   ├── student/
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── assignments/
-│   │   │   │   │   ├── page.tsx
-│   │   │   │   │   └── [assignmentId]/
-│   │   │   │   │       └── page.tsx
-│   │   │   │   └── quizzes/
-│   │   │   │       └── attempts/
-│   │   │   │           └── [attemptId]/
-│   │   │   │               └── page.tsx
-│   │   │   │
-│   │   │   ├── school-admin/
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── branding/
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── users/
-│   │   │   │   │   ├── page.tsx
-│   │   │   │   │   └── create/
-│   │   │   │   │       └── page.tsx
-│   │   │   │   ├── teachers/
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── students/
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── classes/
-│   │   │   │   │   ├── page.tsx
-│   │   │   │   │   └── [classId]/
-│   │   │   │   │       └── page.tsx
-│   │   │   │   ├── announcements/
-│   │   │   │   │   └── page.tsx
-│   │   │   │   └── audit-logs/
-│   │   │   │       └── page.tsx
-│   │   │   │
-│   │   │   └── admin/
-│   │   │       ├── page.tsx
-│   │   │       ├── schools/
-│   │   │       │   ├── page.tsx
-│   │   │       │   ├── create/
-│   │   │       │   │   └── page.tsx
-│   │   │       │   └── [schoolId]/
-│   │   │       │       └── page.tsx
-│   │   │       ├── audit-logs/
-│   │   │       │   └── page.tsx
-│   │   │       └── content/
-│   │   │           ├── page.tsx
-│   │   │           ├── exam-boards/
-│   │   │           │   ├── page.tsx
-│   │   │           │   └── create/
-│   │   │           │       └── page.tsx
-│   │   │           ├── courses/
-│   │   │           │   ├── page.tsx
-│   │   │           │   ├── create/
-│   │   │           │   │   └── page.tsx
-│   │   │           │   └── [courseId]/
-│   │   │           │       └── page.tsx
-│   │   │           ├── topics/
-│   │   │           │   ├── page.tsx
-│   │   │           │   ├── create/
-│   │   │           │   │   └── page.tsx
-│   │   │           │   └── [topicId]/
-│   │   │           │       └── page.tsx
-│   │   │           ├── notes/
-│   │   │           │   ├── create/
-│   │   │           │   │   └── page.tsx
-│   │   │           │   └── [contentItemId]/
-│   │   │           │       └── page.tsx
-│   │   │           └── quizzes/
-│   │   │               ├── create/
-│   │   │               │   └── page.tsx
-│   │   │               └── [contentItemId]/
-│   │   │                   └── page.tsx
+│   │   └── (dashboard)/
+│   │       ├── layout.tsx
+│   │       ├── dashboard/page.tsx
+│   │       ├── profile/page.tsx
+│   │       ├── notifications/page.tsx
+│   │       │
+│   │       ├── courses/
+│   │       │   ├── page.tsx
+│   │       │   ├── exam-boards/[examBoardId]/page.tsx
+│   │       │   ├── [courseId]/page.tsx
+│   │       │   ├── [courseId]/topics/[topicId]/page.tsx
+│   │       │   └── content/[contentItemId]/page.tsx
+│   │       │
+│   │       ├── teacher/
+│   │       │   ├── page.tsx
+│   │       │   ├── classes/page.tsx
+│   │       │   ├── classes/[classId]/page.tsx
+│   │       │   ├── content/page.tsx
+│   │       │   ├── content/notes/create/page.tsx
+│   │       │   ├── content/notes/[contentItemId]/page.tsx
+│   │       │   ├── content/quizzes/create/page.tsx
+│   │       │   ├── content/quizzes/[contentItemId]/page.tsx
+│   │       │   ├── assignments/page.tsx
+│   │       │   ├── assignments/create/page.tsx
+│   │       │   └── assignments/[assignmentId]/page.tsx
+│   │       │
+│   │       ├── student/
+│   │       │   ├── page.tsx
+│   │       │   ├── assignments/page.tsx
+│   │       │   ├── assignments/[assignmentId]/page.tsx
+│   │       │   └── quizzes/attempts/[attemptId]/page.tsx
+│   │       │
+│   │       ├── school-admin/
+│   │       │   ├── page.tsx
+│   │       │   ├── branding/page.tsx
+│   │       │   ├── users/page.tsx
+│   │       │   ├── users/create/page.tsx
+│   │       │   ├── teachers/page.tsx
+│   │       │   ├── students/page.tsx
+│   │       │   ├── classes/page.tsx
+│   │       │   ├── classes/[classId]/page.tsx
+│   │       │   ├── announcements/page.tsx
+│   │       │   └── audit-logs/page.tsx
+│   │       │
+│   │       └── admin/
+│   │           ├── page.tsx
+│   │           ├── schools/page.tsx
+│   │           ├── schools/create/page.tsx
+│   │           ├── schools/[schoolId]/page.tsx
+│   │           ├── audit-logs/page.tsx
+│   │           └── content/
+│   │               ├── page.tsx
+│   │               ├── exam-boards/page.tsx
+│   │               ├── exam-boards/create/page.tsx
+│   │               ├── courses/page.tsx
+│   │               ├── courses/create/page.tsx
+│   │               ├── courses/[courseId]/page.tsx
+│   │               ├── topics/page.tsx
+│   │               ├── topics/create/page.tsx
+│   │               ├── topics/[topicId]/page.tsx
+│   │               ├── notes/create/page.tsx
+│   │               ├── notes/[contentItemId]/page.tsx
+│   │               ├── quizzes/create/page.tsx
+│   │               └── quizzes/[contentItemId]/page.tsx
 │   │
 │   ├── components/
 │   │   ├── auth/
@@ -315,9 +261,11 @@ mhike-school/
 │   │   └── schools/
 │   │
 │   ├── lib/
-│   │   ├── api/
-│   │   │   ├── client.ts
-│   │   │   └── auth.ts
+│   │   ├── api.ts
+│   │   ├── authApi.ts
+│   │   ├── assignmentApi.ts
+│   │   ├── hooks/
+│   │   │   └── useAdminDashboard.ts
 │   │   ├── services/
 │   │   │   ├── course.ts
 │   │   │   ├── school.ts
@@ -346,27 +294,24 @@ mhike-school/
 │   │   ├── QueryProvider.tsx
 │   │   └── ThemeProvider.tsx
 │   │
-│   ├── types/
-│   │   ├── assignment.ts
-│   │   ├── class.ts
-│   │   ├── content.ts
-│   │   ├── course.ts
-│   │   ├── examBoard.ts
-│   │   ├── mcqOption.ts
-│   │   ├── mcqQuestion.ts
-│   │   ├── notification.ts
-│   │   ├── quizAttempt.ts
-│   │   ├── school.ts
-│   │   ├── topic.ts
-│   │   ├── user.ts
-│   │   └── auditLog.ts
-│   │
-│   └── README.md
+│   └── types/
+│       ├── assignment.ts
+│       ├── class.ts
+│       ├── content.ts
+│       ├── course.ts
+│       ├── examBoard.ts
+│       ├── mcqOption.ts
+│       ├── mcqQuestion.ts
+│       ├── notification.ts
+│       ├── quizAttempt.ts
+│       ├── school.ts
+│       ├── topic.ts
+│       ├── user.ts
+│       └── auditLog.ts
 │
-├── app/                                                  # FastAPI backend
+├── app/                                             # FastAPI backend
 │   ├── __init__.py
 │   ├── main.py
-│   │
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── deps.py
@@ -391,6 +336,7 @@ mhike-school/
 │   │           ├── topics.py
 │   │           ├── content_items.py
 │   │           ├── assignments.py
+│   │           ├── assignment_submissions.py
 │   │           ├── quiz_attempts.py
 │   │           └── content_admin.py
 │   │
@@ -413,6 +359,7 @@ mhike-school/
 │   │   ├── __init__.py
 │   │   ├── announcement.py
 │   │   ├── assignment.py
+│   │   ├── assignment_submission.py
 │   │   ├── audit_log.py
 │   │   ├── class_group.py
 │   │   ├── content_item.py
@@ -427,12 +374,14 @@ mhike-school/
 │   │   ├── school.py
 │   │   ├── school_settings.py
 │   │   ├── topic.py
-│   │   └── user.py
+│   │   ├── user.py
+│   │   └── user_role.py
 │   │
 │   ├── schemas/
 │   │   ├── __init__.py
 │   │   ├── announcement.py
 │   │   ├── assignment.py
+│   │   ├── assignment_submission.py
 │   │   ├── audit_log.py
 │   │   ├── auth.py
 │   │   ├── class_group.py
@@ -474,6 +423,7 @@ mhike-school/
 │   │   ├── __init__.py
 │   │   ├── announcement_service.py
 │   │   ├── assignment_service.py
+│   │   ├── assignment_submission_service.py
 │   │   ├── audit_log_service.py
 │   │   ├── auth_service.py
 │   │   ├── class_service.py
@@ -537,6 +487,7 @@ mhike-school/
 │       ├── 0015_create_announcements.py
 │       ├── 0016_create_notifications.py
 │       ├── 0017_create_audit_logs.py
+│       ├── 0018_create_assignment_submissions.py
 │       └── d3ed01427113_add_user_lifecycle_fields.py
 │
 ├── tests/
@@ -554,8 +505,10 @@ mhike-school/
 │   │   ├── topic.py
 │   │   ├── user.py
 │   │   └── audit_log.py
-│   │
 │   ├── test_auth.py
+│   ├── test_gdpr_lifecycle.py
+│   ├── test_permissions.py
+│   ├── test_user_roles.py
 │   ├── test_schools.py
 │   ├── test_school_isolation.py
 │   ├── test_school_branding.py
@@ -567,6 +520,7 @@ mhike-school/
 │   ├── test_content_items.py
 │   ├── test_mcq_questions.py
 │   ├── test_assignments.py
+│   ├── test_assignment_submissions.py
 │   ├── test_quiz_attempts.py
 │   ├── test_classes.py
 │   ├── test_enrollments.py
@@ -584,16 +538,59 @@ mhike-school/
 │   └── seed_school.py
 │
 └── compliance/
+    ├── README.md
+    │
     ├── gdpr/
     │   ├── gdpr_policy_v1.md
     │   ├── data_retention_policy.md
-    │   └── data_erasure_workflow.md
+    │   ├── data_erasure_workflow.md
+    │   ├── lawful_basis.md
+    │   ├── data_inventory.md
+    │   ├── data_flow_diagram.md
+    │   └── dpa_template.md
+    │
     ├── policies/
     │   ├── privacy_policy.md
-    │   └── acceptable_use_policy.md
+    │   ├── acceptable_use_policy.md
+    │   ├── cookie_policy.md
+    │   ├── security_policy.md
+    │   └── incident_response_policy.md
+    │
     ├── templates/
     │   ├── dsar_request_template.md
-    │   └── breach_notification_template.md
+    │   ├── breach_notification_template.md
+    │   ├── user_deletion_request.md
+    │   ├── admin_access_request.md
+    │   └── audit_request_template.md
+    │
+    ├── audit/
+    │   ├── audit_log_schema.md
+    │   ├── audit_events.md
+    │   ├── retention_rules.md
+    │   └── sample_audit_entries.json
+    │
+    ├── security/
+    │   ├── authentication.md
+    │   ├── authorization_model.md
+    │   ├── encryption.md
+    │   ├── secrets_management.md
+    │   └── rate_limiting.md
+    │
+    ├── operations/
+    │   ├── data_backup_policy.md
+    │   ├── disaster_recovery.md
+    │   ├── uptime_sla.md
+    │   └── monitoring_and_alerting.md
+    │
+    ├── training/
+    │   ├── staff_data_handling_guidelines.md
+    │   └── admin_best_practices.md
+    │
+    ├── records/
+    │   ├── processing_activities.md
+    │   ├── consent_records.md
+    │   └── third_party_processors.md
+    │
     ├── mhike_gdpr_policy.docx
     └── mhike_gdpr_policy.pdf
 

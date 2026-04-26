@@ -10,3 +10,11 @@
 - request_erasure()
 - anonymise_user()
 
+## Verification
+
+Test coverage:
+- tests/test_gdpr_lifecycle.py
+
+Ensures:
+- Deactivated users are anonymised
+- Active users are preserved

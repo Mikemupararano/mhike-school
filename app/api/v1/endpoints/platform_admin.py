@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 def _ensure_platform_admin(current_user: User) -> None:
-    if current_user.role != UserRole.PLATFORM_ADMIN:
+    if not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform admin access required",
@@ -31,55 +31,77 @@ async def platform_admin_dashboard(
 ):
     _ensure_platform_admin(current_user)
 
+    total_schools = await db.scalar(select(func.count()).select_from(School)) or 0
     total_users = await db.scalar(select(func.count()).select_from(User)) or 0
-    total_students = (
-        await db.scalar(
-            select(func.count()).select_from(User).where(User.role == UserRole.STUDENT)
-        )
-        or 0
-    )
-    total_teachers = (
-        await db.scalar(
-            select(func.count()).select_from(User).where(User.role == UserRole.TEACHER)
-        )
-        or 0
-    )
-    total_admins = (
+    total_courses = await db.scalar(select(func.count()).select_from(Course)) or 0
+
+    active_users = (
         await db.scalar(
             select(func.count())
             .select_from(User)
-            .where(User.role.in_([UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN]))
+            .where(
+                User.is_active.is_(True),
+                User.status == UserStatus.ACTIVE,
+            )
         )
         or 0
     )
-    total_courses = await db.scalar(select(func.count()).select_from(Course)) or 0
-    published_courses = (
+
+    published_content = (
         await db.scalar(
             select(func.count()).select_from(Course).where(Course.published.is_(True))
         )
         or 0
     )
+
     total_enrollments = (
         await db.scalar(select(func.count()).select_from(Enrollment)) or 0
     )
 
-    draft_courses = max(0, total_courses - published_courses)
-    published_rate = (
-        round((published_courses / total_courses) * 100, 1) if total_courses else 0
-    )
+    recent_result = await db.execute(select(School).order_by(School.id.desc()).limit(5))
+    recent_schools = recent_result.scalars().all()
+
+    recent_school_items = []
+
+    for school in recent_schools:
+        users_count = (
+            await db.scalar(
+                select(func.count())
+                .select_from(User)
+                .where(User.school_id == school.id)
+            )
+            or 0
+        )
+
+        admin_result = await db.execute(
+            select(User)
+            .where(
+                User.school_id == school.id,
+                User.role == UserRole.SCHOOL_ADMIN,
+            )
+            .order_by(User.id.asc())
+            .limit(1)
+        )
+        admin = admin_result.scalar_one_or_none()
+
+        recent_school_items.append(
+            {
+                "id": school.id,
+                "name": school.name,
+                "admin_name": admin.full_name if admin else "Not assigned",
+                "users": int(users_count),
+                "status": "Active",
+            }
+        )
 
     return {
-        "scope": "platform",
-        "school_id": None,
-        "total_users": total_users,
-        "total_students": total_students,
-        "total_teachers": total_teachers,
-        "total_admins": total_admins,
-        "total_courses": total_courses,
-        "published_courses": published_courses,
-        "draft_courses": draft_courses,
-        "total_enrollments": total_enrollments,
-        "published_rate": published_rate,
+        "total_schools": int(total_schools),
+        "total_users": int(total_users),
+        "active_users": int(active_users),
+        "total_courses": int(total_courses),
+        "published_content": int(published_content),
+        "total_enrollments": int(total_enrollments),
+        "recent_schools": recent_school_items,
     }
 
 
@@ -112,6 +134,7 @@ async def create_school(
     existing = await db.execute(
         select(School).where(func.lower(School.name) == payload.name.strip().lower())
     )
+
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -120,8 +143,10 @@ async def create_school(
 
     school = School(name=payload.name.strip())
     db.add(school)
+
     await db.commit()
     await db.refresh(school)
+
     return school
 
 
@@ -139,6 +164,7 @@ async def create_school_admin(
     _ensure_platform_admin(current_user)
 
     school = await db.get(School, school_id)
+
     if not school:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -153,10 +179,11 @@ async def create_school_admin(
 
     existing = await db.execute(
         select(User).where(
-            User.email == payload.email,
+            User.email == payload.email.strip().lower(),
             User.school_id == school_id,
         )
     )
+
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -164,7 +191,7 @@ async def create_school_admin(
         )
 
     user = User(
-        email=payload.email,
+        email=payload.email.strip().lower(),
         hashed_password=hash_password(payload.password),
         role=UserRole.SCHOOL_ADMIN,
         full_name=payload.full_name,
@@ -174,6 +201,7 @@ async def create_school_admin(
     )
 
     db.add(user)
+
     await db.commit()
     await db.refresh(user)
 
@@ -182,6 +210,7 @@ async def create_school_admin(
         email=user.email,
         full_name=user.full_name,
         role=user.role,
+        roles=user.roles,
         school_id=user.school_id,
         school_name=school.name,
         is_active=user.is_active,
@@ -213,11 +242,12 @@ async def platform_admin_users(
     if role:
         try:
             role_enum = UserRole(role)
-        except ValueError as e:
+        except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid role filter",
-            ) from e
+            ) from exc
+
         filters.append(User.role == role_enum)
 
     if search:
@@ -247,6 +277,7 @@ async def platform_admin_users(
                 "full_name": user.full_name,
                 "email": user.email,
                 "role": user.role,
+                "roles": user.roles,
                 "school_id": user.school_id,
                 "school_name": user.school.name if user.school else None,
                 "is_active": user.is_active,
@@ -254,7 +285,7 @@ async def platform_admin_users(
             }
             for user in users
         ],
-        "total": total,
+        "total": int(total),
         "skip": skip,
         "limit": limit,
     }
@@ -301,17 +332,13 @@ async def platform_admin_courses(
                 "title": course.title,
                 "description": course.description,
                 "teacher_id": course.teacher_id,
-                "teacher_name": (
-                    course.teacher.full_name
-                    if getattr(course, "teacher", None)
-                    else None
-                ),
+                "teacher_name": course.teacher.full_name if course.teacher else None,
                 "school_id": course.school_id,
                 "published": course.published,
             }
             for course in courses
         ],
-        "total": total,
+        "total": int(total),
         "skip": skip,
         "limit": limit,
     }
@@ -327,28 +354,31 @@ async def platform_admin_update_user_role(
     _ensure_platform_admin(current_user)
 
     role = payload.get("role")
+
     try:
         role_enum = UserRole(role)
-    except ValueError as e:
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid role",
-        ) from e
+        ) from exc
 
     user = await db.get(User, user_id)
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
 
-    if user.role == UserRole.PLATFORM_ADMIN:
+    if user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot modify platform admin role",
         )
 
     user.role = role_enum
+
     await db.commit()
     await db.refresh(user)
 
@@ -357,6 +387,7 @@ async def platform_admin_update_user_role(
         "full_name": user.full_name,
         "email": user.email,
         "role": user.role,
+        "roles": user.roles,
         "school_id": user.school_id,
         "is_active": user.is_active,
         "status": user.status,
@@ -373,19 +404,21 @@ async def platform_admin_toggle_user_active(
     _ensure_platform_admin(current_user)
 
     user = await db.get(User, user_id)
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
 
-    if user.role == UserRole.PLATFORM_ADMIN:
+    if user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot deactivate platform admin",
         )
 
     user.is_active = bool(payload.get("is_active"))
+
     await db.commit()
     await db.refresh(user)
 
@@ -394,6 +427,7 @@ async def platform_admin_toggle_user_active(
         "full_name": user.full_name,
         "email": user.email,
         "role": user.role,
+        "roles": user.roles,
         "school_id": user.school_id,
         "is_active": user.is_active,
         "status": user.status,
@@ -410,6 +444,7 @@ async def platform_admin_set_course_published(
     _ensure_platform_admin(current_user)
 
     course = await db.get(Course, course_id)
+
     if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -417,6 +452,7 @@ async def platform_admin_set_course_published(
         )
 
     course.published = bool(payload.get("published"))
+
     await db.commit()
     await db.refresh(course)
 
@@ -439,6 +475,7 @@ async def platform_admin_delete_course(
     _ensure_platform_admin(current_user)
 
     course = await db.get(Course, course_id)
+
     if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

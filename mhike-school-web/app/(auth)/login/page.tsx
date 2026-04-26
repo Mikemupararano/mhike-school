@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+
 import { apiPost, saveToken } from "@/lib/api";
 import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
 import { UserRole } from "@/types/user";
@@ -23,7 +24,6 @@ function resolveRedirectPath(user: CurrentUser): string {
   if (roles.includes(UserRole.TEACHER)) return "/teacher";
   if (roles.includes(UserRole.STUDENT)) return "/student";
 
-  // Legacy fallback
   if (user.role === UserRole.PLATFORM_ADMIN) return "/admin";
   if (user.role === UserRole.SCHOOL_ADMIN) return "/school-admin";
   if (user.role === UserRole.TEACHER) return "/teacher";
@@ -31,10 +31,36 @@ function resolveRedirectPath(user: CurrentUser): string {
   return "/student";
 }
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "error" in err &&
+    typeof (err as { error?: { message?: unknown } }).error?.message === "string"
+  ) {
+    return (err as { error: { message: string } }).error.message;
+  }
+
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "message" in err &&
+    typeof (err as { message?: unknown }).message === "string"
+  ) {
+    return (err as { message: string }).message;
+  }
+
+  return "Login failed.";
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
-  const [mode, setMode] = useState<"school_user" | "platform_admin">("school_user");
+  const [mode, setMode] = useState<"school_user" | "platform_admin">(
+    "school_user",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [schoolId, setSchoolId] = useState("");
@@ -48,7 +74,7 @@ export default function LoginPage() {
       needsSchoolId
         ? "Students, teachers, and school admins sign in with their school ID."
         : "Platform administrators sign in without a school ID.",
-    [needsSchoolId]
+    [needsSchoolId],
   );
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -86,12 +112,13 @@ export default function LoginPage() {
           };
 
       const res = await apiPost<LoginResponse>("/auth/login", payload);
+
       saveToken(res.access_token);
 
       const user = await getCurrentUser(res.access_token);
       router.push(resolveRedirectPath(user));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed.");
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -474,7 +501,10 @@ export default function LoginPage() {
             <div className="mode-wrap">
               <button
                 type="button"
-                onClick={() => setMode("school_user")}
+                onClick={() => {
+                  setMode("school_user");
+                  setError("");
+                }}
                 className="mode-btn"
                 style={{
                   background:
@@ -496,7 +526,10 @@ export default function LoginPage() {
 
               <button
                 type="button"
-                onClick={() => setMode("platform_admin")}
+                onClick={() => {
+                  setMode("platform_admin");
+                  setError("");
+                }}
                 className="mode-btn"
                 style={{
                   background:
