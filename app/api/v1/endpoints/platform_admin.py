@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,12 +8,14 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_user
 from app.core.security import hash_password
 from app.db.session import get_db
+from app.models.audit_log import AuditLog
 from app.models.course import Course
 from app.models.enrollment import Enrollment
 from app.models.school import School
 from app.models.user import User, UserRole, UserStatus
 from app.schemas.school import SchoolCreate, SchoolOut
 from app.schemas.user import UserCreate, UserOut
+from app.services.audit_log_service import log_audit_event
 
 router = APIRouter()
 
@@ -105,6 +109,90 @@ async def platform_admin_dashboard(
     }
 
 
+@router.get("/audit-logs")
+async def platform_admin_audit_logs(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    school_id: int | None = Query(default=None),
+    action: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+    actor_id: int | None = Query(default=None),
+    target_user_id: int | None = Query(default=None),
+    date_from: datetime | None = Query(default=None),
+    date_to: datetime | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    _ensure_platform_admin(current_user)
+
+    query = (
+        select(AuditLog)
+        .options(
+            selectinload(AuditLog.actor),
+            selectinload(AuditLog.target_user),
+            selectinload(AuditLog.school),
+        )
+        .order_by(AuditLog.created_at.desc())
+    )
+
+    count_query = select(func.count()).select_from(AuditLog)
+
+    filters = []
+
+    if school_id is not None:
+        filters.append(AuditLog.school_id == school_id)
+
+    if action:
+        filters.append(AuditLog.action == action.strip())
+
+    if entity_type:
+        filters.append(AuditLog.entity_type == entity_type.strip())
+
+    if actor_id is not None:
+        filters.append(AuditLog.actor_id == actor_id)
+
+    if target_user_id is not None:
+        filters.append(AuditLog.target_user_id == target_user_id)
+
+    if date_from is not None:
+        filters.append(AuditLog.created_at >= date_from)
+
+    if date_to is not None:
+        filters.append(AuditLog.created_at <= date_to)
+
+    if filters:
+        query = query.where(*filters)
+        count_query = count_query.where(*filters)
+
+    total = await db.scalar(count_query) or 0
+
+    result = await db.execute(query.offset(skip).limit(limit))
+    logs = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": log.id,
+                "action": log.action,
+                "entity_type": log.entity_type,
+                "entity_id": log.entity_id,
+                "actor_id": log.actor_id,
+                "actor_email": log.actor.email if log.actor else None,
+                "target_user_id": log.target_user_id,
+                "target_user_email": log.target_user.email if log.target_user else None,
+                "school_id": log.school_id,
+                "school_name": log.school.name if log.school else None,
+                "metadata": log.metadata_json,
+                "created_at": log.created_at,
+            }
+            for log in logs
+        ],
+        "total": int(total),
+        "skip": skip,
+        "limit": limit,
+    }
+
+
 @router.get("/schools", response_model=list[SchoolOut])
 async def platform_admin_schools(
     db: AsyncSession = Depends(get_db),
@@ -131,8 +219,10 @@ async def create_school(
 ):
     _ensure_platform_admin(current_user)
 
+    school_name = payload.name.strip()
+
     existing = await db.execute(
-        select(School).where(func.lower(School.name) == payload.name.strip().lower())
+        select(School).where(func.lower(School.name) == school_name.lower())
     )
 
     if existing.scalar_one_or_none():
@@ -141,8 +231,20 @@ async def create_school(
             detail="A school with this name already exists",
         )
 
-    school = School(name=payload.name.strip())
+    school = School(name=school_name)
     db.add(school)
+    await db.flush()
+    await db.refresh(school)
+
+    await log_audit_event(
+        db,
+        actor=current_user,
+        action="school.created",
+        entity_type="school",
+        entity_id=school.id,
+        school_id=school.id,
+        metadata={"school_name": school.name},
+    )
 
     await db.commit()
     await db.refresh(school)
@@ -177,9 +279,11 @@ async def create_school_admin(
             detail="This endpoint can only create school_admin users",
         )
 
+    email = payload.email.strip().lower()
+
     existing = await db.execute(
         select(User).where(
-            User.email == payload.email.strip().lower(),
+            User.email == email,
             User.school_id == school_id,
         )
     )
@@ -191,7 +295,7 @@ async def create_school_admin(
         )
 
     user = User(
-        email=payload.email.strip().lower(),
+        email=email,
         hashed_password=hash_password(payload.password),
         role=UserRole.SCHOOL_ADMIN,
         full_name=payload.full_name,
@@ -201,6 +305,24 @@ async def create_school_admin(
     )
 
     db.add(user)
+    await db.flush()
+    await db.refresh(user)
+
+    await log_audit_event(
+        db,
+        actor=current_user,
+        action="user.created",
+        entity_type="user",
+        entity_id=user.id,
+        target_user_id=user.id,
+        school_id=school_id,
+        metadata={
+            "email": user.email,
+            "role": str(user.role),
+            "full_name": user.full_name,
+            "created_by_endpoint": "platform_admin_create_school_admin",
+        },
+    )
 
     await db.commit()
     await db.refresh(user)
@@ -377,7 +499,23 @@ async def platform_admin_update_user_role(
             detail="Cannot modify platform admin role",
         )
 
+    previous_role = user.role
     user.role = role_enum
+
+    await log_audit_event(
+        db,
+        actor=current_user,
+        action="user.role_updated",
+        entity_type="user",
+        entity_id=user.id,
+        target_user_id=user.id,
+        school_id=user.school_id,
+        metadata={
+            "email": user.email,
+            "previous_role": str(previous_role),
+            "new_role": str(role_enum),
+        },
+    )
 
     await db.commit()
     await db.refresh(user)
@@ -417,7 +555,25 @@ async def platform_admin_toggle_user_active(
             detail="Cannot deactivate platform admin",
         )
 
-    user.is_active = bool(payload.get("is_active"))
+    previous_is_active = user.is_active
+    new_is_active = bool(payload.get("is_active"))
+
+    user.is_active = new_is_active
+
+    await log_audit_event(
+        db,
+        actor=current_user,
+        action="user.active_updated",
+        entity_type="user",
+        entity_id=user.id,
+        target_user_id=user.id,
+        school_id=user.school_id,
+        metadata={
+            "email": user.email,
+            "previous_is_active": previous_is_active,
+            "new_is_active": new_is_active,
+        },
+    )
 
     await db.commit()
     await db.refresh(user)
@@ -451,7 +607,24 @@ async def platform_admin_set_course_published(
             detail="Course not found",
         )
 
-    course.published = bool(payload.get("published"))
+    previous_published = course.published
+    new_published = bool(payload.get("published"))
+
+    course.published = new_published
+
+    await log_audit_event(
+        db,
+        actor=current_user,
+        action="course.published_updated",
+        entity_type="course",
+        entity_id=course.id,
+        school_id=course.school_id,
+        metadata={
+            "title": course.title,
+            "previous_published": previous_published,
+            "new_published": new_published,
+        },
+    )
 
     await db.commit()
     await db.refresh(course)
@@ -482,7 +655,22 @@ async def platform_admin_delete_course(
             detail="Course not found",
         )
 
+    course_id_value = course.id
+    course_title = course.title
+    course_school_id = course.school_id
+
     await db.delete(course)
+
+    await log_audit_event(
+        db,
+        actor=current_user,
+        action="course.deleted",
+        entity_type="course",
+        entity_id=course_id_value,
+        school_id=course_school_id,
+        metadata={"title": course_title},
+    )
+
     await db.commit()
 
     return {"success": True}

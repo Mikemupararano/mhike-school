@@ -1,5 +1,6 @@
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
+from app.models.audit_log import AuditLog  # ✅ ADD THIS
 from app.models.class_group import ClassGroup
 from app.models.course import Course
 from app.models.enrollment import Enrollment
@@ -15,6 +16,7 @@ from app.models.user_role import UserRoleAssignment
 __all__ = [
     "Assignment",
     "AssignmentSubmission",
+    "AuditLog",  # ✅ ADD THIS
     "ClassGroup",
     "Course",
     "Enrollment",
