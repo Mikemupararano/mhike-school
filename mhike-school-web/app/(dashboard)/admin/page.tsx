@@ -1,55 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { apiGet } from "@/lib/api";
-
-type RecentSchool = {
-    id: number;
-    name: string;
-    admin_name: string;
-    users: number;
-    status: string;
-};
-
-type PlatformDashboard = {
-    total_schools: number;
-    total_users: number;
-    active_users: number;
-    total_courses: number;
-    published_content: number;
-    total_enrollments: number;
-    recent_schools: RecentSchool[];
-};
+import { useAdminDashboard } from "@/lib/hooks/useAdminDashboard";
 
 const fallbackChartData = [42, 64, 78, 56, 48, 70, 92];
 
 export default function AdminPage() {
-    const [dashboard, setDashboard] = useState<PlatformDashboard | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-
-    async function loadDashboard() {
-        try {
-            setError(null);
-            setIsLoading(true);
-
-            const data = await apiGet<PlatformDashboard>("/admin/dashboard");
-            setDashboard(data);
-        } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to load platform dashboard",
-            );
-        } finally {
-            setIsLoading(false);
-        }
-    }
-
-    useEffect(() => {
-        void loadDashboard();
-    }, []);
+    const { data: dashboard, loading, error, refresh } = useAdminDashboard();
 
     const metricCards = useMemo(
         () => [
@@ -101,16 +59,21 @@ export default function AdminPage() {
                 </div>
 
                 <button
-                    onClick={() => void loadDashboard()}
+                    onClick={() => void refresh()}
                     className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-base font-bold text-slate-900 shadow-sm hover:bg-slate-50"
                 >
                     Refresh
                 </button>
             </div>
 
-            {isLoading && (
-                <div className="mt-10 rounded-3xl border border-slate-200 bg-white p-7 text-base font-bold text-slate-700 shadow-sm">
-                    Loading dashboard...
+            {loading && (
+                <div className="mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+                    {[1, 2, 3, 4].map((item) => (
+                        <div
+                            key={item}
+                            className="h-36 animate-pulse rounded-3xl border border-slate-200 bg-white shadow-sm"
+                        />
+                    ))}
                 </div>
             )}
 
@@ -120,7 +83,7 @@ export default function AdminPage() {
                 </div>
             )}
 
-            {!isLoading && !error && dashboard && (
+            {!loading && !error && dashboard && (
                 <>
                     <div className="mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
                         {metricCards.map((card) => (
@@ -148,7 +111,7 @@ export default function AdminPage() {
                                     User Registrations
                                 </h2>
                                 <span className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700">
-                                    Last 7 days
+                                    Placeholder
                                 </span>
                             </div>
 
@@ -184,18 +147,10 @@ export default function AdminPage() {
                                 <table className="w-full text-left text-sm">
                                     <thead className="bg-slate-50 text-slate-500">
                                         <tr>
-                                            <th className="px-4 py-3 font-black">
-                                                School
-                                            </th>
-                                            <th className="px-4 py-3 font-black">
-                                                Admin
-                                            </th>
-                                            <th className="px-4 py-3 font-black">
-                                                Users
-                                            </th>
-                                            <th className="px-4 py-3 font-black">
-                                                Status
-                                            </th>
+                                            <th className="px-4 py-3 font-black">School</th>
+                                            <th className="px-4 py-3 font-black">Admin</th>
+                                            <th className="px-4 py-3 font-black">Users</th>
+                                            <th className="px-4 py-3 font-black">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -246,8 +201,14 @@ export default function AdminPage() {
                             <div className="mt-6 space-y-5">
                                 {[
                                     ["Active users", dashboard.active_users.toLocaleString()],
-                                    ["Total enrollments", dashboard.total_enrollments.toLocaleString()],
-                                    ["Published content", dashboard.published_content.toLocaleString()],
+                                    [
+                                        "Total enrollments",
+                                        dashboard.total_enrollments.toLocaleString(),
+                                    ],
+                                    [
+                                        "Published content",
+                                        dashboard.published_content.toLocaleString(),
+                                    ],
                                 ].map(([label, value]) => (
                                     <div
                                         key={label}

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
@@ -62,6 +62,34 @@ async def platform_admin_dashboard(
         await db.scalar(select(func.count()).select_from(Enrollment)) or 0
     )
 
+    today = datetime.now(timezone.utc).date()
+    registration_chart = []
+
+    for days_ago in range(6, -1, -1):
+        day = today - timedelta(days=days_ago)
+        start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+
+        count = (
+            await db.scalar(
+                select(func.count())
+                .select_from(User)
+                .where(
+                    User.created_at >= start,
+                    User.created_at < end,
+                )
+            )
+            or 0
+        )
+
+        registration_chart.append(
+            {
+                "label": day.strftime("%a"),
+                "date": day.isoformat(),
+                "count": int(count),
+            }
+        )
+
     recent_result = await db.execute(select(School).order_by(School.id.desc()).limit(5))
     recent_schools = recent_result.scalars().all()
 
@@ -106,6 +134,7 @@ async def platform_admin_dashboard(
         "published_content": int(published_content),
         "total_enrollments": int(total_enrollments),
         "recent_schools": recent_school_items,
+        "user_registrations": registration_chart,
     }
 
 
@@ -136,7 +165,6 @@ async def platform_admin_audit_logs(
     )
 
     count_query = select(func.count()).select_from(AuditLog)
-
     filters = []
 
     if school_id is not None:
@@ -165,7 +193,6 @@ async def platform_admin_audit_logs(
         count_query = count_query.where(*filters)
 
     total = await db.scalar(count_query) or 0
-
     result = await db.execute(query.offset(skip).limit(limit))
     logs = result.scalars().all()
 
@@ -355,7 +382,6 @@ async def platform_admin_users(
 
     query = select(User).options(selectinload(User.school))
     count_query = select(func.count()).select_from(User)
-
     filters = []
 
     if school_id is not None:
@@ -426,7 +452,6 @@ async def platform_admin_courses(
 
     query = select(Course).options(selectinload(Course.teacher))
     count_query = select(func.count()).select_from(Course)
-
     filters = []
 
     if school_id is not None:
