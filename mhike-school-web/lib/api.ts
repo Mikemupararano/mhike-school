@@ -1,5 +1,7 @@
 export const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
+    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ||
+    "http://localhost:8000/api/v1";
 
 const TOKEN_KEY = "mhike_token";
 
@@ -51,9 +53,7 @@ async function handle<T>(res: Response): Promise<T> {
             } else {
                 message = await res.text();
             }
-        } catch {
-            // keep fallback message
-        }
+        } catch { }
 
         if (res.status === 401 || res.status === 403) {
             clearToken();
@@ -75,66 +75,71 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string, token?: string): Promise<T> {
-    const res = await fetch(buildUrl(path), {
-        method: "GET",
-        headers: buildHeaders(token, false),
-        cache: "no-store",
-    });
-
-    return handle<T>(res);
+    return handle<T>(
+        await fetch(buildUrl(path), {
+            method: "GET",
+            headers: buildHeaders(token, false),
+            cache: "no-store",
+        }),
+    );
 }
 
 export async function apiPost<T>(
     path: string,
-    body: unknown,
-    token?: string
+    body?: unknown,
+    token?: string,
 ): Promise<T> {
-    const res = await fetch(buildUrl(path), {
-        method: "POST",
-        headers: buildHeaders(token, true),
-        body: JSON.stringify(body),
-        cache: "no-store",
-    });
-
-    return handle<T>(res);
+    return handle<T>(
+        await fetch(buildUrl(path), {
+            method: "POST",
+            headers: buildHeaders(token, body !== undefined),
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+            cache: "no-store",
+        }),
+    );
 }
 
 export async function apiPut<T>(
     path: string,
     body: unknown,
-    token?: string
+    token?: string,
 ): Promise<T> {
-    const res = await fetch(buildUrl(path), {
-        method: "PUT",
-        headers: buildHeaders(token, true),
-        body: JSON.stringify(body),
-        cache: "no-store",
-    });
-
-    return handle<T>(res);
+    return handle<T>(
+        await fetch(buildUrl(path), {
+            method: "PUT",
+            headers: buildHeaders(token, true),
+            body: JSON.stringify(body),
+            cache: "no-store",
+        }),
+    );
 }
 
 export async function apiPatch<T>(
     path: string,
-    body: unknown,
-    token?: string
+    body?: unknown,
+    token?: string,
 ): Promise<T> {
-    const res = await fetch(buildUrl(path), {
-        method: "PATCH",
-        headers: buildHeaders(token, true),
-        body: JSON.stringify(body),
-        cache: "no-store",
-    });
-
-    return handle<T>(res);
+    return handle<T>(
+        await fetch(buildUrl(path), {
+            method: "PATCH",
+            headers: buildHeaders(token, body !== undefined),
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+            cache: "no-store",
+        }),
+    );
 }
 
-export async function apiDelete<T>(path: string, token?: string): Promise<T> {
-    const res = await fetch(buildUrl(path), {
-        method: "DELETE",
-        headers: buildHeaders(token, false),
-        cache: "no-store",
-    });
-
-    return handle<T>(res);
+export async function apiDelete<T>(
+    path: string,
+    body?: unknown,
+    token?: string,
+): Promise<T> {
+    return handle<T>(
+        await fetch(buildUrl(path), {
+            method: "DELETE",
+            headers: buildHeaders(token, body !== undefined),
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+            cache: "no-store",
+        }),
+    );
 }

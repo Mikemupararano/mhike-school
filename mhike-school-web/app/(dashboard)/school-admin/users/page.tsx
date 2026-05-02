@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
 import { UserRole, UserStatus, type User } from "@/types/user";
-import { getSchoolUsers, deactivateUser } from "@/lib/services/school-admin";
+import { useSchoolUsers } from "@/hooks/useSchoolUsers";
 
 export default function SchoolAdminUsersPage() {
     return (
@@ -16,28 +16,15 @@ export default function SchoolAdminUsersPage() {
 }
 
 function SchoolAdminUsersContent() {
-    const [users, setUsers] = useState<User[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
+    const {
+        users,
+        isLoading,
+        error,
+        actionLoadingId,
+        deactivateUser,
+    } = useSchoolUsers();
+
     const [search, setSearch] = useState("");
-
-    async function loadUsers() {
-        try {
-            setError(null);
-            setIsLoading(true);
-            const data = await getSchoolUsers();
-            setUsers(data);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to load users");
-        } finally {
-            setIsLoading(false);
-        }
-    }
-
-    useEffect(() => {
-        void loadUsers();
-    }, []);
 
     const filteredUsers = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -45,31 +32,29 @@ function SchoolAdminUsersContent() {
 
         return users.filter((user) => {
             const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
+            const fullName = getDisplayName(user);
 
             return (
-                user.full_name?.toLowerCase().includes(query) ||
+                fullName.toLowerCase().includes(query) ||
+                user.email?.toLowerCase().includes(query) ||
                 user.school_name?.toLowerCase().includes(query) ||
                 roles.some((role) => role.toLowerCase().includes(query)) ||
-                user.status.toLowerCase().includes(query)
+                user.status?.toLowerCase().includes(query)
             );
         });
     }, [users, search]);
 
     async function handleDeactivate(user: User) {
         const confirmed = confirm(
-            `Are you sure you want to deactivate ${user.full_name || "this user"}?`,
+            `Are you sure you want to deactivate ${getDisplayName(user)}?`,
         );
 
         if (!confirmed) return;
 
         try {
-            setActionLoadingId(user.id);
             await deactivateUser(user.id);
-            await loadUsers();
         } catch (err) {
             alert(err instanceof Error ? err.message : "Failed to deactivate user");
-        } finally {
-            setActionLoadingId(null);
         }
     }
 
@@ -97,7 +82,7 @@ function SchoolAdminUsersContent() {
                 <input
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search by name, school, role, or status..."
+                    placeholder="Search by name, email, school, role, or status..."
                     className="w-full rounded-2xl border border-slate-300 bg-white px-5 py-4 text-base font-medium text-slate-900 outline-none placeholder:text-slate-500 focus:border-slate-500"
                 />
             </div>
@@ -146,7 +131,21 @@ function getInitials(name?: string | null) {
 }
 
 function formatRole(role: string) {
-    return role.replaceAll("_", " ");
+    return role.replaceAll("_", " ").toLowerCase();
+}
+
+function isUserActive(user: User) {
+    if (typeof user.is_active === "boolean") return user.is_active;
+    return user.status === UserStatus.ACTIVE;
+}
+
+function getDisplayName(user: User) {
+    return (
+        user.full_name ||
+        `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() ||
+        user.email ||
+        "Unnamed user"
+    );
 }
 
 function UserCard({
@@ -159,7 +158,13 @@ function UserCard({
     onDeactivate: (user: User) => void;
 }) {
     const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
-    const displayName = user.full_name || "Unnamed user";
+    const displayName = getDisplayName(user);
+    const active = isUserActive(user);
+    const statusLabel = user.status
+        ? user.status.replaceAll("_", " ")
+        : active
+            ? "active"
+            : "inactive";
 
     return (
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -175,6 +180,10 @@ function UserCard({
                         </div>
 
                         <div className="mt-1 text-base font-semibold text-slate-700">
+                            {user.email || "No email"}
+                        </div>
+
+                        <div className="mt-1 text-sm font-medium text-slate-500">
                             {user.school_name || "School not assigned"}
                         </div>
 
@@ -189,12 +198,12 @@ function UserCard({
                             ))}
 
                             <span
-                                className={`rounded-full px-3 py-1.5 text-sm font-bold capitalize ${user.status === UserStatus.ACTIVE
+                                className={`rounded-full px-3 py-1.5 text-sm font-bold capitalize ${active
                                     ? "bg-green-100 text-green-800"
                                     : "bg-slate-200 text-slate-800"
                                     }`}
                             >
-                                {user.status.replaceAll("_", " ")}
+                                {statusLabel}
                             </span>
                         </div>
                     </div>
@@ -208,8 +217,9 @@ function UserCard({
                         View
                     </Link>
 
-                    {user.status === UserStatus.ACTIVE && (
+                    {active && (
                         <button
+                            type="button"
                             onClick={() => onDeactivate(user)}
                             disabled={isActionLoading}
                             className="rounded-xl bg-red-500 px-4 py-2.5 text-base font-bold text-white hover:bg-red-600 disabled:opacity-50"

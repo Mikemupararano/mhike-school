@@ -1,275 +1,149 @@
-'use client'
+"use client";
 
-import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 
-import RoleGate from '@/components/auth/RoleGate'
-import { UserRole, type User } from '@/types/user'
+import RoleGate from "@/components/auth/RoleGate";
+import AssignTeacherPanel from "@/components/school-admin/components/AssignTeacherPanel";
+import ClassEnrollmentPanel from "@/components/school-admin/components/ClassEnrollmentPanel";
+import { UserRole, type User } from "@/types/user";
+import type { ClassGroup } from "@/types/class";
 
 import {
+  getClass,
   getClassStudents,
-  assignStudentToClass,
-  removeStudentFromClass,
-  getClassById,
   assignTeacher,
-  type ClassGroup,
-} from '@/lib/services/classes'
+  enrollStudent,
+  removeStudent,
+} from "@/lib/services/classes";
 
-import { getSchoolUsers } from '@/lib/services/school-admin'
+import { listSchoolUsers } from "@/lib/services/school-admin";
 
 export default function ClassPage() {
   return (
     <RoleGate allowedRoles={[UserRole.SCHOOL_ADMIN, UserRole.PLATFORM_ADMIN]}>
       <ClassContent />
     </RoleGate>
-  )
+  );
 }
 
 function ClassContent() {
-  const params = useParams()
-  const classId = Number(params.classId)
+  const params = useParams();
+  const classId = Number(params.classId);
 
-  const [classGroup, setClassGroup] = useState<ClassGroup | null>(null)
-  const [students, setStudents] = useState<User[]>([])
-  const [allStudents, setAllStudents] = useState<User[]>([])
-  const [teachers, setTeachers] = useState<User[]>([])
+  const [classGroup, setClassGroup] = useState<ClassGroup | null>(null);
+  const [students, setStudents] = useState<User[]>([]);
+  const [schoolUsers, setSchoolUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const [selectedUser, setSelectedUser] = useState<number | null>(null)
-  const [selectedTeacher, setSelectedTeacher] = useState<number | null>(null)
+  const teachers = useMemo(() => {
+    return schoolUsers.filter((user) => {
+      const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
+      return roles.includes(UserRole.TEACHER);
+    });
+  }, [schoolUsers]);
 
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [teacherSubmitting, setTeacherSubmitting] = useState(false)
-  const [removingId, setRemovingId] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const allStudents = useMemo(() => {
+    return schoolUsers.filter((user) => {
+      const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
+      return roles.includes(UserRole.STUDENT);
+    });
+  }, [schoolUsers]);
 
-  const assignedStudentIds = useMemo(
-    () => new Set(students.map((s) => s.id)),
-    [students]
-  )
-
-  const availableStudents = useMemo(
-    () => allStudents.filter((u) => !assignedStudentIds.has(u.id)),
-    [allStudents, assignedStudentIds]
-  )
+  const currentTeacher = teachers.find(
+    (teacher) => teacher.id === classGroup?.teacher_id,
+  );
 
   async function loadData() {
-    setLoading(true)
-    setError(null)
-
     try {
+      setLoading(true);
+      setError(null);
+
       const [classData, studentsData, usersData] = await Promise.all([
-        getClassById(classId),
+        getClass(classId),
         getClassStudents(classId),
-        getSchoolUsers(),
-      ])
+        listSchoolUsers(),
+      ]);
 
-      const teacherUsers = usersData.filter((u) => u.role === UserRole.TEACHER)
-      const studentUsers = usersData.filter((u) => u.role === UserRole.STUDENT)
-
-      setClassGroup(classData)
-      setStudents(studentsData)
-      setAllStudents(studentUsers)
-      setTeachers(teacherUsers)
-      setSelectedTeacher(classData.teacher_id ?? null)
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load data'
-      setError(message)
+      setClassGroup(classData);
+      setStudents(studentsData);
+      setSchoolUsers(usersData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load class data");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    if (classId) {
-      void loadData()
+    if (Number.isFinite(classId)) {
+      void loadData();
     }
-  }, [classId])
+  }, [classId]);
 
-  async function handleAssignStudent() {
-    if (!selectedUser) return
-
-    try {
-      setSubmitting(true)
-      setError(null)
-
-      await assignStudentToClass({
-        user_id: selectedUser,
-        class_id: classId,
-      })
-
-      setSelectedUser(null)
-      await loadData()
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to assign student'
-      setError(message)
-    } finally {
-      setSubmitting(false)
-    }
+  async function handleAssignTeacher(teacherId: number) {
+    await assignTeacher(classId, teacherId);
+    await loadData();
   }
 
-  async function handleRemoveStudent(userId: number) {
-    try {
-      setRemovingId(userId)
-      setError(null)
-
-      await removeStudentFromClass({
-        user_id: userId,
-        class_id: classId,
-      })
-
-      await loadData()
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to remove student'
-      setError(message)
-    } finally {
-      setRemovingId(null)
-    }
+  async function handleEnrollStudent(studentId: number) {
+    await enrollStudent(classId, studentId);
+    await loadData();
   }
 
-  async function handleAssignTeacher() {
-    if (!selectedTeacher) return
-
-    try {
-      setTeacherSubmitting(true)
-      setError(null)
-
-      await assignTeacher(classId, selectedTeacher)
-      await loadData()
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to assign teacher'
-      setError(message)
-    } finally {
-      setTeacherSubmitting(false)
-    }
+  async function handleRemoveStudent(studentId: number) {
+    await removeStudent(classId, studentId);
+    await loadData();
   }
 
-  const currentTeacher = teachers.find((t) => t.id === classGroup?.teacher_id)
+  if (loading && !classGroup) {
+    return <div className="p-6 text-sm text-slate-600">Loading class...</div>;
+  }
 
   return (
-    <div className="max-w-4xl p-6">
+    <div className="max-w-5xl p-6">
       <div className="mb-6">
         <h1 className="text-3xl font-bold">
-          {classGroup ? classGroup.name : 'Class'}
+          {classGroup ? classGroup.name : "Class"}
         </h1>
 
         <p className="mt-2 text-gray-500">
-          Manage teacher assignment and students in this class.
+          Manage teacher assignment and student enrolment for this class.
         </p>
-      </div>
 
-      <div className="grid gap-6">
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-lg font-semibold">Assigned teacher</h2>
-
-          <p className="mb-3 text-sm text-gray-500">
-            Current teacher:{' '}
-            <span className="font-medium text-gray-900">
-              {currentTeacher?.full_name || currentTeacher?.email || 'Not assigned'}
+        {currentTeacher && (
+          <p className="mt-2 text-sm text-slate-600">
+            Current teacher:{" "}
+            <span className="font-semibold text-slate-900">
+              {currentTeacher.full_name ||
+                `${currentTeacher.first_name ?? ""} ${currentTeacher.last_name ?? ""}`.trim() ||
+                currentTeacher.email}
             </span>
           </p>
-
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <select
-              value={selectedTeacher ?? ''}
-              onChange={(e) =>
-                setSelectedTeacher(e.target.value ? Number(e.target.value) : null)
-              }
-              className="w-full rounded border px-3 py-2"
-              disabled={loading || teacherSubmitting}
-            >
-              <option value="">Select teacher</option>
-              {teachers.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.full_name || t.email}
-                </option>
-              ))}
-            </select>
-
-            <button
-              onClick={handleAssignTeacher}
-              disabled={!selectedTeacher || teacherSubmitting || loading}
-              className="rounded bg-emerald-600 px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {teacherSubmitting ? 'Assigning...' : 'Assign Teacher'}
-            </button>
-          </div>
-        </div>
-
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-lg font-semibold">Add student</h2>
-
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <select
-              value={selectedUser ?? ''}
-              onChange={(e) =>
-                setSelectedUser(e.target.value ? Number(e.target.value) : null)
-              }
-              className="w-full rounded border px-3 py-2"
-              disabled={loading || submitting}
-            >
-              <option value="">Select student</option>
-              {availableStudents.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name || u.email}
-                </option>
-              ))}
-            </select>
-
-            <button
-              onClick={handleAssignStudent}
-              disabled={!selectedUser || submitting || loading}
-              className="rounded bg-blue-600 px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {submitting ? 'Adding...' : 'Add Student'}
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <p className="text-sm text-red-500">{error}</p>
         )}
+      </div>
 
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold">Students</h2>
-
-          {loading ? (
-            <p>Loading students...</p>
-          ) : students.length === 0 ? (
-            <p>No students in this class yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {students.map((s) => (
-                <li
-                  key={s.id}
-                  className="flex items-center justify-between rounded border p-3"
-                >
-                  <div>
-                    <div className="font-semibold">
-                      {s.full_name || 'No name'}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {s.email}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleRemoveStudent(s.id)}
-                    disabled={removingId === s.id}
-                    className="text-sm text-red-500 disabled:opacity-50"
-                  >
-                    {removingId === s.id ? 'Removing...' : 'Remove'}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+      {error && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
         </div>
+      )}
+
+      <div className="grid gap-6">
+        <AssignTeacherPanel
+          teachers={teachers}
+          currentTeacherId={classGroup?.teacher_id}
+          onAssign={handleAssignTeacher}
+        />
+
+        <ClassEnrollmentPanel
+          students={students}
+          allStudents={allStudents}
+          onEnroll={handleEnrollStudent}
+          onRemove={handleRemoveStudent}
+        />
       </div>
     </div>
-  )
+  );
 }

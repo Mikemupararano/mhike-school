@@ -2,15 +2,21 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import DashboardShell from "@/components/layout/DashboardShell";
+import StudentSubmissionModal from "@/components/assignments/StudentSubmissionModal";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
-import {
-    AssignmentOut,
-    AssignmentSubmissionOut,
-    getMyStudentAssignments,
-    getMySubmission,
-    submitAssignment,
-} from "@/lib/assignmentApi";
+import { useStudentAssignments } from "@/hooks/useStudentAssignments";
+import { UserRole } from "@/types/user";
+
+type AuthMeOut = {
+    id: number;
+    full_name?: string | null;
+    email: string;
+    role?: UserRole | string | null;
+    roles?: UserRole[];
+    school_id?: number | null;
+    school_name?: string | null;
+};
 
 function cardStyle(): React.CSSProperties {
     return {
@@ -22,60 +28,53 @@ function cardStyle(): React.CSSProperties {
     };
 }
 
-type AuthMeOut = {
-    id: number;
-    full_name?: string | null;
-    email: string;
-    role: "student" | "teacher" | "admin" | "platform_admin" | string;
-    school_id?: number | null;
-    school_name?: string | null;
-};
+function hasStudentRole(user: AuthMeOut | null): boolean {
+    if (!user) return false;
+    if (user.roles?.includes(UserRole.STUDENT)) return true;
+    return user.role === UserRole.STUDENT || user.role === "student";
+}
 
 export default function StudentAssignmentsPage() {
     const router = useRouter();
     const { user, loading: authLoading, refreshUser } = useAuth();
 
+    const {
+        assignments,
+        submissions,
+        isLoading,
+        busyId,
+        error,
+        refresh,
+        submitStudentAssignment,
+    } = useStudentAssignments();
+
     const [me, setMe] = useState<AuthMeOut | null>(null);
-    const [assignments, setAssignments] = useState<AssignmentOut[]>([]);
-    const [submissions, setSubmissions] = useState<Record<number, AssignmentSubmissionOut | null>>({});
-    const [loading, setLoading] = useState(true);
-    const [busyId, setBusyId] = useState<number | null>(null);
-    const [error, setError] = useState("");
+    const [authError, setAuthError] = useState("");
+    const [selectedAssignmentId, setSelectedAssignmentId] = useState<number | null>(
+        null,
+    );
+
+    const selectedAssignment =
+        assignments.find((assignment) => assignment.id === selectedAssignmentId) ??
+        null;
 
     const displayName = useMemo(() => {
         return me?.full_name?.trim() || user?.full_name?.trim() || "Student";
     }, [me, user]);
 
     const displaySchoolName = useMemo(() => {
-        return me?.school_name?.trim() || user?.school_name?.trim() || "Your School";
-    }, [me, user]);
-
-    async function loadData() {
-        const assignmentData = await getMyStudentAssignments();
-        setAssignments(assignmentData);
-
-        const entries = await Promise.all(
-            assignmentData.map(async (assignment) => {
-                try {
-                    const submission = await getMySubmission(assignment.id);
-                    return [assignment.id, submission] as const;
-                } catch {
-                    return [assignment.id, null] as const;
-                }
-            })
+        return (
+            me?.school_name?.trim() || user?.school_name?.trim() || "Your School"
         );
-
-        setSubmissions(Object.fromEntries(entries));
-    }
+    }, [me, user]);
 
     useEffect(() => {
         async function init() {
             if (authLoading) return;
 
-            setLoading(true);
-            setError("");
-
             try {
+                setAuthError("");
+
                 const currentUser = await refreshUser();
 
                 if (!currentUser) {
@@ -83,45 +82,38 @@ export default function StudentAssignmentsPage() {
                     return;
                 }
 
-                if (currentUser.role !== "student") {
+                if (!hasStudentRole(currentUser as AuthMeOut)) {
                     router.replace("/dashboard");
                     return;
                 }
 
                 setMe(currentUser as AuthMeOut);
-                await loadData();
-            } catch (e: unknown) {
-                setError(e instanceof Error ? e.message : "Failed to load assignments");
-            } finally {
-                setLoading(false);
+            } catch (err) {
+                setAuthError(
+                    err instanceof Error ? err.message : "Failed to verify student access",
+                );
             }
         }
 
         void init();
     }, [authLoading, refreshUser, router]);
 
-    async function onSubmitAssignment(assignmentId: number) {
-        const submissionText = window.prompt("Enter your submission text");
-        if (submissionText === null) return;
+    async function handleSubmitAssignment(
+        submissionText: string,
+        attachmentUrl?: string,
+    ) {
+        if (!selectedAssignmentId) return;
 
-        const attachmentUrl = window.prompt("Attachment URL (optional)") ?? "";
+        await submitStudentAssignment(
+            selectedAssignmentId,
+            submissionText,
+            attachmentUrl,
+        );
 
-        try {
-            setBusyId(assignmentId);
-            setError("");
-            await submitAssignment(assignmentId, {
-                submission_text: submissionText,
-                attachment_url: attachmentUrl || null,
-            });
-            await loadData();
-        } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : "Failed to submit assignment");
-        } finally {
-            setBusyId(null);
-        }
+        setSelectedAssignmentId(null);
     }
 
-    if (authLoading || loading) {
+    if (authLoading || isLoading) {
         return (
             <main style={{ maxWidth: 1100, margin: "0 auto", padding: 24 }}>
                 Loading...
@@ -133,14 +125,7 @@ export default function StudentAssignmentsPage() {
         <DashboardShell
             userName={displayName}
             schoolName={displaySchoolName}
-            onRefresh={() => void loadData()}
-            sidebarItems={[
-                { label: "Dashboard", href: "/dashboard", icon: "/icons/dashboard.svg" },
-                { label: "Courses", href: "/courses", icon: "/icons/book.svg" },
-                { label: "Assignments", href: "/student/assignments", icon: "/icons/quiz.svg" },
-                { label: "Notifications", href: "/notifications", icon: "/icons/bell.svg" },
-                { label: "Profile", href: "/profile", icon: "/icons/user.svg" },
-            ]}
+            onRefresh={() => void refresh()}
         >
             <div style={{ display: "grid", gap: 18 }}>
                 <section
@@ -160,6 +145,7 @@ export default function StudentAssignmentsPage() {
                         <div style={{ fontSize: 18, opacity: 0.9 }}>
                             {displaySchoolName} · Student assignments
                         </div>
+
                         <h1
                             style={{
                                 fontSize: 44,
@@ -194,7 +180,7 @@ export default function StudentAssignmentsPage() {
                     </div>
                 </section>
 
-                {error && (
+                {(authError || error) && (
                     <div
                         style={{
                             padding: 14,
@@ -204,7 +190,7 @@ export default function StudentAssignmentsPage() {
                             border: "1px solid #FECACA",
                         }}
                     >
-                        {error}
+                        {authError || error}
                     </div>
                 )}
 
@@ -214,7 +200,9 @@ export default function StudentAssignmentsPage() {
                     </h2>
 
                     {assignments.length === 0 ? (
-                        <div style={{ color: "#6B7280" }}>No assignments available yet.</div>
+                        <div style={{ color: "#6B7280" }}>
+                            No assignments available yet.
+                        </div>
                     ) : (
                         <div style={{ display: "grid", gap: 12 }}>
                             {assignments.map((assignment) => {
@@ -240,20 +228,26 @@ export default function StudentAssignmentsPage() {
                                             </div>
                                         )}
 
-                                        <div style={{ marginTop: 8, color: "#64748B", fontSize: 14 }}>
+                                        <div
+                                            style={{ marginTop: 8, color: "#64748B", fontSize: 14 }}
+                                        >
                                             Due:{" "}
                                             {assignment.due_date
                                                 ? new Date(assignment.due_date).toLocaleString()
                                                 : "No due date"}
                                         </div>
 
-                                        <div style={{ marginTop: 4, color: "#64748B", fontSize: 14 }}>
+                                        <div
+                                            style={{ marginTop: 4, color: "#64748B", fontSize: 14 }}
+                                        >
                                             Max score: {assignment.max_score}
                                         </div>
 
                                         <div style={{ marginTop: 10, fontSize: 14 }}>
                                             Status:{" "}
-                                            <strong>{submission ? submission.status : "Not submitted"}</strong>
+                                            <strong>
+                                                {submission ? submission.status : "Not submitted"}
+                                            </strong>
                                         </div>
 
                                         {submission?.score !== null &&
@@ -270,7 +264,8 @@ export default function StudentAssignmentsPage() {
                                         )}
 
                                         <button
-                                            onClick={() => void onSubmitAssignment(assignment.id)}
+                                            type="button"
+                                            onClick={() => setSelectedAssignmentId(assignment.id)}
                                             disabled={busyId === assignment.id}
                                             style={{
                                                 marginTop: 12,
@@ -280,7 +275,9 @@ export default function StudentAssignmentsPage() {
                                                 background: "#2563EB",
                                                 color: "#FFFFFF",
                                                 fontWeight: 800,
-                                                cursor: "pointer",
+                                                cursor:
+                                                    busyId === assignment.id ? "not-allowed" : "pointer",
+                                                opacity: busyId === assignment.id ? 0.65 : 1,
                                             }}
                                         >
                                             {busyId === assignment.id
@@ -296,6 +293,16 @@ export default function StudentAssignmentsPage() {
                     )}
                 </section>
             </div>
+
+            <StudentSubmissionModal
+                isOpen={Boolean(selectedAssignment)}
+                assignmentTitle={selectedAssignment?.title ?? ""}
+                isSubmitting={
+                    selectedAssignmentId !== null && busyId === selectedAssignmentId
+                }
+                onClose={() => setSelectedAssignmentId(null)}
+                onSubmit={handleSubmitAssignment}
+            />
         </DashboardShell>
     );
 }

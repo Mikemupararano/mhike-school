@@ -23,22 +23,22 @@ type SidebarProps = {
 
 function resolveSidebarRole(userRoles: UserRole[]): SidebarRole {
     if (userRoles.includes(UserRole.PLATFORM_ADMIN)) {
-        return "platform_admin";
+        return UserRole.PLATFORM_ADMIN;
     }
 
     if (userRoles.includes(UserRole.SCHOOL_ADMIN)) {
-        return "school_admin";
+        return UserRole.SCHOOL_ADMIN;
     }
 
     if (userRoles.includes(UserRole.TEACHER)) {
-        return "teacher";
+        return UserRole.TEACHER;
     }
 
     if (userRoles.includes(UserRole.STUDENT)) {
-        return "student";
+        return UserRole.STUDENT;
     }
 
-    return "student";
+    return UserRole.STUDENT;
 }
 
 export default function Sidebar({

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
 import BrandLogo from "@/components/layout/BrandLogo";
 import { brand, brandColors, brandShadows } from "@/lib/brand";
 import {
@@ -9,6 +10,7 @@ import {
     type SidebarRole,
     type SidebarSection,
 } from "@/lib/navigation/sidebar";
+import { UserRole } from "@/types/user";
 
 type SidebarProps = {
     title?: string;
@@ -21,7 +23,7 @@ type SidebarProps = {
 export default function Sidebar({
     title = brand.name,
     sections,
-    role = "teacher",
+    role = UserRole.TEACHER,
     collapsed = false,
     className = "",
 }: SidebarProps) {
@@ -30,6 +32,7 @@ export default function Sidebar({
 
     return (
         <aside
+            aria-label={`${title} sidebar navigation`}
             className={`h-screen text-white ${collapsed ? "w-24" : "w-80"} ${className}`}
             style={{
                 borderRight: `1px solid ${brandColors.navySoft}`,
@@ -55,7 +58,7 @@ export default function Sidebar({
                         <div className="min-w-0 max-w-full">
                             <BrandLogo
                                 href="/"
-                                showText={true}
+                                showText
                                 iconSize={46}
                                 textSizeClass="text-[2.15rem]"
                                 className="shrink-0"
@@ -70,17 +73,18 @@ export default function Sidebar({
                 <nav className="flex-1 overflow-y-auto px-4 py-6">
                     {resolvedSections.map((section) => (
                         <div key={section.title} className="mb-8">
-                            {!collapsed ? (
+                            {!collapsed && (
                                 <p className="mb-4 px-3 text-[0.95rem] font-semibold uppercase tracking-[0.18em] text-slate-300/80">
                                     {section.title}
                                 </p>
-                            ) : null}
+                            )}
 
                             <div className="grid gap-2.5">
                                 {section.items.map((item) => {
                                     const active =
                                         pathname === item.href ||
-                                        (item.href !== "/" && pathname.startsWith(`${item.href}/`));
+                                        (item.href !== "/" &&
+                                            pathname.startsWith(`${item.href}/`));
 
                                     const Icon = item.icon;
 
@@ -88,13 +92,17 @@ export default function Sidebar({
                                         <Link
                                             key={item.href}
                                             href={item.href}
+                                            aria-current={active ? "page" : undefined}
+                                            title={collapsed ? item.label : undefined}
                                             className={`flex items-center rounded-2xl px-4 py-4 transition-all duration-200 ${collapsed ? "justify-center" : "gap-3.5"
                                                 } ${active
                                                     ? "text-white shadow-sm ring-1 ring-white/12"
                                                     : "text-slate-200 hover:text-white"
                                                 }`}
                                             style={{
-                                                background: active ? "rgba(255,255,255,0.12)" : "transparent",
+                                                background: active
+                                                    ? "rgba(255,255,255,0.12)"
+                                                    : "transparent",
                                             }}
                                         >
                                             <span
@@ -108,11 +116,11 @@ export default function Sidebar({
                                                 <Icon size={20} />
                                             </span>
 
-                                            {!collapsed ? (
+                                            {!collapsed && (
                                                 <span className="truncate text-[1.02rem] font-bold">
                                                     {item.label}
                                                 </span>
-                                            ) : null}
+                                            )}
                                         </Link>
                                     );
                                 })}

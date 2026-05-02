@@ -26,6 +26,11 @@ type FlatLesson = LessonOut & {
     moduleTitle: string;
 };
 
+type LessonWithPublishFlags = LessonOut & {
+    published?: boolean;
+    is_published?: boolean;
+};
+
 function Card({ children }: { children: React.ReactNode }) {
     return (
         <div
@@ -72,22 +77,26 @@ export default function CourseDetailPage() {
     const router = useRouter();
 
     const rawCourseId = params?.courseId;
-    const courseId = Number(Array.isArray(rawCourseId) ? rawCourseId[0] : rawCourseId);
+    const courseId = Number(
+        Array.isArray(rawCourseId) ? rawCourseId[0] : rawCourseId,
+    );
 
     const [token, setToken] = useState("");
     const [course, setCourse] = useState<CourseOut | null>(null);
     const [modules, setModules] = useState<ModuleOut[]>([]);
     const [lessonsByModule, setLessonsByModule] = useState<LessonsByModule>({});
-    const [completedLessonIds, setCompletedLessonIds] = useState<Set<number>>(new Set());
+    const [completedLessonIds, setCompletedLessonIds] = useState<Set<number>>(
+        new Set(),
+    );
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
 
     useEffect(() => {
-        const t = getToken();
-        if (t) {
-            setToken(t);
+        const storedToken = getToken();
+        if (storedToken) {
+            setToken(storedToken);
         }
     }, []);
 
@@ -112,8 +121,16 @@ export default function CourseDetailPage() {
             const lessonEntries = await Promise.all(
                 sortedModules.map(async (module) => {
                     const lessons = await listLessons(module.id, token || undefined);
+
                     const sortedLessons = [...lessons]
-                        .filter((lesson) => lesson.published !== false)
+                        .filter((lesson) => {
+                            const maybePublished = lesson as LessonWithPublishFlags;
+
+                            return (
+                                maybePublished.published !== false &&
+                                maybePublished.is_published !== false
+                            );
+                        })
                         .sort((a, b) => a.order - b.order);
 
                     return [module.id, sortedLessons] as const;
@@ -126,7 +143,10 @@ export default function CourseDetailPage() {
             if (token) {
                 try {
                     const res = await fetch(
-                        `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/me/progress`,
+                        `${process.env.NEXT_PUBLIC_API_BASE_URL ??
+                        process.env.NEXT_PUBLIC_API_URL ??
+                        "http://localhost:8000/api/v1"
+                        }/me/progress`,
                         {
                             headers: {
                                 Authorization: `Bearer ${token}`,
@@ -137,8 +157,11 @@ export default function CourseDetailPage() {
                     if (res.ok) {
                         const progressData = (await res.json()) as ProgressItem[];
                         const completedIds = new Set(
-                            progressData.filter((item) => item.completed).map((item) => item.lesson_id),
+                            progressData
+                                .filter((item) => item.completed)
+                                .map((item) => item.lesson_id),
                         );
+
                         setCompletedLessonIds(completedIds);
                     } else {
                         setCompletedLessonIds(new Set());
@@ -149,8 +172,8 @@ export default function CourseDetailPage() {
             } else {
                 setCompletedLessonIds(new Set());
             }
-        } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : "Failed to load course");
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to load course");
         } finally {
             setLoading(false);
         }
@@ -164,6 +187,7 @@ export default function CourseDetailPage() {
         () =>
             modules.flatMap((module) => {
                 const lessons = lessonsByModule[module.id] ?? [];
+
                 return lessons.map((lesson) => ({
                     ...lesson,
                     moduleId: module.id,
@@ -173,22 +197,27 @@ export default function CourseDetailPage() {
         [modules, lessonsByModule],
     );
 
-    const stats = useMemo(() => {
-        return {
+    const stats = useMemo(
+        () => ({
             modules: modules.length,
             lessons: allLessons.length,
-        };
-    }, [modules.length, allLessons.length]);
+        }),
+        [modules.length, allLessons.length],
+    );
 
     const completedCount = useMemo(
-        () => allLessons.filter((lesson) => completedLessonIds.has(lesson.id)).length,
+        () =>
+            allLessons.filter((lesson) => completedLessonIds.has(lesson.id)).length,
         [allLessons, completedLessonIds],
     );
 
     const progressPercent =
-        allLessons.length > 0 ? Math.round((completedCount / allLessons.length) * 100) : 0;
+        allLessons.length > 0
+            ? Math.round((completedCount / allLessons.length) * 100)
+            : 0;
 
-    const nextLesson = allLessons.find((lesson) => !completedLessonIds.has(lesson.id)) ?? null;
+    const nextLesson =
+        allLessons.find((lesson) => !completedLessonIds.has(lesson.id)) ?? null;
 
     const previousLessonIdByLessonId = useMemo(() => {
         const map = new Map<number, number | null>();
@@ -215,10 +244,11 @@ export default function CourseDetailPage() {
             setBusy(true);
             setError("");
             setSuccess("");
+
             await enrollInCourse(token, courseId);
             setSuccess("Successfully enrolled in course.");
-        } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : "Failed to enroll");
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to enroll");
         } finally {
             setBusy(false);
         }
@@ -287,7 +317,9 @@ export default function CourseDetailPage() {
                         }}
                     >
                         <div>
-                            <div style={{ fontSize: 16, opacity: 0.9 }}>Course overview</div>
+                            <div style={{ fontSize: 16, opacity: 0.9 }}>
+                                Course overview
+                            </div>
 
                             <h1
                                 style={{
@@ -304,7 +336,14 @@ export default function CourseDetailPage() {
                                 {course.description || "No course description yet."}
                             </p>
 
-                            <div style={{ display: "flex", gap: 12, marginTop: 14, flexWrap: "wrap" }}>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    gap: 12,
+                                    marginTop: 14,
+                                    flexWrap: "wrap",
+                                }}
+                            >
                                 <span
                                     style={{
                                         padding: "6px 10px",
@@ -317,9 +356,16 @@ export default function CourseDetailPage() {
                                 >
                                     {course.published ? "Published" : "Draft"}
                                 </span>
-                                <span style={{ fontSize: 14, opacity: 0.95 }}>{stats.modules} modules</span>
-                                <span style={{ fontSize: 14, opacity: 0.95 }}>{stats.lessons} lessons</span>
-                                <span style={{ fontSize: 14, opacity: 0.95 }}>{progressPercent}% progress</span>
+
+                                <span style={{ fontSize: 14, opacity: 0.95 }}>
+                                    {stats.modules} modules
+                                </span>
+                                <span style={{ fontSize: 14, opacity: 0.95 }}>
+                                    {stats.lessons} lessons
+                                </span>
+                                <span style={{ fontSize: 14, opacity: 0.95 }}>
+                                    {progressPercent}% progress
+                                </span>
                             </div>
                         </div>
 
@@ -357,7 +403,9 @@ export default function CourseDetailPage() {
                             }}
                         >
                             <div style={{ fontSize: 13, opacity: 0.9 }}>Modules</div>
-                            <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{stats.modules}</div>
+                            <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>
+                                {stats.modules}
+                            </div>
                         </div>
 
                         <div
@@ -367,7 +415,9 @@ export default function CourseDetailPage() {
                                 padding: 16,
                             }}
                         >
-                            <div style={{ fontSize: 13, opacity: 0.9 }}>Lessons completed</div>
+                            <div style={{ fontSize: 13, opacity: 0.9 }}>
+                                Lessons completed
+                            </div>
                             <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>
                                 {`${completedCount}/${allLessons.length}`}
                             </div>
@@ -390,7 +440,9 @@ export default function CourseDetailPage() {
                     {nextLesson && (
                         <button
                             type="button"
-                            onClick={() => router.push(`/courses/${course.id}/lessons/${nextLesson.id}`)}
+                            onClick={() =>
+                                router.push(`/courses/${course.id}/lessons/${nextLesson.id}`)
+                            }
                             style={{
                                 marginTop: 18,
                                 padding: "12px 18px",
@@ -513,20 +565,30 @@ export default function CourseDetailPage() {
                                             <div style={{ color: "#6B7280", fontSize: 12 }}>
                                                 Module {module.order}
                                             </div>
-                                            <h2 style={{ margin: "6px 0 0 0", color: "#111827" }}>{module.title}</h2>
+                                            <h2 style={{ margin: "6px 0 0 0", color: "#111827" }}>
+                                                {module.title}
+                                            </h2>
                                         </div>
 
                                         {moduleLessons.length === 0 ? (
-                                            <div style={{ color: "#6B7280" }}>No lessons in this module yet.</div>
+                                            <div style={{ color: "#6B7280" }}>
+                                                No lessons in this module yet.
+                                            </div>
                                         ) : (
                                             <div style={{ display: "grid", gap: 12 }}>
                                                 {moduleLessons.map((lesson) => {
-                                                    const isCompleted = completedLessonIds.has(lesson.id);
-                                                    const previousLessonId = previousLessonIdByLessonId.get(lesson.id) ?? null;
+                                                    const isCompleted = completedLessonIds.has(
+                                                        lesson.id,
+                                                    );
+                                                    const previousLessonId =
+                                                        previousLessonIdByLessonId.get(lesson.id) ?? null;
                                                     const isLocked =
-                                                        previousLessonId !== null && !completedLessonIds.has(previousLessonId);
+                                                        previousLessonId !== null &&
+                                                        !completedLessonIds.has(previousLessonId);
                                                     const isNext =
-                                                        !isCompleted && !isLocked && nextLesson?.id === lesson.id;
+                                                        !isCompleted &&
+                                                        !isLocked &&
+                                                        nextLesson?.id === lesson.id;
 
                                                     return (
                                                         <Link
@@ -586,7 +648,8 @@ export default function CourseDetailPage() {
                                                                     {lesson.title}
                                                                 </div>
 
-                                                                {"content_type" in lesson && lesson.content_type ? (
+                                                                {"content_type" in lesson &&
+                                                                    lesson.content_type ? (
                                                                     <div
                                                                         style={{
                                                                             color: "#6B7280",

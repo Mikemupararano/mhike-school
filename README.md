@@ -78,7 +78,6 @@ React
 TypeScript
 
 ## Project Structure
-## Project Structure
 
 mhike-school/
 │
@@ -594,10 +593,333 @@ mhike-school/
     ├── mhike_gdpr_policy.docx
     └── mhike_gdpr_policy.pdf
 
+## Updated Project Structure
+mhike-school/
+│
+├── mhike-school-web/
+│   ├── app/
+│   │   └── (dashboard)/
+│   │       ├── admin/
+│   │       │   ├── page.tsx                         # UPDATED: live dashboard + chart data
+│   │       │   ├── audit-logs/page.tsx              # NEW
+│   │       │   └── billing/                         # PLANNED
+│   │       │       ├── page.tsx
+│   │       │       ├── plans/page.tsx
+│   │       │       ├── subscriptions/page.tsx
+│   │       │       └── invoices/page.tsx
+│   │       │
+│   │       └── school-admin/
+│   │           └── billing/page.tsx                 # PLANNED
+│   │
+│   ├── components/
+│   │   ├── admin/
+│   │   │   ├── dashboard/
+│   │   │   ├── billing/                             # PLANNED
+│   │   │   └── tables/
+│   │   └── billing/                                 # PLANNED
+│   │       ├── PlanCard.tsx
+│   │       ├── SubscriptionStatus.tsx
+│   │       └── InvoiceTable.tsx
+│   │
+│   ├── lib/
+│   │   ├── hooks/
+│   │   │   ├── useAdminDashboard.ts                 # NEW
+│   │   │   └── useBilling.ts                        # PLANNED
+│   │   └── services/
+│   │       ├── platform-admin.ts
+│   │       └── billing.ts                           # PLANNED
+│   │
+│   └── types/
+│       ├── auditLog.ts
+│       └── billing.ts                               # PLANNED
+│
+├── app/
+│   ├── api/v1/endpoints/
+│   │   ├── platform_admin.py                        # UPDATED: audit logs + dashboard analytics
+│   │   ├── audit_logs.py
+│   │   ├── billing.py                               # PLANNED
+│   │   └── webhooks.py                              # PLANNED
+│   │
+│   ├── models/
+│   │   ├── audit_log.py
+│   │   ├── billing_plan.py                          # PLANNED
+│   │   ├── subscription.py                          # PLANNED
+│   │   ├── invoice.py                               # PLANNED
+│   │   └── payment_event.py                         # PLANNED
+│   │
+│   ├── schemas/
+│   │   ├── audit_log.py
+│   │   ├── billing.py                               # PLANNED
+│   │   ├── subscription.py                          # PLANNED
+│   │   └── invoice.py                               # PLANNED
+│   │
+│   ├── repositories/
+│   │   ├── audit_log.py
+│   │   └── billing.py                               # PLANNED
+│   │
+│   ├── services/
+│   │   ├── audit_log_service.py                     # UPDATED
+│   │   ├── billing_service.py                       # PLANNED
+│   │   ├── stripe_service.py                        # PLANNED
+│   │   └── webhook_service.py                       # PLANNED
+│   │
+│   └── tasks/
+│       ├── billing_tasks.py                         # PLANNED
+│       └── worker.py
+│
+├── alembic/
+│   └── versions/
+│       ├── b9731b07194b_create_audit_logs.py        # NEW
+│       ├── 0019_create_billing_plans.py             # PLANNED
+│       ├── 0020_create_subscriptions.py             # PLANNED
+│       ├── 0021_create_invoices.py                  # PLANNED
+│       └── 0022_create_payment_events.py            # PLANNED
+│
+├── tests/
+│   ├── test_audit_logs.py                           # PLANNED
+│   ├── test_billing.py                              # PLANNED
+│   ├── test_subscriptions.py                        # PLANNED
+│   └── test_payment_webhooks.py                     # PLANNED
+│
+├── scripts/
+│   ├── seed_billing_plans.py                        # PLANNED
+│   └── sync_stripe_products.py                      # PLANNED
+│
+└── compliance/
+    ├── policies/
+    │   ├── terms_of_service.md                      # MISSING FROM YOUR LIST
+    │   └── refund_policy.md                         # PLANNED
+    │
+    ├── records/
+    │   └── payment_processing_records.md            # PLANNED
+    │
+    └── billing/                                     # PLANNED
+        ├── payment_security.md
+        ├── subscription_terms.md
+        └── stripe_webhook_policy.md
 
-
+mhike-school/
+├── docker-compose.yml
+├── .env.example
+├── .gitignore
+├── README.md
+├── Makefile
+│
+├── mhike-school-web/
+│   ├── app/
+│   │   └── (dashboard)/
+│   │       ├── admin/
+│   │       │   ├── page.tsx
+│   │       │   ├── audit-logs/page.tsx
+│   │       │   └── billing/
+│   │       │       ├── page.tsx
+│   │       │       ├── plans/page.tsx
+│   │       │       ├── subscriptions/page.tsx
+│   │       │       └── invoices/page.tsx
+│   │       │
+│   │       └── school-admin/
+│   │           └── billing/page.tsx
+│   │
+│   ├── components/
+│   │   ├── admin/
+│   │   │   ├── dashboard/
+│   │   │   ├── billing/
+│   │   │   └── tables/
+│   │   └── billing/
+│   │       ├── PlanCard.tsx
+│   │       ├── SubscriptionStatus.tsx
+│   │       └── InvoiceTable.tsx
+│   │
+│   ├── lib/
+│   │   ├── hooks/
+│   │   │   ├── useAdminDashboard.ts
+│   │   │   └── useBilling.ts
+│   │   └── services/
+│   │       ├── platform-admin.ts
+│   │       └── billing.ts
+│   │
+│   └── types/
+│       ├── auditLog.ts
+│       └── billing.ts
+│
+├── app/
+│   ├── api/v1/endpoints/
+│   │   ├── platform_admin.py
+│   │   ├── audit_logs.py
+│   │   ├── billing.py
+│   │   └── webhooks.py
+│   │
+│   ├── models/
+│   │   ├── audit_log.py
+│   │   ├── billing_plan.py
+│   │   ├── subscription.py
+│   │   ├── invoice.py
+│   │   └── payment_event.py
+│   │
+│   ├── schemas/
+│   │   ├── audit_log.py
+│   │   ├── billing.py
+│   │   ├── subscription.py
+│   │   └── invoice.py
+│   │
+│   ├── repositories/
+│   │   ├── audit_log.py
+│   │   └── billing.py
+│   │
+│   ├── services/
+│   │   ├── audit_log_service.py
+│   │   ├── billing_service.py
+│   │   ├── stripe_service.py
+│   │   └── webhook_service.py
+│   │
+│   └── tasks/
+│       ├── billing_tasks.py
+│       └── worker.py
+│
+├── alembic/
+│   └── versions/
+│       ├── 0017_create_audit_logs.py
+│       ├── 0018_create_assignment_submissions.py
+│       ├── 0019_add_user_lifecycle_fields.py
+│       ├── 0020_create_billing_plans.py
+│       ├── 0021_create_subscriptions.py
+│       ├── 0022_create_invoices.py
+│       └── 0023_create_payment_events.py
+│
+├── tests/
+│   ├── test_audit_logs.py
+│   ├── test_billing.py
+│   ├── test_subscriptions.py
+│   ├── test_payment_webhooks.py
+│   └── ...
+│
+├── scripts/
+│   ├── seed_billing_plans.py
+│   ├── sync_stripe_products.py
+│   └── ...
+│
+└── compliance/
+    ├── policies/
+    │   ├── terms_of_service.md
+    │   ├── refund_policy.md
+    │   └── ...
+    │
+    ├── records/
+    │   ├── payment_processing_records.md
+    │   └── ...
+    │
+    └── billing/
+        ├── payment_security.md
+        ├── subscription_terms.md
+        └── stripe_webhook_policy.md
 ---
-
+mhike-school/
+│
+├── mhike-school-web/
+│   ├── app/(dashboard)/
+│   │   ├── admin/
+│   │   │   ├── page.tsx
+│   │   │   ├── audit-logs/page.tsx
+│   │   │   └── billing/                  # 🟡 FEATURE-FLAGGED
+│   │   │       ├── page.tsx
+│   │   │       ├── plans/page.tsx
+│   │   │       ├── subscriptions/page.tsx
+│   │   │       └── invoices/page.tsx
+│   │   │
+│   │   └── school-admin/
+│   │       └── billing/page.tsx         # 🟡 future
+│
+│   ├── components/
+│   │   ├── billing/                     # 🟡 isolated domain
+│   │   │   ├── PlanCard.tsx
+│   │   │   ├── SubscriptionStatus.tsx
+│   │   │   └── InvoiceTable.tsx
+│   │   └── admin/
+│   │       ├── dashboard/
+│   │       └── tables/
+│
+│   ├── lib/
+│   │   ├── hooks/
+│   │   │   ├── useAdminDashboard.ts
+│   │   │   └── useBilling.ts            # 🟡 future
+│   │   └── services/
+│   │       ├── platform-admin.ts
+│   │       └── billing.ts               # 🟡 API wrapper
+│
+│   └── types/
+│       ├── auditLog.ts
+│       └── billing.ts                  # 🟡 contracts only
+│
+├── app/
+│   ├── api/v1/endpoints/
+│   │   ├── platform_admin.py
+│   │   ├── audit_logs.py
+│   │   ├── billing.py                  # 🟡 disabled routes
+│   │   └── webhooks.py                 # 🟡 Stripe entrypoint
+│
+│   ├── models/
+│   │   ├── audit_log.py
+│   │   ├── billing_plan.py             # 🟡
+│   │   ├── subscription.py             # 🟡
+│   │   ├── invoice.py                  # 🟡
+│   │   └── payment_event.py            # 🟡
+│
+│   ├── schemas/
+│   │   ├── audit_log.py
+│   │   ├── billing.py                  # 🟡
+│   │   ├── subscription.py
+│   │   └── invoice.py
+│
+│   ├── repositories/
+│   │   ├── audit_log.py
+│   │   └── billing.py                  # 🟡
+│
+│   ├── services/
+│   │   ├── audit_log_service.py
+│   │   ├── billing_service.py          # 🟡 domain logic
+│   │   ├── stripe_service.py           # 🟡 integration layer
+│   │   └── webhook_service.py          # 🟡 event processor
+│
+│   ├── tasks/
+│   │   ├── billing_tasks.py            # 🟡 retries, async sync
+│   │   └── worker.py
+│
+│   └── core/
+│       └── feature_flags.py            # ✅ ADD THIS
+│
+├── alembic/
+│   └── versions/
+│       ├── 0017_create_audit_logs.py
+│       ├── 0018_create_assignment_submissions.py
+│       ├── 0019_add_user_lifecycle_fields.py
+│       ├── 0020_create_billing_plans.py      # 🟡
+│       ├── 0021_create_subscriptions.py      # 🟡
+│       ├── 0022_create_invoices.py           # 🟡
+│       └── 0023_create_payment_events.py     # 🟡
+│
+├── tests/
+│   ├── test_audit_logs.py
+│   ├── billing/                         # 🟡 separate domain tests
+│   │   ├── test_billing.py
+│   │   ├── test_subscriptions.py
+│   │   └── test_webhooks.py
+│
+├── scripts/
+│   ├── seed_billing_plans.py            # 🟡
+│   ├── sync_stripe_products.py          # 🟡
+│
+└── compliance/
+    ├── policies/
+    │   ├── terms_of_service.md
+    │   ├── refund_policy.md             # 🟡
+    │
+    ├── billing/                         # 🟡 NEW DOMAIN
+    │   ├── payment_security.md
+    │   ├── subscription_terms.md
+    │   └── stripe_webhook_policy.md
+    │
+    └── records/
+        └── payment_processing_records.md
 ## 🏆 Why this is FINAL (no more restructuring)
 
 This structure gives you:

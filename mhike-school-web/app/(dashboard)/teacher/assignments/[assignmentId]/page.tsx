@@ -5,14 +5,14 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
+import { UserRole } from "@/types/user";
 import {
-    AssignmentOut,
-    AssignmentSubmissionOut,
     getAssignment,
     gradeSubmission,
     listAssignmentSubmissions,
+    type AssignmentOut,
+    type AssignmentSubmissionOut,
 } from "@/lib/assignmentApi";
-import { UserRole } from "@/types/user";
 
 export default function TeacherAssignmentDetailPage() {
     return (
@@ -47,6 +47,7 @@ function TeacherAssignmentDetailContent() {
 
         try {
             setError(null);
+            setIsLoading(true);
 
             const [assignmentData, submissionsData] = await Promise.all([
                 getAssignment(assignmentId),
@@ -56,11 +57,7 @@ function TeacherAssignmentDetailContent() {
             setAssignment(assignmentData);
             setSubmissions(submissionsData);
         } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to load assignment.",
-            );
+            setError(err instanceof Error ? err.message : "Failed to load assignment.");
         } finally {
             setIsLoading(false);
         }
@@ -110,18 +107,14 @@ function TeacherAssignmentDetailContent() {
 
             await loadData();
         } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to grade submission.",
-            );
+            setError(err instanceof Error ? err.message : "Failed to grade submission.");
         } finally {
             setBusyId(null);
         }
     }
 
     return (
-        <div className="p-6">
+        <div className="p-6 sm:p-8">
             <Link
                 href="/teacher/assignments"
                 className="text-sm font-semibold text-blue-600 hover:underline"
@@ -129,10 +122,12 @@ function TeacherAssignmentDetailContent() {
                 ← Back to assignments
             </Link>
 
-            {isLoading && <p className="mt-6">Loading assignment...</p>}
+            {isLoading && (
+                <p className="mt-6 text-sm text-slate-600">Loading assignment...</p>
+            )}
 
             {error && (
-                <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
+                <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
                     {error}
                 </div>
             )}
@@ -140,7 +135,7 @@ function TeacherAssignmentDetailContent() {
             {!isLoading && assignment && (
                 <>
                     <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <h1 className="text-3xl font-extrabold">
+                        <h1 className="text-3xl font-extrabold text-slate-900">
                             {assignment.title}
                         </h1>
 
@@ -161,12 +156,12 @@ function TeacherAssignmentDetailContent() {
                     </section>
 
                     <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <h2 className="text-2xl font-extrabold">Submissions</h2>
+                        <h2 className="text-2xl font-extrabold text-slate-900">
+                            Submissions
+                        </h2>
 
                         {submissions.length === 0 ? (
-                            <p className="mt-4 text-slate-500">
-                                No submissions yet.
-                            </p>
+                            <p className="mt-4 text-slate-500">No submissions yet.</p>
                         ) : (
                             <div className="mt-4 space-y-4">
                                 {submissions.map((submission) => (
@@ -174,13 +169,12 @@ function TeacherAssignmentDetailContent() {
                                         key={submission.id}
                                         className="rounded-xl border border-slate-200 bg-slate-50 p-4"
                                     >
-                                        <div className="font-bold">
+                                        <div className="font-bold text-slate-900">
                                             Student ID: {submission.student_id}
                                         </div>
 
                                         <p className="mt-2 text-slate-600">
-                                            {submission.submission_text ||
-                                                "No text submission."}
+                                            {submission.submission_text || "No text submission."}
                                         </p>
 
                                         {submission.attachment_url && (
@@ -199,8 +193,7 @@ function TeacherAssignmentDetailContent() {
                                         </div>
 
                                         <div className="text-sm text-slate-500">
-                                            Score:{" "}
-                                            {submission.score ?? "Not graded"}
+                                            Score: {submission.score ?? "Not graded"}
                                         </div>
 
                                         {submission.feedback && (
@@ -210,6 +203,7 @@ function TeacherAssignmentDetailContent() {
                                         )}
 
                                         <button
+                                            type="button"
                                             onClick={() => void handleGrade(submission)}
                                             disabled={busyId === submission.id}
                                             className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
