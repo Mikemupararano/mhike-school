@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AssignmentBase(BaseModel):
@@ -34,5 +34,30 @@ class AssignmentOut(AssignmentBase):
     school_id: int
     created_by: int
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubmissionCreate(BaseModel):
+    submission_text: Optional[str] = None
+    attachment_url: Optional[str] = None
+
+
+class SubmissionGrade(BaseModel):
+    score: int = Field(ge=0)
+    feedback: Optional[str] = None
+
+
+class SubmissionOut(BaseModel):
+    id: int
+    assignment_id: int
+    student_id: int
+    submission_text: Optional[str] = None
+    attachment_url: Optional[str] = None
+    status: str
+    score: Optional[int] = None
+    feedback: Optional[str] = None
+    graded_by: Optional[int] = None
+    graded_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
