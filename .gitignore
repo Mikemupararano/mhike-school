@@ -37,3 +37,6 @@ node_modules/
 htmlcov/
 
 *.sqlite3
+check_platform_admin.py
+
+reset_platform_admin.py
