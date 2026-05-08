@@ -9,6 +9,13 @@ from app.models.user_role import UserRoleAssignment
 from app.schemas.dashboard import DashboardMeOut, SchoolAdminMetricsOut
 
 
+def get_primary_role(user: User) -> UserRole | None:
+    if user.roles:
+        return UserRole(user.roles[0])
+
+    return user.role
+
+
 class DashboardService:
     @staticmethod
     async def get_student_dashboard(
@@ -27,7 +34,7 @@ class DashboardService:
             student_id=current_user.id,
             full_name=current_user.full_name,
             email=current_user.email,
-            role=current_user.role,
+            role=get_primary_role(current_user),
             roles=[UserRole(role) for role in current_user.roles],
             is_active=current_user.is_active,
             enrolled_courses=enrolled_courses,
