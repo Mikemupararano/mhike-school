@@ -9,9 +9,10 @@ from app.models.user import User, UserRole
 
 
 class ClassService:
-    # =========================
-    # Get class (school-safe)
-    # =========================
+    @staticmethod
+    def has_role(user: User, role: UserRole) -> bool:
+        return role.value in set(user.roles)
+
     @staticmethod
     async def get_class(
         db: AsyncSession,
@@ -36,9 +37,6 @@ class ClassService:
 
         return class_group
 
-    # =========================
-    # List classes (school)
-    # =========================
     @staticmethod
     async def list_classes_by_school(
         db: AsyncSession,
@@ -52,9 +50,6 @@ class ClassService:
         )
         return list(result.scalars().all())
 
-    # =========================
-    # Create class
-    # =========================
     @staticmethod
     async def create_class(
         db: AsyncSession,
@@ -62,7 +57,6 @@ class ClassService:
         school_id: int,
         teacher_id: int | None = None,
     ) -> ClassGroup:
-        # Prevent duplicate class names within the same school
         existing_result = await db.execute(
             select(ClassGroup).where(
                 ClassGroup.name == name,
@@ -70,21 +64,20 @@ class ClassService:
             )
         )
         existing_class = existing_result.scalar_one_or_none()
+
         if existing_class is not None:
             raise ValueError("A class with this name already exists in this school")
 
-        # Optional teacher validation
         if teacher_id is not None:
             teacher_result = await db.execute(
                 select(User).where(
                     User.id == teacher_id,
                     User.school_id == school_id,
-                    User.role == UserRole.TEACHER,
                 )
             )
             teacher = teacher_result.scalar_one_or_none()
 
-            if teacher is None:
+            if teacher is None or not ClassService.has_role(teacher, UserRole.TEACHER):
                 raise ValueError("Invalid teacher for this school")
 
         class_group = ClassGroup(
@@ -98,9 +91,6 @@ class ClassService:
 
         return class_group
 
-    # =========================
-    # Assign teacher
-    # =========================
     @staticmethod
     async def assign_teacher(
         db: AsyncSession,
@@ -114,12 +104,11 @@ class ClassService:
             select(User).where(
                 User.id == teacher_id,
                 User.school_id == school_id,
-                User.role == UserRole.TEACHER,
             )
         )
         teacher = teacher_result.scalar_one_or_none()
 
-        if teacher is None:
+        if teacher is None or not ClassService.has_role(teacher, UserRole.TEACHER):
             raise ValueError("Invalid teacher")
 
         class_group.teacher_id = teacher_id
@@ -128,9 +117,6 @@ class ClassService:
 
         return class_group
 
-    # =========================
-    # Get students in class
-    # =========================
     @staticmethod
     async def get_students_in_class(
         db: AsyncSession,
@@ -145,16 +131,13 @@ class ClassService:
             .where(
                 Enrollment.class_id == class_group.id,
                 User.school_id == school_id,
-                User.role == UserRole.STUDENT,
             )
             .order_by(User.id)
         )
 
-        return list(result.scalars().all())
+        users = list(result.scalars().all())
+        return [user for user in users if ClassService.has_role(user, UserRole.STUDENT)]
 
-    # =========================
-    # Add student to class
-    # =========================
     @staticmethod
     async def add_student(
         db: AsyncSession,
@@ -168,12 +151,11 @@ class ClassService:
             select(User).where(
                 User.id == student_id,
                 User.school_id == school_id,
-                User.role == UserRole.STUDENT,
             )
         )
         student = student_result.scalar_one_or_none()
 
-        if student is None:
+        if student is None or not ClassService.has_role(student, UserRole.STUDENT):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid student",
@@ -185,6 +167,7 @@ class ClassService:
                 Enrollment.user_id == student_id,
             )
         )
+
         if existing.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -201,9 +184,6 @@ class ClassService:
 
         return enrollment
 
-    # =========================
-    # Remove student
-    # =========================
     @staticmethod
     async def remove_student(
         db: AsyncSession,
