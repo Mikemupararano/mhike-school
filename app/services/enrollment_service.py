@@ -21,6 +21,7 @@ class EnrollmentService:
             )
         )
         class_group = class_result.scalar_one_or_none()
+
         if class_group is None:
             raise ValueError("Class not found")
 
@@ -31,10 +32,11 @@ class EnrollmentService:
             )
         )
         user = user_result.scalar_one_or_none()
+
         if user is None:
             raise ValueError("User not found")
 
-        if user.role != UserRole.STUDENT:
+        if UserRole.STUDENT not in user.roles:
             raise ValueError("Only students can be enrolled in a class")
 
         existing_result = await db.execute(
@@ -44,6 +46,7 @@ class EnrollmentService:
             )
         )
         existing = existing_result.scalar_one_or_none()
+
         if existing is not None:
             raise ValueError("Student is already enrolled in this class")
 
@@ -70,6 +73,7 @@ class EnrollmentService:
             )
         )
         class_group = class_result.scalar_one_or_none()
+
         if class_group is None:
             raise ValueError("Class not found")
 
@@ -80,10 +84,11 @@ class EnrollmentService:
             )
         )
         user = user_result.scalar_one_or_none()
+
         if user is None:
             raise ValueError("User not found")
 
-        if user.role != UserRole.STUDENT:
+        if UserRole.STUDENT not in user.roles:
             raise ValueError("Only students can be removed from a class")
 
         enrollment_result = await db.execute(
@@ -93,6 +98,7 @@ class EnrollmentService:
             )
         )
         enrollment = enrollment_result.scalar_one_or_none()
+
         if enrollment is None:
             raise ValueError("Enrollment not found")
 
