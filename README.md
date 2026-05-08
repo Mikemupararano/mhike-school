@@ -80,245 +80,85 @@ TypeScript
 ## Project Structure
 
 mhike-school/
-│
 ├── docker-compose.yml
-├── .env
 ├── .env.example
 ├── .gitignore
 ├── README.md
 ├── Makefile
 │
-├── mhike-school-web/                              # Next.js frontend
-│   ├── package.json
-│   ├── package-lock.json
-│   ├── tsconfig.json
-│   ├── next.config.js
-│   ├── postcss.config.js
-│   ├── tailwind.config.ts
-│   ├── .env.local
-│   ├── .env.example
-│   ├── README.md
-│   │
-│   ├── public/
-│   │   ├── logo.png
-│   │   ├── favicon.ico
-│   │   ├── placeholder-note.png
-│   │   ├── logo-navbar.svg
-│   │   ├── logo-light.svg
-│   │   ├── logo-dark.svg
-│   │   ├── icon.svg
-│   │   └── icons/
-│   │       ├── bell.svg
-│   │       ├── book.svg
-│   │       ├── class.svg
-│   │       ├── dashboard.svg
-│   │       ├── quiz.svg
-│   │       ├── school.svg
-│   │       └── user.svg
-│   │
+├── mhike-school-web/                    # Next.js frontend
 │   ├── app/
-│   │   ├── favicon.ico
-│   │   ├── globals.css
-│   │   ├── layout.tsx
-│   │   ├── page.tsx
-│   │   ├── loading.tsx
-│   │   ├── not-found.tsx
-│   │   │
 │   │   ├── (auth)/
-│   │   │   └── login/
-│   │   │       └── page.tsx
-│   │   │
+│   │   │   └── login/page.tsx
 │   │   └── (dashboard)/
 │   │       ├── layout.tsx
 │   │       ├── dashboard/page.tsx
 │   │       ├── profile/page.tsx
 │   │       ├── notifications/page.tsx
-│   │       │
 │   │       ├── courses/
-│   │       │   ├── page.tsx
-│   │       │   ├── exam-boards/[examBoardId]/page.tsx
-│   │       │   ├── [courseId]/page.tsx
-│   │       │   ├── [courseId]/topics/[topicId]/page.tsx
-│   │       │   └── content/[contentItemId]/page.tsx
-│   │       │
 │   │       ├── teacher/
-│   │       │   ├── page.tsx
-│   │       │   ├── classes/page.tsx
-│   │       │   ├── classes/[classId]/page.tsx
-│   │       │   ├── content/page.tsx
-│   │       │   ├── content/notes/create/page.tsx
-│   │       │   ├── content/notes/[contentItemId]/page.tsx
-│   │       │   ├── content/quizzes/create/page.tsx
-│   │       │   ├── content/quizzes/[contentItemId]/page.tsx
-│   │       │   ├── assignments/page.tsx
-│   │       │   ├── assignments/create/page.tsx
-│   │       │   └── assignments/[assignmentId]/page.tsx
-│   │       │
 │   │       ├── student/
-│   │       │   ├── page.tsx
-│   │       │   ├── assignments/page.tsx
-│   │       │   ├── assignments/[assignmentId]/page.tsx
-│   │       │   └── quizzes/attempts/[attemptId]/page.tsx
-│   │       │
 │   │       ├── school-admin/
-│   │       │   ├── page.tsx
-│   │       │   ├── branding/page.tsx
-│   │       │   ├── users/page.tsx
-│   │       │   ├── users/create/page.tsx
-│   │       │   ├── teachers/page.tsx
-│   │       │   ├── students/page.tsx
-│   │       │   ├── classes/page.tsx
-│   │       │   ├── classes/[classId]/page.tsx
-│   │       │   ├── announcements/page.tsx
-│   │       │   └── audit-logs/page.tsx
-│   │       │
 │   │       └── admin/
 │   │           ├── page.tsx
-│   │           ├── schools/page.tsx
-│   │           ├── schools/create/page.tsx
-│   │           ├── schools/[schoolId]/page.tsx
+│   │           ├── schools/
 │   │           ├── audit-logs/page.tsx
-│   │           └── content/
-│   │               ├── page.tsx
-│   │               ├── exam-boards/page.tsx
-│   │               ├── exam-boards/create/page.tsx
-│   │               ├── courses/page.tsx
-│   │               ├── courses/create/page.tsx
-│   │               ├── courses/[courseId]/page.tsx
-│   │               ├── topics/page.tsx
-│   │               ├── topics/create/page.tsx
-│   │               ├── topics/[topicId]/page.tsx
-│   │               ├── notes/create/page.tsx
-│   │               ├── notes/[contentItemId]/page.tsx
-│   │               ├── quizzes/create/page.tsx
-│   │               └── quizzes/[contentItemId]/page.tsx
+│   │           └── billing/              # PLANNED: payment system UI
 │   │
 │   ├── components/
 │   │   ├── auth/
-│   │   │   └── RoleGate.tsx
 │   │   ├── layout/
-│   │   │   ├── Navbar.tsx
-│   │   │   ├── Sidebar.tsx
-│   │   │   ├── DashboardShell.tsx
-│   │   │   ├── PageHeader.tsx
-│   │   │   └── ProtectedRoute.tsx
 │   │   ├── ui/
-│   │   │   ├── index.ts
-│   │   │   ├── primitives/
-│   │   │   │   ├── Button.tsx
-│   │   │   │   ├── Input.tsx
-│   │   │   │   ├── Select.tsx
-│   │   │   │   ├── TextArea.tsx
-│   │   │   │   └── Badge.tsx
-│   │   │   ├── display/
-│   │   │   │   ├── Card.tsx
-│   │   │   │   ├── Section.tsx
-│   │   │   │   ├── StatCard.tsx
-│   │   │   │   └── EmptyState.tsx
-│   │   │   ├── feedback/
-│   │   │   │   ├── Loader.tsx
-│   │   │   │   ├── Toast.tsx
-│   │   │   │   └── Modal.tsx
-│   │   │   ├── navigation/
-│   │   │   │   ├── Tabs.tsx
-│   │   │   │   └── Pagination.tsx
-│   │   │   └── data/
-│   │   │       └── Table.tsx
 │   │   ├── school/
-│   │   │   ├── cards/
-│   │   │   ├── forms/
-│   │   │   └── tables/
 │   │   ├── content/
-│   │   │   ├── cards/
-│   │   │   ├── editors/
-│   │   │   ├── tables/
-│   │   │   └── filters/
 │   │   ├── assignments/
-│   │   │   ├── builder/
-│   │   │   ├── cards/
-│   │   │   └── tables/
 │   │   ├── teacher/
-│   │   │   ├── dashboard/
-│   │   │   └── components/
 │   │   ├── student/
-│   │   │   ├── dashboard/
-│   │   │   └── components/
 │   │   ├── admin/
-│   │   │   ├── dashboard/
-│   │   │   └── tables/
 │   │   ├── school-admin/
-│   │   │   └── components/
-│   │   └── notifications/
-│   │       ├── NotificationBell.tsx
-│   │       ├── NotificationPanel.tsx
-│   │       └── NotificationItem.tsx
-│   │
-│   ├── features/
-│   │   ├── auth/
-│   │   ├── courses/
-│   │   ├── users/
-│   │   └── schools/
+│   │   ├── notifications/
+│   │   └── billing/                      # PLANNED
 │   │
 │   ├── lib/
 │   │   ├── api.ts
 │   │   ├── authApi.ts
 │   │   ├── assignmentApi.ts
 │   │   ├── hooks/
-│   │   │   └── useAdminDashboard.ts
+│   │   │   ├── useAdminDashboard.ts
+│   │   │   └── useBilling.ts             # PLANNED
 │   │   ├── services/
-│   │   │   ├── course.ts
-│   │   │   ├── school.ts
 │   │   │   ├── admin.ts
-│   │   │   ├── notification.ts
-│   │   │   ├── assignment.ts
-│   │   │   ├── content.ts
+│   │   │   ├── platform-admin.ts
 │   │   │   ├── school-admin.ts
+│   │   │   ├── school.ts
+│   │   │   ├── course.ts
 │   │   │   ├── classes.ts
-│   │   │   └── platform-admin.ts
+│   │   │   ├── content.ts
+│   │   │   ├── assignment.ts
+│   │   │   ├── notification.ts
+│   │   │   └── billing.ts                # PLANNED
 │   │   └── utils/
-│   │       ├── helpers.ts
-│   │       └── format.ts
 │   │
 │   ├── hooks/
-│   │   ├── useAuth.ts
-│   │   ├── useDebounce.ts
-│   │   ├── useNotifications.ts
-│   │   ├── useSchoolTheme.ts
-│   │   ├── useAssignments.ts
-│   │   ├── useQuizAttempt.ts
-│   │   └── useSelectedSchool.ts
-│   │
 │   ├── providers/
-│   │   ├── AuthProvider.tsx
-│   │   ├── QueryProvider.tsx
-│   │   └── ThemeProvider.tsx
-│   │
 │   └── types/
 │       ├── assignment.ts
+│       ├── auditLog.ts
 │       ├── class.ts
 │       ├── content.ts
 │       ├── course.ts
-│       ├── examBoard.ts
-│       ├── mcqOption.ts
-│       ├── mcqQuestion.ts
 │       ├── notification.ts
 │       ├── quizAttempt.ts
 │       ├── school.ts
-│       ├── topic.ts
 │       ├── user.ts
-│       └── auditLog.ts
+│       └── billing.ts                    # PLANNED
 │
-├── app/                                             # FastAPI backend
-│   ├── __init__.py
+├── app/                                  # FastAPI backend
 │   ├── main.py
 │   ├── api/
-│   │   ├── __init__.py
-│   │   ├── deps.py
 │   │   └── v1/
-│   │       ├── __init__.py
 │   │       ├── api.py
 │   │       └── endpoints/
-│   │           ├── __init__.py
 │   │           ├── auth.py
 │   │           ├── dashboard.py
 │   │           ├── schools.py
@@ -337,48 +177,41 @@ mhike-school/
 │   │           ├── assignments.py
 │   │           ├── assignment_submissions.py
 │   │           ├── quiz_attempts.py
-│   │           └── content_admin.py
+│   │           ├── content_admin.py
+│   │           ├── billing.py             # PLANNED
+│   │           └── webhooks.py            # PLANNED: Stripe/payment webhooks
 │   │
 │   ├── core/
-│   │   ├── __init__.py
-│   │   ├── bootstrap.py
 │   │   ├── config.py
 │   │   ├── constants.py
 │   │   ├── permissions.py
 │   │   ├── security.py
-│   │   └── tenancy.py
+│   │   ├── tenancy.py
+│   │   └── feature_flags.py              # PLANNED
 │   │
 │   ├── db/
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   ├── init_db.py
-│   │   └── session.py
-│   │
 │   ├── models/
-│   │   ├── __init__.py
-│   │   ├── announcement.py
-│   │   ├── assignment.py
-│   │   ├── assignment_submission.py
-│   │   ├── audit_log.py
-│   │   ├── class_group.py
-│   │   ├── content_item.py
-│   │   ├── course.py
-│   │   ├── enrollment.py
-│   │   ├── exam_board.py
-│   │   ├── mcq_option.py
-│   │   ├── mcq_question.py
-│   │   ├── notification.py
-│   │   ├── quiz_attempt.py
-│   │   ├── quiz_attempt_answer.py
+│   │   ├── user.py
+│   │   ├── user_role.py
 │   │   ├── school.py
 │   │   ├── school_settings.py
+│   │   ├── class_group.py
+│   │   ├── course.py
 │   │   ├── topic.py
-│   │   ├── user.py
-│   │   └── user_role.py
+│   │   ├── content_item.py
+│   │   ├── assignment.py
+│   │   ├── assignment_submission.py
+│   │   ├── quiz_attempt.py
+│   │   ├── quiz_attempt_answer.py
+│   │   ├── notification.py
+│   │   ├── announcement.py
+│   │   ├── audit_log.py
+│   │   ├── billing_plan.py               # PLANNED
+│   │   ├── subscription.py               # PLANNED
+│   │   ├── invoice.py                    # PLANNED
+│   │   └── payment_event.py              # PLANNED
 │   │
 │   ├── schemas/
-│   │   ├── __init__.py
-│   │   ├── announcement.py
 │   │   ├── assignment.py
 │   │   ├── assignment_submission.py
 │   │   ├── audit_log.py
@@ -388,538 +221,107 @@ mhike-school/
 │   │   ├── course.py
 │   │   ├── enrollment.py
 │   │   ├── exam_board.py
-│   │   ├── mcq_option.py
-│   │   ├── mcq_question.py
 │   │   ├── notification.py
 │   │   ├── quiz_attempt.py
-│   │   ├── quiz_attempt_answer.py
 │   │   ├── school.py
-│   │   ├── school_settings.py
-│   │   ├── topic.py
-│   │   └── user.py
+│   │   ├── user.py
+│   │   ├── billing.py                    # PLANNED
+│   │   ├── subscription.py               # PLANNED
+│   │   └── invoice.py                    # PLANNED
 │   │
 │   ├── repositories/
-│   │   ├── __init__.py
-│   │   ├── announcement.py
 │   │   ├── assignment.py
 │   │   ├── audit_log.py
 │   │   ├── class_group.py
 │   │   ├── content_item.py
 │   │   ├── course.py
-│   │   ├── enrollment.py
-│   │   ├── exam_board.py
-│   │   ├── mcq_option.py
-│   │   ├── mcq_question.py
 │   │   ├── notification.py
 │   │   ├── quiz_attempt.py
-│   │   ├── quiz_attempt_answer.py
 │   │   ├── school.py
-│   │   ├── school_settings.py
-│   │   ├── topic.py
-│   │   └── user.py
+│   │   ├── user.py
+│   │   └── billing.py                    # PLANNED
 │   │
 │   ├── services/
-│   │   ├── __init__.py
-│   │   ├── announcement_service.py
 │   │   ├── assignment_service.py
 │   │   ├── assignment_submission_service.py
 │   │   ├── audit_log_service.py
 │   │   ├── auth_service.py
 │   │   ├── class_service.py
 │   │   ├── content_admin_service.py
-│   │   ├── content_item_service.py
 │   │   ├── course_service.py
 │   │   ├── dashboard_service.py
-│   │   ├── enrollment_service.py
-│   │   ├── exam_board_service.py
 │   │   ├── notification_service.py
 │   │   ├── quiz_attempt_service.py
 │   │   ├── school_service.py
-│   │   ├── school_settings_service.py
 │   │   ├── school_user_service.py
-│   │   └── topic_service.py
-│   │
-│   ├── exceptions/
-│   │   ├── __init__.py
-│   │   ├── auth.py
-│   │   ├── content.py
-│   │   ├── handlers.py
-│   │   ├── permissions.py
-│   │   └── school.py
+│   │   ├── billing_service.py            # PLANNED
+│   │   ├── stripe_service.py             # PLANNED
+│   │   └── webhook_service.py            # PLANNED
 │   │
 │   ├── middleware/
-│   │   ├── __init__.py
-│   │   ├── logging.py
-│   │   └── request_context.py
-│   │
+│   ├── exceptions/
 │   ├── tasks/
-│   │   ├── __init__.py
 │   │   ├── email_tasks.py
 │   │   ├── notification_tasks.py
+│   │   ├── billing_tasks.py              # PLANNED
 │   │   └── worker.py
-│   │
 │   └── utils/
-│       ├── __init__.py
-│       ├── emails.py
-│       ├── helpers.py
-│       └── tokens.py
 │
 ├── alembic/
-│   ├── env.py
-│   ├── README
-│   ├── script.py.mako
 │   └── versions/
-│       ├── 0001_create_schools.py
-│       ├── 0002_create_school_settings.py
-│       ├── 0003_create_users.py
-│       ├── 0004_create_exam_boards.py
-│       ├── 0005_create_courses.py
-│       ├── 0006_create_topics.py
-│       ├── 0007_create_content_items.py
-│       ├── 0008_create_mcq_questions.py
-│       ├── 0009_create_mcq_options.py
-│       ├── 0010_create_classes.py
-│       ├── 0011_create_enrollments.py
-│       ├── 0012_create_assignments.py
-│       ├── 0013_create_quiz_attempts.py
-│       ├── 0014_create_quiz_attempt_answers.py
-│       ├── 0015_create_announcements.py
-│       ├── 0016_create_notifications.py
 │       ├── 0017_create_audit_logs.py
 │       ├── 0018_create_assignment_submissions.py
-│       └── d3ed01427113_add_user_lifecycle_fields.py
+│       ├── 0019_add_user_lifecycle_fields.py
+│       ├── 0020_create_billing_plans.py       # PLANNED
+│       ├── 0021_create_subscriptions.py       # PLANNED
+│       ├── 0022_create_invoices.py            # PLANNED
+│       └── 0023_create_payment_events.py      # PLANNED
 │
 ├── tests/
-│   ├── __init__.py
-│   ├── conftest.py
 │   ├── factories/
-│   │   ├── __init__.py
-│   │   ├── announcement.py
-│   │   ├── assignment.py
-│   │   ├── class_group.py
-│   │   ├── content_item.py
-│   │   ├── course.py
-│   │   ├── exam_board.py
-│   │   ├── school.py
-│   │   ├── topic.py
-│   │   ├── user.py
-│   │   └── audit_log.py
 │   ├── test_auth.py
-│   ├── test_gdpr_lifecycle.py
 │   ├── test_permissions.py
-│   ├── test_user_roles.py
-│   ├── test_schools.py
 │   ├── test_school_isolation.py
-│   ├── test_school_branding.py
 │   ├── test_platform_admin.py
 │   ├── test_school_admin.py
-│   ├── test_exam_boards.py
-│   ├── test_courses.py
-│   ├── test_topics.py
-│   ├── test_content_items.py
-│   ├── test_mcq_questions.py
 │   ├── test_assignments.py
 │   ├── test_assignment_submissions.py
-│   ├── test_quiz_attempts.py
-│   ├── test_classes.py
-│   ├── test_enrollments.py
-│   ├── test_announcements.py
-│   └── test_notifications.py
+│   ├── test_audit_logs.py
+│   └── billing/                         # PLANNED
+│       ├── test_billing.py
+│       ├── test_subscriptions.py
+│       └── test_webhooks.py
 │
 ├── scripts/
 │   ├── create_platform_admin.py
 │   ├── create_school_admin.py
-│   ├── reset_db.py
 │   ├── seed_exam_boards.py
 │   ├── seed_courses.py
 │   ├── seed_topics.py
 │   ├── seed_content.py
-│   └── seed_school.py
+│   ├── seed_school.py
+│   ├── seed_billing_plans.py            # PLANNED
+│   └── sync_stripe_products.py          # PLANNED
 │
 └── compliance/
-    ├── README.md
-    │
     ├── gdpr/
-    │   ├── gdpr_policy_v1.md
-    │   ├── data_retention_policy.md
-    │   ├── data_erasure_workflow.md
-    │   ├── lawful_basis.md
-    │   ├── data_inventory.md
-    │   ├── data_flow_diagram.md
-    │   └── dpa_template.md
-    │
     ├── policies/
     │   ├── privacy_policy.md
     │   ├── acceptable_use_policy.md
     │   ├── cookie_policy.md
     │   ├── security_policy.md
-    │   └── incident_response_policy.md
-    │
-    ├── templates/
-    │   ├── dsar_request_template.md
-    │   ├── breach_notification_template.md
-    │   ├── user_deletion_request.md
-    │   ├── admin_access_request.md
-    │   └── audit_request_template.md
-    │
-    ├── audit/
-    │   ├── audit_log_schema.md
-    │   ├── audit_events.md
-    │   ├── retention_rules.md
-    │   └── sample_audit_entries.json
-    │
-    ├── security/
-    │   ├── authentication.md
-    │   ├── authorization_model.md
-    │   ├── encryption.md
-    │   ├── secrets_management.md
-    │   └── rate_limiting.md
-    │
-    ├── operations/
-    │   ├── data_backup_policy.md
-    │   ├── disaster_recovery.md
-    │   ├── uptime_sla.md
-    │   └── monitoring_and_alerting.md
-    │
-    ├── training/
-    │   ├── staff_data_handling_guidelines.md
-    │   └── admin_best_practices.md
-    │
+    │   ├── incident_response_policy.md
+    │   ├── terms_of_service.md          # ADD
+    │   └── refund_policy.md             # PLANNED
     ├── records/
     │   ├── processing_activities.md
     │   ├── consent_records.md
-    │   └── third_party_processors.md
-    │
-    ├── mhike_gdpr_policy.docx
-    └── mhike_gdpr_policy.pdf
-
-## Updated Project Structure
-mhike-school/
-│
-├── mhike-school-web/
-│   ├── app/
-│   │   └── (dashboard)/
-│   │       ├── admin/
-│   │       │   ├── page.tsx                         # UPDATED: live dashboard + chart data
-│   │       │   ├── audit-logs/page.tsx              # NEW
-│   │       │   └── billing/                         # PLANNED
-│   │       │       ├── page.tsx
-│   │       │       ├── plans/page.tsx
-│   │       │       ├── subscriptions/page.tsx
-│   │       │       └── invoices/page.tsx
-│   │       │
-│   │       └── school-admin/
-│   │           └── billing/page.tsx                 # PLANNED
-│   │
-│   ├── components/
-│   │   ├── admin/
-│   │   │   ├── dashboard/
-│   │   │   ├── billing/                             # PLANNED
-│   │   │   └── tables/
-│   │   └── billing/                                 # PLANNED
-│   │       ├── PlanCard.tsx
-│   │       ├── SubscriptionStatus.tsx
-│   │       └── InvoiceTable.tsx
-│   │
-│   ├── lib/
-│   │   ├── hooks/
-│   │   │   ├── useAdminDashboard.ts                 # NEW
-│   │   │   └── useBilling.ts                        # PLANNED
-│   │   └── services/
-│   │       ├── platform-admin.ts
-│   │       └── billing.ts                           # PLANNED
-│   │
-│   └── types/
-│       ├── auditLog.ts
-│       └── billing.ts                               # PLANNED
-│
-├── app/
-│   ├── api/v1/endpoints/
-│   │   ├── platform_admin.py                        # UPDATED: audit logs + dashboard analytics
-│   │   ├── audit_logs.py
-│   │   ├── billing.py                               # PLANNED
-│   │   └── webhooks.py                              # PLANNED
-│   │
-│   ├── models/
-│   │   ├── audit_log.py
-│   │   ├── billing_plan.py                          # PLANNED
-│   │   ├── subscription.py                          # PLANNED
-│   │   ├── invoice.py                               # PLANNED
-│   │   └── payment_event.py                         # PLANNED
-│   │
-│   ├── schemas/
-│   │   ├── audit_log.py
-│   │   ├── billing.py                               # PLANNED
-│   │   ├── subscription.py                          # PLANNED
-│   │   └── invoice.py                               # PLANNED
-│   │
-│   ├── repositories/
-│   │   ├── audit_log.py
-│   │   └── billing.py                               # PLANNED
-│   │
-│   ├── services/
-│   │   ├── audit_log_service.py                     # UPDATED
-│   │   ├── billing_service.py                       # PLANNED
-│   │   ├── stripe_service.py                        # PLANNED
-│   │   └── webhook_service.py                       # PLANNED
-│   │
-│   └── tasks/
-│       ├── billing_tasks.py                         # PLANNED
-│       └── worker.py
-│
-├── alembic/
-│   └── versions/
-│       ├── b9731b07194b_create_audit_logs.py        # NEW
-│       ├── 0019_create_billing_plans.py             # PLANNED
-│       ├── 0020_create_subscriptions.py             # PLANNED
-│       ├── 0021_create_invoices.py                  # PLANNED
-│       └── 0022_create_payment_events.py            # PLANNED
-│
-├── tests/
-│   ├── test_audit_logs.py                           # PLANNED
-│   ├── test_billing.py                              # PLANNED
-│   ├── test_subscriptions.py                        # PLANNED
-│   └── test_payment_webhooks.py                     # PLANNED
-│
-├── scripts/
-│   ├── seed_billing_plans.py                        # PLANNED
-│   └── sync_stripe_products.py                      # PLANNED
-│
-└── compliance/
-    ├── policies/
-    │   ├── terms_of_service.md                      # MISSING FROM YOUR LIST
-    │   └── refund_policy.md                         # PLANNED
-    │
-    ├── records/
-    │   └── payment_processing_records.md            # PLANNED
-    │
-    └── billing/                                     # PLANNED
+    │   ├── third_party_processors.md
+    │   └── payment_processing_records.md # PLANNED
+    └── billing/                         # PLANNED
         ├── payment_security.md
         ├── subscription_terms.md
         └── stripe_webhook_policy.md
-
-mhike-school/
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-├── README.md
-├── Makefile
-│
-├── mhike-school-web/
-│   ├── app/
-│   │   └── (dashboard)/
-│   │       ├── admin/
-│   │       │   ├── page.tsx
-│   │       │   ├── audit-logs/page.tsx
-│   │       │   └── billing/
-│   │       │       ├── page.tsx
-│   │       │       ├── plans/page.tsx
-│   │       │       ├── subscriptions/page.tsx
-│   │       │       └── invoices/page.tsx
-│   │       │
-│   │       └── school-admin/
-│   │           └── billing/page.tsx
-│   │
-│   ├── components/
-│   │   ├── admin/
-│   │   │   ├── dashboard/
-│   │   │   ├── billing/
-│   │   │   └── tables/
-│   │   └── billing/
-│   │       ├── PlanCard.tsx
-│   │       ├── SubscriptionStatus.tsx
-│   │       └── InvoiceTable.tsx
-│   │
-│   ├── lib/
-│   │   ├── hooks/
-│   │   │   ├── useAdminDashboard.ts
-│   │   │   └── useBilling.ts
-│   │   └── services/
-│   │       ├── platform-admin.ts
-│   │       └── billing.ts
-│   │
-│   └── types/
-│       ├── auditLog.ts
-│       └── billing.ts
-│
-├── app/
-│   ├── api/v1/endpoints/
-│   │   ├── platform_admin.py
-│   │   ├── audit_logs.py
-│   │   ├── billing.py
-│   │   └── webhooks.py
-│   │
-│   ├── models/
-│   │   ├── audit_log.py
-│   │   ├── billing_plan.py
-│   │   ├── subscription.py
-│   │   ├── invoice.py
-│   │   └── payment_event.py
-│   │
-│   ├── schemas/
-│   │   ├── audit_log.py
-│   │   ├── billing.py
-│   │   ├── subscription.py
-│   │   └── invoice.py
-│   │
-│   ├── repositories/
-│   │   ├── audit_log.py
-│   │   └── billing.py
-│   │
-│   ├── services/
-│   │   ├── audit_log_service.py
-│   │   ├── billing_service.py
-│   │   ├── stripe_service.py
-│   │   └── webhook_service.py
-│   │
-│   └── tasks/
-│       ├── billing_tasks.py
-│       └── worker.py
-│
-├── alembic/
-│   └── versions/
-│       ├── 0017_create_audit_logs.py
-│       ├── 0018_create_assignment_submissions.py
-│       ├── 0019_add_user_lifecycle_fields.py
-│       ├── 0020_create_billing_plans.py
-│       ├── 0021_create_subscriptions.py
-│       ├── 0022_create_invoices.py
-│       └── 0023_create_payment_events.py
-│
-├── tests/
-│   ├── test_audit_logs.py
-│   ├── test_billing.py
-│   ├── test_subscriptions.py
-│   ├── test_payment_webhooks.py
-│   └── ...
-│
-├── scripts/
-│   ├── seed_billing_plans.py
-│   ├── sync_stripe_products.py
-│   └── ...
-│
-└── compliance/
-    ├── policies/
-    │   ├── terms_of_service.md
-    │   ├── refund_policy.md
-    │   └── ...
-    │
-    ├── records/
-    │   ├── payment_processing_records.md
-    │   └── ...
-    │
-    └── billing/
-        ├── payment_security.md
-        ├── subscription_terms.md
-        └── stripe_webhook_policy.md
----
-mhike-school/
-│
-├── mhike-school-web/
-│   ├── app/(dashboard)/
-│   │   ├── admin/
-│   │   │   ├── page.tsx
-│   │   │   ├── audit-logs/page.tsx
-│   │   │   └── billing/                  # 🟡 FEATURE-FLAGGED
-│   │   │       ├── page.tsx
-│   │   │       ├── plans/page.tsx
-│   │   │       ├── subscriptions/page.tsx
-│   │   │       └── invoices/page.tsx
-│   │   │
-│   │   └── school-admin/
-│   │       └── billing/page.tsx         # 🟡 future
-│
-│   ├── components/
-│   │   ├── billing/                     # 🟡 isolated domain
-│   │   │   ├── PlanCard.tsx
-│   │   │   ├── SubscriptionStatus.tsx
-│   │   │   └── InvoiceTable.tsx
-│   │   └── admin/
-│   │       ├── dashboard/
-│   │       └── tables/
-│
-│   ├── lib/
-│   │   ├── hooks/
-│   │   │   ├── useAdminDashboard.ts
-│   │   │   └── useBilling.ts            # 🟡 future
-│   │   └── services/
-│   │       ├── platform-admin.ts
-│   │       └── billing.ts               # 🟡 API wrapper
-│
-│   └── types/
-│       ├── auditLog.ts
-│       └── billing.ts                  # 🟡 contracts only
-│
-├── app/
-│   ├── api/v1/endpoints/
-│   │   ├── platform_admin.py
-│   │   ├── audit_logs.py
-│   │   ├── billing.py                  # 🟡 disabled routes
-│   │   └── webhooks.py                 # 🟡 Stripe entrypoint
-│
-│   ├── models/
-│   │   ├── audit_log.py
-│   │   ├── billing_plan.py             # 🟡
-│   │   ├── subscription.py             # 🟡
-│   │   ├── invoice.py                  # 🟡
-│   │   └── payment_event.py            # 🟡
-│
-│   ├── schemas/
-│   │   ├── audit_log.py
-│   │   ├── billing.py                  # 🟡
-│   │   ├── subscription.py
-│   │   └── invoice.py
-│
-│   ├── repositories/
-│   │   ├── audit_log.py
-│   │   └── billing.py                  # 🟡
-│
-│   ├── services/
-│   │   ├── audit_log_service.py
-│   │   ├── billing_service.py          # 🟡 domain logic
-│   │   ├── stripe_service.py           # 🟡 integration layer
-│   │   └── webhook_service.py          # 🟡 event processor
-│
-│   ├── tasks/
-│   │   ├── billing_tasks.py            # 🟡 retries, async sync
-│   │   └── worker.py
-│
-│   └── core/
-│       └── feature_flags.py            # ✅ ADD THIS
-│
-├── alembic/
-│   └── versions/
-│       ├── 0017_create_audit_logs.py
-│       ├── 0018_create_assignment_submissions.py
-│       ├── 0019_add_user_lifecycle_fields.py
-│       ├── 0020_create_billing_plans.py      # 🟡
-│       ├── 0021_create_subscriptions.py      # 🟡
-│       ├── 0022_create_invoices.py           # 🟡
-│       └── 0023_create_payment_events.py     # 🟡
-│
-├── tests/
-│   ├── test_audit_logs.py
-│   ├── billing/                         # 🟡 separate domain tests
-│   │   ├── test_billing.py
-│   │   ├── test_subscriptions.py
-│   │   └── test_webhooks.py
-│
-├── scripts/
-│   ├── seed_billing_plans.py            # 🟡
-│   ├── sync_stripe_products.py          # 🟡
-│
-└── compliance/
-    ├── policies/
-    │   ├── terms_of_service.md
-    │   ├── refund_policy.md             # 🟡
-    │
-    ├── billing/                         # 🟡 NEW DOMAIN
-    │   ├── payment_security.md
-    │   ├── subscription_terms.md
-    │   └── stripe_webhook_policy.md
-    │
-    └── records/
-        └── payment_processing_records.md
 ## 🏆 Why this is FINAL (no more restructuring)
 
 This structure gives you:
