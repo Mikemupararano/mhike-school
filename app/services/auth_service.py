@@ -15,7 +15,6 @@ class AuthService:
         raw_role = role.value if isinstance(role, UserRole) else role
         normalised_role = (raw_role or UserRole.STUDENT.value).strip().lower()
 
-        # Backward compatibility
         if normalised_role == "admin":
             normalised_role = UserRole.SCHOOL_ADMIN.value
 
@@ -29,13 +28,6 @@ class AuthService:
         role: str | UserRole | None = None,
         roles: list[str | UserRole] | None = None,
     ) -> list[UserRole]:
-        """
-        Supports both old single-role payloads and new multi-role payloads.
-
-        Examples:
-        - role="teacher" -> ["teacher"]
-        - roles=["school_admin", "teacher"] -> ["school_admin", "teacher"]
-        """
         raw_roles = roles if roles else [role or UserRole.STUDENT]
 
         normalised_roles: list[UserRole] = []
@@ -52,11 +44,6 @@ class AuthService:
 
     @staticmethod
     def _get_primary_role(roles: list[UserRole]) -> UserRole:
-        """
-        Legacy users.role compatibility.
-
-        Priority matters because users.role can only store one role.
-        """
         priority = [
             UserRole.PLATFORM_ADMIN,
             UserRole.SCHOOL_ADMIN,
@@ -130,7 +117,7 @@ class AuthService:
             email=normalised_email,
             hashed_password=get_password_hash(payload.password),
             full_name=payload.full_name.strip() if payload.full_name else None,
-            role=primary_role,  # legacy compatibility column
+            role=primary_role,
             school_id=school_id,
             is_active=True,
             status=UserStatus.ACTIVE,
@@ -140,12 +127,7 @@ class AuthService:
         await db.flush()
 
         for role in requested_roles:
-            db.add(
-                UserRoleAssignment(
-                    user_id=user.id,
-                    role=role,
-                )
-            )
+            db.add(UserRoleAssignment(user_id=user.id, role=role))
 
         try:
             await db.commit()
@@ -180,7 +162,7 @@ class AuthService:
         if payload.school_id is None:
             query = query.where(
                 User.school_id.is_(None),
-                User.role == UserRole.PLATFORM_ADMIN,
+                User.user_roles.any(UserRoleAssignment.role == UserRole.PLATFORM_ADMIN),
             )
         else:
             query = query.where(User.school_id == payload.school_id)
@@ -202,8 +184,8 @@ class AuthService:
             data={
                 "sub": str(user.id),
                 "school_id": user.school_id,
-                "role": user.primary_role,  # temporary legacy support
-                "roles": user.roles,  # new multi-role payload
+                "role": user.primary_role,
+                "roles": user.roles,
             }
         )
 
