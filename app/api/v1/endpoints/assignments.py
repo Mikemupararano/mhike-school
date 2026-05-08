@@ -21,6 +21,34 @@ from app.services.assignment_service import (
 router = APIRouter()
 
 
+def has_role(user: User, role: UserRole) -> bool:
+    return role.value in set(user.roles)
+
+
+def is_platform_admin(user: User) -> bool:
+    return has_role(user, UserRole.PLATFORM_ADMIN)
+
+
+def is_teacher_only_for_assignment(user: User, assignment_created_by: int) -> bool:
+    return (
+        has_role(user, UserRole.TEACHER)
+        and not has_role(user, UserRole.SCHOOL_ADMIN)
+        and not has_role(user, UserRole.PLATFORM_ADMIN)
+        and assignment_created_by != user.id
+    )
+
+
+def ensure_assignment_school_access(user: User, assignment_school_id: int) -> None:
+    if is_platform_admin(user):
+        return
+
+    if assignment_school_id != user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assignment does not belong to your school",
+        )
+
+
 @router.post("", response_model=AssignmentOut, status_code=status.HTTP_201_CREATED)
 async def create_assignment_endpoint(
     payload: AssignmentCreate,
@@ -59,7 +87,7 @@ async def list_my_student_assignments(
 ):
     PermissionService.ensure_active_user(current_user)
 
-    if current_user.role != UserRole.STUDENT:
+    if not has_role(current_user, UserRole.STUDENT):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only students can view this resource",
@@ -77,15 +105,7 @@ async def get_assignment_endpoint(
     PermissionService.ensure_active_user(current_user)
 
     assignment = await get_assignment(db, assignment_id)
-
-    if current_user.role == UserRole.PLATFORM_ADMIN:
-        return assignment
-
-    if assignment.school_id != current_user.school_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assignment does not belong to your school",
-        )
+    ensure_assignment_school_access(current_user, assignment.school_id)
 
     return assignment
 
@@ -101,23 +121,12 @@ async def update_assignment_endpoint(
     PermissionService.ensure_can_teach(current_user)
 
     assignment = await get_assignment(db, assignment_id)
+    ensure_assignment_school_access(current_user, assignment.school_id)
 
-    if (
-        current_user.role == UserRole.TEACHER
-        and assignment.created_by != current_user.id
-    ):
+    if is_teacher_only_for_assignment(current_user, assignment.created_by):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only update your own assignments",
-        )
-
-    if (
-        current_user.role != UserRole.PLATFORM_ADMIN
-        and assignment.school_id != current_user.school_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assignment does not belong to your school",
         )
 
     if payload.title is not None:
@@ -148,23 +157,12 @@ async def publish_assignment_endpoint(
     PermissionService.ensure_can_teach(current_user)
 
     assignment = await get_assignment(db, assignment_id)
+    ensure_assignment_school_access(current_user, assignment.school_id)
 
-    if (
-        current_user.role == UserRole.TEACHER
-        and assignment.created_by != current_user.id
-    ):
+    if is_teacher_only_for_assignment(current_user, assignment.created_by):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only publish your own assignments",
-        )
-
-    if (
-        current_user.role != UserRole.PLATFORM_ADMIN
-        and assignment.school_id != current_user.school_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assignment does not belong to your school",
         )
 
     assignment.is_published = payload.is_published
@@ -185,23 +183,12 @@ async def delete_assignment_endpoint(
     PermissionService.ensure_can_teach(current_user)
 
     assignment = await get_assignment(db, assignment_id)
+    ensure_assignment_school_access(current_user, assignment.school_id)
 
-    if (
-        current_user.role == UserRole.TEACHER
-        and assignment.created_by != current_user.id
-    ):
+    if is_teacher_only_for_assignment(current_user, assignment.created_by):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only delete your own assignments",
-        )
-
-    if (
-        current_user.role != UserRole.PLATFORM_ADMIN
-        and assignment.school_id != current_user.school_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assignment does not belong to your school",
         )
 
     await db.delete(assignment)
