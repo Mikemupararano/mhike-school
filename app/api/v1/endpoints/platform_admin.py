@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +13,7 @@ from app.models.course import Course
 from app.models.enrollment import Enrollment
 from app.models.school import School
 from app.models.user import User, UserRole, UserStatus
+from app.models.user_role import UserRoleAssignment
 from app.schemas.school import SchoolCreate, SchoolOut
 from app.schemas.user import UserCreate, UserOut
 from app.services.audit_log_service import log_audit_event
@@ -26,6 +27,10 @@ def _ensure_platform_admin(current_user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform admin access required",
         )
+
+
+def _role_filter(role: UserRole):
+    return User.user_roles.any(UserRoleAssignment.role == role)
 
 
 @router.get("/dashboard")
@@ -109,7 +114,7 @@ async def platform_admin_dashboard(
             select(User)
             .where(
                 User.school_id == school.id,
-                User.role == UserRole.SCHOOL_ADMIN,
+                _role_filter(UserRole.SCHOOL_ADMIN),
             )
             .order_by(User.id.asc())
             .limit(1)
@@ -333,7 +338,10 @@ async def create_school_admin(
 
     db.add(user)
     await db.flush()
-    await db.refresh(user)
+
+    db.add(UserRoleAssignment(user_id=user.id, role=UserRole.SCHOOL_ADMIN))
+    await db.flush()
+    await db.refresh(user, attribute_names=["school", "user_roles"])
 
     await log_audit_event(
         db,
@@ -345,14 +353,15 @@ async def create_school_admin(
         school_id=school_id,
         metadata={
             "email": user.email,
-            "role": str(user.role),
+            "role": user.role.value,
+            "roles": user.roles,
             "full_name": user.full_name,
             "created_by_endpoint": "platform_admin_create_school_admin",
         },
     )
 
     await db.commit()
-    await db.refresh(user)
+    await db.refresh(user, attribute_names=["school", "user_roles"])
 
     return UserOut(
         id=user.id,
@@ -380,7 +389,10 @@ async def platform_admin_users(
 ):
     _ensure_platform_admin(current_user)
 
-    query = select(User).options(selectinload(User.school))
+    query = select(User).options(
+        selectinload(User.school),
+        selectinload(User.user_roles),
+    )
     count_query = select(func.count()).select_from(User)
     filters = []
 
@@ -396,7 +408,7 @@ async def platform_admin_users(
                 detail="Invalid role filter",
             ) from exc
 
-        filters.append(User.role == role_enum)
+        filters.append(_role_filter(role_enum))
 
     if search:
         term = f"%{search.strip()}%"
@@ -518,13 +530,21 @@ async def platform_admin_update_user_role(
             detail="User not found",
         )
 
+    await db.refresh(user, attribute_names=["user_roles"])
+
     if user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot modify platform admin role",
         )
 
-    previous_role = user.role
+    previous_roles = list(user.roles)
+
+    await db.execute(
+        delete(UserRoleAssignment).where(UserRoleAssignment.user_id == user.id)
+    )
+
+    db.add(UserRoleAssignment(user_id=user.id, role=role_enum))
     user.role = role_enum
 
     await log_audit_event(
@@ -537,13 +557,13 @@ async def platform_admin_update_user_role(
         school_id=user.school_id,
         metadata={
             "email": user.email,
-            "previous_role": str(previous_role),
-            "new_role": str(role_enum),
+            "previous_roles": previous_roles,
+            "new_roles": [role_enum.value],
         },
     )
 
     await db.commit()
-    await db.refresh(user)
+    await db.refresh(user, attribute_names=["school", "user_roles"])
 
     return {
         "id": user.id,
