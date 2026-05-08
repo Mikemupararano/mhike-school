@@ -1,9 +1,11 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
 from app.models import User
 from app.models.user import UserRole, UserStatus
+from app.models.user_role import UserRoleAssignment
 
 
 async def bootstrap_admin(
@@ -25,12 +27,28 @@ async def bootstrap_admin(
     if not enabled or not email or not password:
         return
 
-    res = await db.execute(select(User).where(User.email == email))
+    normalized_email = email.strip().lower()
+
+    res = await db.execute(
+        select(User)
+        .options(selectinload(User.user_roles))
+        .where(User.email == normalized_email)
+    )
     user = res.scalars().first()
 
     if user:
         updated = False
 
+        if not user.has_role(UserRole.PLATFORM_ADMIN):
+            db.add(
+                UserRoleAssignment(
+                    user_id=user.id,
+                    role=UserRole.PLATFORM_ADMIN,
+                )
+            )
+            updated = True
+
+        # Legacy compatibility column
         if user.role != UserRole.PLATFORM_ADMIN:
             user.role = UserRole.PLATFORM_ADMIN
             updated = True
@@ -57,7 +75,7 @@ async def bootstrap_admin(
         return
 
     admin_user = User(
-        email=email,
+        email=normalized_email,
         hashed_password=hash_password(password),
         role=UserRole.PLATFORM_ADMIN,
         status=UserStatus.ACTIVE,
@@ -66,4 +84,13 @@ async def bootstrap_admin(
     )
 
     db.add(admin_user)
+    await db.flush()
+
+    db.add(
+        UserRoleAssignment(
+            user_id=admin_user.id,
+            role=UserRole.PLATFORM_ADMIN,
+        )
+    )
+
     await db.commit()
