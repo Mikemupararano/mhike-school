@@ -17,16 +17,16 @@ const BORDER = "rgba(255,255,255,0.10)";
 const SOFT_TEXT = "rgba(255,255,255,0.84)";
 
 function resolveRedirectPath(user: CurrentUser): string {
-  const roles = Array.isArray(user.roles) ? user.roles : [];
+  const roles = Array.from(
+    new Set([
+      ...(Array.isArray(user.roles) ? user.roles : []),
+      ...(user.role ? [user.role] : []),
+    ]),
+  );
 
   if (roles.includes(UserRole.PLATFORM_ADMIN)) return "/admin";
   if (roles.includes(UserRole.SCHOOL_ADMIN)) return "/school-admin";
   if (roles.includes(UserRole.TEACHER)) return "/teacher";
-  if (roles.includes(UserRole.STUDENT)) return "/student";
-
-  if (user.role === UserRole.PLATFORM_ADMIN) return "/admin";
-  if (user.role === UserRole.SCHOOL_ADMIN) return "/school-admin";
-  if (user.role === UserRole.TEACHER) return "/teacher";
 
   return "/student";
 }
