@@ -24,18 +24,21 @@ export default function AdminCreateUserPage() {
 
   useEffect(() => {
     async function loadSchools() {
-      const data = await apiGet<School[]>("/admin/schools");
-      setSchools(data);
+      try {
+        const data = await apiGet<School[]>("/admin/schools");
+        setSchools(data);
+      } catch (err) {
+        console.error(err);
+        setError("Failed to load schools.");
+      }
     }
 
-    loadSchools().catch((err) => {
-      console.error(err);
-      setError("Failed to load schools.");
-    });
+    loadSchools();
   }, []);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
     setError("");
 
     if (!schoolId) {
@@ -55,6 +58,7 @@ export default function AdminCreateUserPage() {
         full_name: fullName.trim() || null,
         email: email.trim().toLowerCase(),
         password,
+        school_id: Number(schoolId),
         role: "school_admin",
         roles: ["school_admin"],
       });
@@ -63,7 +67,12 @@ export default function AdminCreateUserPage() {
       router.refresh();
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : "Failed to create user.");
+
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Failed to create school admin.");
+      }
     } finally {
       setLoading(false);
     }
@@ -71,28 +80,39 @@ export default function AdminCreateUserPage() {
 
   return (
     <div className="max-w-xl p-8">
-      <h1 className="text-3xl font-extrabold">Create School Admin</h1>
+      <h1 className="text-3xl font-extrabold">
+        Create School Admin
+      </h1>
 
       <p className="mt-2 text-slate-500">
         Add a school administrator to a selected school.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+      <form
+        onSubmit={handleSubmit}
+        className="mt-6 space-y-4"
+      >
         <select
           value={schoolId}
           onChange={(e) => setSchoolId(e.target.value)}
           className="w-full rounded-xl border px-4 py-3"
         >
-          <option value="">Select school</option>
+          <option value="">
+            Select school
+          </option>
 
           {schools.map((school) => (
-            <option key={school.id} value={school.id}>
+            <option
+              key={school.id}
+              value={school.id}
+            >
               {school.id} — {school.name}
             </option>
           ))}
         </select>
 
         <input
+          type="text"
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
           placeholder="Full name"
@@ -115,11 +135,11 @@ export default function AdminCreateUserPage() {
           className="w-full rounded-xl border px-4 py-3"
         />
 
-        {error ? (
+        {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
             {error}
           </div>
-        ) : null}
+        )}
 
         <div className="flex gap-3">
           <button
@@ -127,7 +147,9 @@ export default function AdminCreateUserPage() {
             disabled={loading}
             className="rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
           >
-            {loading ? "Creating..." : "Create School Admin"}
+            {loading
+              ? "Creating..."
+              : "Create School Admin"}
           </button>
 
           <button

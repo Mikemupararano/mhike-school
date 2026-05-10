@@ -32,24 +32,46 @@ function resolveRedirectPath(user: CurrentUser): string {
 }
 
 function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-
-  if (
-    typeof err === "object" &&
-    err !== null &&
-    "error" in err &&
-    typeof (err as { error?: { message?: unknown } }).error?.message === "string"
-  ) {
-    return (err as { error: { message: string } }).error.message;
+  if (err instanceof Error) {
+    return err.message;
   }
 
-  if (
-    typeof err === "object" &&
-    err !== null &&
-    "message" in err &&
-    typeof (err as { message?: unknown }).message === "string"
-  ) {
-    return (err as { message: string }).message;
+  if (typeof err === "string") {
+    return err;
+  }
+
+  if (typeof err === "object" && err !== null) {
+    const maybeError = err as {
+      detail?: unknown;
+      message?: unknown;
+      error?: unknown;
+    };
+
+    if (typeof maybeError.detail === "string") {
+      return maybeError.detail;
+    }
+
+    if (
+      typeof maybeError.detail === "object" &&
+      maybeError.detail !== null &&
+      "message" in maybeError.detail
+    ) {
+      return String((maybeError.detail as { message?: unknown }).message);
+    }
+
+    if (typeof maybeError.message === "string") {
+      return maybeError.message;
+    }
+
+    if (
+      typeof maybeError.error === "object" &&
+      maybeError.error !== null &&
+      "message" in maybeError.error
+    ) {
+      return String((maybeError.error as { message?: unknown }).message);
+    }
+
+    return JSON.stringify(maybeError, null, 2);
   }
 
   return "Login failed.";
@@ -104,7 +126,10 @@ export default function LoginPage() {
 
       const payload =
         mode === "platform_admin"
-          ? { email: trimmedEmail, password: trimmedPassword }
+          ? {
+            email: trimmedEmail,
+            password: trimmedPassword,
+          }
           : {
             email: trimmedEmail,
             password: trimmedPassword,
@@ -116,8 +141,10 @@ export default function LoginPage() {
       saveToken(res.access_token);
 
       const user = await getCurrentUser(res.access_token);
+
       router.push(resolveRedirectPath(user));
     } catch (err) {
+      console.error("Login error:", err);
       setError(getErrorMessage(err));
     } finally {
       setLoading(false);
@@ -306,6 +333,8 @@ export default function LoginPage() {
           font-size: 18px;
           font-weight: 700;
           line-height: 1.6;
+          white-space: pre-wrap;
+          word-break: break-word;
         }
 
         @media (max-width: 1199px) {
@@ -493,6 +522,7 @@ export default function LoginPage() {
           <section className="right-card">
             <div style={{ marginBottom: 32 }}>
               <h2 className="right-title">Welcome back</h2>
+
               <p className="right-subtitle">
                 Sign in to continue to your dashboard.
               </p>
@@ -555,6 +585,7 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} className="form-grid">
               <label className="field">
                 <span className="field-label">Email</span>
+
                 <input
                   type="email"
                   value={email}
@@ -567,6 +598,7 @@ export default function LoginPage() {
 
               <label className="field">
                 <span className="field-label">Password</span>
+
                 <input
                   type="password"
                   value={password}
@@ -580,6 +612,7 @@ export default function LoginPage() {
               {needsSchoolId ? (
                 <label className="field">
                   <span className="field-label">School ID</span>
+
                   <input
                     type="number"
                     value={schoolId}
@@ -602,7 +635,9 @@ export default function LoginPage() {
                   cursor: loading ? "not-allowed" : "pointer",
                 }}
                 onMouseEnter={(e) => {
-                  if (!loading) e.currentTarget.style.transform = "translateY(-2px)";
+                  if (!loading) {
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                  }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.transform = "translateY(0)";

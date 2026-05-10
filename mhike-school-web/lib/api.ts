@@ -45,15 +45,28 @@ async function handle<T>(res: Response): Promise<T> {
 
             if (contentType.includes("application/json")) {
                 const data = await res.json();
-                message =
-                    data?.detail ??
-                    data?.message ??
-                    data?.error ??
-                    JSON.stringify(data);
+
+                if (typeof data?.detail === "string") {
+                    message = data.detail;
+                } else if (typeof data?.message === "string") {
+                    message = data.message;
+                } else if (typeof data?.error === "string") {
+                    message = data.error;
+                } else if (
+                    typeof data?.error === "object" &&
+                    data.error !== null &&
+                    typeof data.error.message === "string"
+                ) {
+                    message = data.error.message;
+                } else {
+                    message = JSON.stringify(data);
+                }
             } else {
                 message = await res.text();
             }
-        } catch { }
+        } catch {
+            // Keep default message.
+        }
 
         if (res.status === 401 || res.status === 403) {
             clearToken();
