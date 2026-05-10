@@ -5,33 +5,52 @@ import { useRouter } from "next/navigation";
 
 import { apiGet, apiPost } from "@/lib/api";
 
-type School = {
+type CurrentUser = {
   id: number;
-  name: string;
+  email: string;
+  school_id?: number | null;
 };
 
-export default function AdminCreateUserPage() {
+export default function SchoolAdminCreateUserPage() {
   const router = useRouter();
 
-  const [schools, setSchools] = useState<School[]>([]);
-  const [schoolId, setSchoolId] = useState("");
+  const [schoolId, setSchoolId] = useState<number | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState("teacher");
 
-  const [loading, setLoading] = useState(false);
+  const [loadingUser, setLoadingUser] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    async function loadSchools() {
-      const data = await apiGet<School[]>("/admin/schools");
-      setSchools(data);
+    async function loadCurrentUser() {
+      try {
+        setLoadingUser(true);
+        setError("");
+
+        const user = await apiGet<CurrentUser>("/auth/me");
+
+        if (!user.school_id) {
+          setError("Your account is not assigned to a school.");
+          return;
+        }
+
+        setSchoolId(user.school_id);
+      } catch (err) {
+        console.error(err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load current user.",
+        );
+      } finally {
+        setLoadingUser(false);
+      }
     }
 
-    loadSchools().catch((err) => {
-      console.error(err);
-      setError("Failed to load schools.");
-    });
+    loadCurrentUser();
   }, []);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -39,7 +58,7 @@ export default function AdminCreateUserPage() {
     setError("");
 
     if (!schoolId) {
-      setError("Please select a school.");
+      setError("School ID could not be resolved.");
       return;
     }
 
@@ -49,50 +68,48 @@ export default function AdminCreateUserPage() {
     }
 
     try {
-      setLoading(true);
+      setSubmitting(true);
 
-      await apiPost(`/admin/schools/${schoolId}/admins`, {
+      await apiPost("/school-admin/users", {
         full_name: fullName.trim() || null,
         email: email.trim().toLowerCase(),
         password,
-        role: "school_admin",
-        roles: ["school_admin"],
+        school_id: schoolId,
+        role,
+        roles: [role],
       });
 
-      router.push("/admin/users");
+      router.push("/school-admin/users");
       router.refresh();
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : "Failed to create user.");
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create user.",
+      );
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
   return (
     <div className="max-w-xl p-8">
-      <h1 className="text-3xl font-extrabold">Create School Admin</h1>
+      <h1 className="text-3xl font-extrabold">
+        Create User
+      </h1>
 
       <p className="mt-2 text-slate-500">
-        Add a school administrator to a selected school.
+        Add a teacher or student to your school.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <select
-          value={schoolId}
-          onChange={(e) => setSchoolId(e.target.value)}
-          className="w-full rounded-xl border px-4 py-3"
-        >
-          <option value="">Select school</option>
-
-          {schools.map((school) => (
-            <option key={school.id} value={school.id}>
-              {school.id} — {school.name}
-            </option>
-          ))}
-        </select>
-
+      <form
+        onSubmit={handleSubmit}
+        className="mt-6 space-y-4"
+      >
         <input
+          type="text"
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
           placeholder="Full name"
@@ -115,6 +132,15 @@ export default function AdminCreateUserPage() {
           className="w-full rounded-xl border px-4 py-3"
         />
 
+        <select
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+          className="w-full rounded-xl border px-4 py-3"
+        >
+          <option value="teacher">Teacher</option>
+          <option value="student">Student</option>
+        </select>
+
         {error ? (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
             {error}
@@ -124,15 +150,15 @@ export default function AdminCreateUserPage() {
         <div className="flex gap-3">
           <button
             type="submit"
-            disabled={loading}
+            disabled={submitting || loadingUser}
             className="rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
           >
-            {loading ? "Creating..." : "Create School Admin"}
+            {submitting ? "Creating..." : "Create User"}
           </button>
 
           <button
             type="button"
-            onClick={() => router.push("/admin/users")}
+            onClick={() => router.push("/school-admin/users")}
             className="rounded-xl border px-6 py-3 font-semibold"
           >
             Cancel
