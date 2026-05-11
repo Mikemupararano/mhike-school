@@ -1,10 +1,31 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+
+    if isinstance(value, Exception):
+        return str(value)
+
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+
+    return str(value)
 
 
 def error_response(
@@ -23,7 +44,7 @@ def error_response(
     }
 
     if details is not None:
-        payload["error"]["details"] = details
+        payload["error"]["details"] = _json_safe(details)
 
     return JSONResponse(status_code=status_code, content=payload)
 
