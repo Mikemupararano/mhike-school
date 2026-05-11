@@ -13,61 +13,57 @@ type DashboardShellWrapperProps = {
     children: ReactNode;
 };
 
-type CurrentUserWithOptionalNames = CurrentUser & {
-    fullName?: string | null;
-    first_name?: string | null;
-    last_name?: string | null;
-    firstName?: string | null;
-    lastName?: string | null;
-    name?: string | null;
-};
-
 function formatEmailFallback(email?: string | null): string {
-    if (!email) return "User";
+    if (!email) {
+        return "User";
+    }
 
     const localPart = email.split("@")[0] || "";
-    const cleaned = localPart.replace(/[._-]+/g, " ").trim();
 
-    if (!cleaned) return "User";
+    const cleaned = localPart
+        .replace(/[._-]+/g, " ")
+        .trim();
+
+    if (!cleaned) {
+        return "User";
+    }
 
     return cleaned
         .split(" ")
         .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .map(
+            (part) =>
+                part.charAt(0).toUpperCase() +
+                part.slice(1),
+        )
         .join(" ");
 }
 
-function getDisplayName(user: CurrentUser): string {
-    const candidate = user as CurrentUserWithOptionalNames;
-
-    const fullNameFromSnakeCase = [candidate.first_name, candidate.last_name]
-        .filter(Boolean)
-        .join(" ")
-        .trim();
-
-    const fullNameFromCamelCase = [candidate.firstName, candidate.lastName]
-        .filter(Boolean)
-        .join(" ")
-        .trim();
-
-    const resolvedName =
-        candidate.full_name?.trim() ||
-        candidate.fullName?.trim() ||
-        fullNameFromSnakeCase ||
-        fullNameFromCamelCase ||
-        candidate.name?.trim();
-
-    return resolvedName || formatEmailFallback(user.email);
+function getDisplayName(
+    user: CurrentUser,
+): string {
+    return (
+        user.full_name?.trim() ||
+        formatEmailFallback(user.email)
+    );
 }
 
-function resolvePrimaryRole(user: CurrentUser): UserRole {
-    const roles = Array.isArray(user.roles) ? user.roles : [];
+function resolvePrimaryRole(
+    user: CurrentUser,
+): UserRole {
+    const roles = Array.isArray(user.roles)
+        ? user.roles
+        : [];
 
-    if (roles.includes(UserRole.PLATFORM_ADMIN)) {
+    if (
+        roles.includes(UserRole.PLATFORM_ADMIN)
+    ) {
         return UserRole.PLATFORM_ADMIN;
     }
 
-    if (roles.includes(UserRole.SCHOOL_ADMIN)) {
+    if (
+        roles.includes(UserRole.SCHOOL_ADMIN)
+    ) {
         return UserRole.SCHOOL_ADMIN;
     }
 
@@ -86,8 +82,12 @@ export default function DashboardShellWrapper({
     children,
 }: DashboardShellWrapperProps) {
     const router = useRouter();
-    const [user, setUser] = useState<CurrentUser | null>(null);
-    const [loading, setLoading] = useState(true);
+
+    const [user, setUser] =
+        useState<CurrentUser | null>(null);
+
+    const [loading, setLoading] =
+        useState(true);
 
     useEffect(() => {
         async function loadUser() {
@@ -95,16 +95,25 @@ export default function DashboardShellWrapper({
 
             if (!token) {
                 setLoading(false);
+
                 router.replace("/login");
+
                 return;
             }
 
             try {
-                const me = await getCurrentUser(token);
+                const me =
+                    await getCurrentUser(token);
+
                 setUser(me);
             } catch (err) {
-                console.error("Auth error:", err);
+                console.error(
+                    "Auth error:",
+                    err,
+                );
+
                 clearToken();
+
                 router.replace("/login");
             } finally {
                 setLoading(false);
@@ -126,21 +135,31 @@ export default function DashboardShellWrapper({
         return null;
     }
 
-    const resolvedRole = resolvePrimaryRole(user);
+    const resolvedRole =
+        resolvePrimaryRole(user);
 
     const schoolLabel =
-        resolvedRole === UserRole.PLATFORM_ADMIN
+        resolvedRole ===
+            UserRole.PLATFORM_ADMIN
             ? "Global platform"
-            : user.school_name || "Unknown school";
+            : user.school_name ||
+            "Unknown school";
 
-    const displayName = getDisplayName(user);
-    const sidebarSections = getSidebarSections(resolvedRole);
+    const displayName =
+        getDisplayName(user);
+
+    const sidebarSections =
+        getSidebarSections(
+            resolvedRole,
+        );
 
     return (
         <DashboardShell
             userName={displayName}
             schoolName={schoolLabel}
-            sidebarSections={sidebarSections}
+            sidebarSections={
+                sidebarSections
+            }
         >
             {children}
         </DashboardShell>
