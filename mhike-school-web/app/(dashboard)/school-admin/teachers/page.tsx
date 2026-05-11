@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo } from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
@@ -40,22 +41,40 @@ function TeachersContent() {
     }
 
     return (
-        <div className="p-8">
-            <h1 className="text-3xl font-extrabold">Teachers</h1>
-            <p className="mt-2 text-slate-500">
-                Manage teachers in your school.
-            </p>
+        <div className="p-8 space-y-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-3xl font-extrabold">Teachers</h1>
+                    <p className="mt-2 text-slate-500">
+                        Manage teachers in your school.
+                    </p>
+                </div>
+
+                <Link
+                    href="/school-admin/users/create"
+                    className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
+                >
+                    Create Teacher
+                </Link>
+            </div>
 
             {isLoading ? (
-                <p className="mt-6">Loading...</p>
-            ) : (
-                <div className="mt-6">
-                    <SchoolUserTable
-                        users={teachers}
-                        actionLoadingId={actionLoadingId}
-                        onDeactivate={handleDeactivate}
-                    />
+                <p className="text-slate-500">Loading teachers...</p>
+            ) : teachers.length === 0 ? (
+                <div className="rounded-2xl border bg-white p-8 text-center">
+                    <h2 className="text-lg font-bold text-slate-900">
+                        No teachers yet
+                    </h2>
+                    <p className="mt-2 text-slate-500">
+                        Create a teacher account to assign them to classes.
+                    </p>
                 </div>
+            ) : (
+                <SchoolUserTable
+                    users={teachers}
+                    actionLoadingId={actionLoadingId}
+                    onDeactivate={handleDeactivate}
+                />
             )}
         </div>
     );

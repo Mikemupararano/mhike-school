@@ -10,10 +10,10 @@ import { UserRole, type User } from "@/types/user";
 import type { ClassGroup } from "@/types/class";
 
 import {
-  getClass,
-  getClassStudents,
   assignTeacher,
   enrollStudent,
+  getClass,
+  getClassStudents,
   removeStudent,
 } from "@/lib/services/classes";
 
@@ -39,14 +39,24 @@ function ClassContent() {
 
   const teachers = useMemo(() => {
     return schoolUsers.filter((user) => {
-      const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
+      const roles = user.roles?.length
+        ? user.roles
+        : user.role
+          ? [user.role]
+          : [];
+
       return roles.includes(UserRole.TEACHER);
     });
   }, [schoolUsers]);
 
   const allStudents = useMemo(() => {
     return schoolUsers.filter((user) => {
-      const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
+      const roles = user.roles?.length
+        ? user.roles
+        : user.role
+          ? [user.role]
+          : [];
+
       return roles.includes(UserRole.STUDENT);
     });
   }, [schoolUsers]);
@@ -70,7 +80,11 @@ function ClassContent() {
       setStudents(studentsData);
       setSchoolUsers(usersData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load class data");
+      console.error(err);
+
+      setError(
+        err instanceof Error ? err.message : "Failed to load class data",
+      );
     } finally {
       setLoading(false);
     }
@@ -98,7 +112,11 @@ function ClassContent() {
   }
 
   if (loading && !classGroup) {
-    return <div className="p-6 text-sm text-slate-600">Loading class...</div>;
+    return (
+      <div className="p-6 text-sm text-slate-600">
+        Loading class...
+      </div>
+    );
   }
 
   return (
@@ -112,23 +130,28 @@ function ClassContent() {
           Manage teacher assignment and student enrolment for this class.
         </p>
 
-        {currentTeacher && (
+        {currentTeacher ? (
           <p className="mt-2 text-sm text-slate-600">
             Current teacher:{" "}
             <span className="font-semibold text-slate-900">
-              {currentTeacher.full_name ||
-                `${currentTeacher.first_name ?? ""} ${currentTeacher.last_name ?? ""}`.trim() ||
-                currentTeacher.email}
+              {currentTeacher.full_name || currentTeacher.email}
+            </span>
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">
+            Current teacher:{" "}
+            <span className="font-semibold text-slate-900">
+              Not assigned
             </span>
           </p>
         )}
       </div>
 
-      {error && (
+      {error ? (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {error}
         </div>
-      )}
+      ) : null}
 
       <div className="grid gap-6">
         <AssignTeacherPanel

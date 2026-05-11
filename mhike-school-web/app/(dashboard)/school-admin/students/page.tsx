@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
 import SchoolUserTable from "@/components/school-admin/components/SchoolUserTable";
@@ -30,17 +30,19 @@ function StudentsContent() {
         const search = query.trim().toLowerCase();
 
         return users.filter((user) => {
-            const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
-            const isStudent = roles.includes(UserRole.STUDENT);
+            const roles = user.roles?.length
+                ? user.roles
+                : user.role
+                    ? [user.role]
+                    : [];
 
-            const fullName =
-                user.full_name ||
-                `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim();
+            const isStudent = roles.includes(UserRole.STUDENT);
+            const fullName = user.full_name ?? "";
 
             const matchesSearch =
                 !search ||
                 fullName.toLowerCase().includes(search) ||
-                user.email?.toLowerCase().includes(search);
+                user.email.toLowerCase().includes(search);
 
             return isStudent && matchesSearch;
         });
@@ -57,6 +59,7 @@ function StudentsContent() {
                     <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
                         Students
                     </h1>
+
                     <p className="mt-2 text-base text-slate-600 sm:text-lg">
                         Manage student records, enrolment status, and class placement.
                     </p>
@@ -66,7 +69,7 @@ function StudentsContent() {
                     href="/school-admin/users/create"
                     className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
                 >
-                    Add student
+                    Add Student
                 </Link>
             </div>
 
@@ -89,6 +92,16 @@ function StudentsContent() {
             <div className="mt-6">
                 {isLoading ? (
                     <p className="text-sm text-slate-600">Loading students...</p>
+                ) : students.length === 0 ? (
+                    <div className="rounded-2xl border bg-white p-8 text-center">
+                        <h2 className="text-lg font-bold text-slate-900">
+                            No students found
+                        </h2>
+
+                        <p className="mt-2 text-slate-500">
+                            Create student accounts so they can access learning content.
+                        </p>
+                    </div>
                 ) : (
                     <SchoolUserTable
                         users={students}

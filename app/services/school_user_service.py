@@ -25,6 +25,7 @@ class SchoolUserService:
         include_inactive: bool = True,
     ) -> list[User]:
         repo = UserRepository(db)
+
         return await repo.list_by_school(
             school_id,
             role=role,
@@ -63,7 +64,10 @@ class SchoolUserService:
                 detail="Cannot create users outside your school.",
             )
 
-        existing_user = await repo.get_by_email(payload.email, target_school_id)
+        email = payload.email.strip().lower()
+
+        existing_user = await repo.get_by_email(email, target_school_id)
+
         if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -73,7 +77,7 @@ class SchoolUserService:
         primary_role = payload.role or payload.roles[0]
 
         user = User(
-            email=payload.email.strip().lower(),
+            email=email,
             hashed_password=get_password_hash(payload.password),
             full_name=payload.full_name.strip() if payload.full_name else None,
             role=primary_role,
@@ -91,10 +95,22 @@ class SchoolUserService:
         await db.flush()
         await db.refresh(user, attribute_names=["school", "user_roles"])
 
-        await AuditLogService.log_user_created(
+        await AuditLogService.log(
             db,
             actor=current_user,
+            action="user_created",
+            entity_type="user",
+            entity_id=user.id,
             target_user=user,
+            school_id=user.school_id,
+            metadata={
+                "email": user.email,
+                "full_name": user.full_name,
+                "role": (
+                    user.role.value if hasattr(user.role, "value") else str(user.role)
+                ),
+                "roles": [role.value for role in payload.roles],
+            },
         )
 
         await AuditLogService.log(
@@ -120,6 +136,7 @@ class SchoolUserService:
         actor: User,
     ) -> User:
         payload.school_id = school_id
+
         return await SchoolUserService.create_school_user(
             db=db,
             payload=payload,
@@ -150,11 +167,13 @@ class SchoolUserService:
 
         if payload.full_name is not None:
             new_full_name = payload.full_name.strip() if payload.full_name else None
+
             if user.full_name != new_full_name:
                 changes["full_name"] = {
                     "old": user.full_name,
                     "new": new_full_name,
                 }
+
             user.full_name = new_full_name
 
         if payload.email is not None:
@@ -245,6 +264,7 @@ class SchoolUserService:
                     "old": UserStatus.ACTIVE.value,
                     "new": UserStatus.DEACTIVATED.value,
                 }
+
                 user.status = UserStatus.DEACTIVATED
 
             elif payload.is_active and user.status == UserStatus.DEACTIVATED:
@@ -252,6 +272,7 @@ class SchoolUserService:
                     "old": UserStatus.DEACTIVATED.value,
                     "new": UserStatus.ACTIVE.value,
                 }
+
                 user.status = UserStatus.ACTIVE
 
         await repo.save(user)
@@ -268,6 +289,7 @@ class SchoolUserService:
 
         if "roles" in changes:
             role_change = changes["roles"]
+
             await AuditLogService.log_role_changed(
                 db,
                 actor=current_user,
