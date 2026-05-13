@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
 import { apiGet } from "@/lib/api";
@@ -28,6 +28,17 @@ type AuditLogsResponse = {
     limit: number;
 };
 
+const ACTION_STYLES: Record<string, string> = {
+    create: "bg-green-50 text-green-800",
+    created: "bg-green-50 text-green-800",
+    update: "bg-blue-50 text-blue-800",
+    updated: "bg-blue-50 text-blue-800",
+    delete: "bg-red-50 text-red-800",
+    deleted: "bg-red-50 text-red-800",
+    login: "bg-purple-50 text-purple-800",
+    logout: "bg-purple-50 text-purple-800",
+};
+
 function formatDate(value: string) {
     return new Intl.DateTimeFormat("en-GB", {
         dateStyle: "medium",
@@ -39,14 +50,24 @@ function formatAction(action: string) {
     return action.replaceAll("_", " ").replaceAll(".", " ");
 }
 
+function getActionStyle(action: string) {
+    const normalized = action.toLowerCase();
+
+    const matchedKey = Object.keys(ACTION_STYLES).find((key) =>
+        normalized.includes(key),
+    );
+
+    return matchedKey
+        ? ACTION_STYLES[matchedKey]
+        : "bg-slate-100 text-slate-800";
+}
+
 function metadataPreview(metadata: Record<string, unknown> | null) {
-    if (!metadata) return "—";
+    if (!metadata || Object.keys(metadata).length === 0) {
+        return "—";
+    }
 
-    const entries = Object.entries(metadata);
-
-    if (entries.length === 0) return "—";
-
-    return entries
+    return Object.entries(metadata)
         .slice(0, 3)
         .map(([key, value]) => `${key}: ${String(value)}`)
         .join(" | ");
@@ -75,41 +96,53 @@ function AdminAuditLogsContent() {
     const queryString = useMemo(() => {
         const params = new URLSearchParams();
 
-        if (action.trim()) params.set("action", action.trim());
-        if (entityType.trim()) params.set("entity_type", entityType.trim());
-        if (schoolId.trim()) params.set("school_id", schoolId.trim());
+        if (action.trim()) {
+            params.set("action", action.trim());
+        }
+
+        if (entityType.trim()) {
+            params.set("entity_type", entityType.trim());
+        }
+
+        if (schoolId.trim()) {
+            params.set("school_id", schoolId.trim());
+        }
 
         params.set("limit", "50");
 
         return params.toString();
     }, [action, entityType, schoolId]);
 
-    async function loadAuditLogs() {
+    const loadAuditLogs = useCallback(async () => {
         try {
             setIsLoading(true);
             setError(null);
 
-            const data = await apiGet<AuditLogsResponse>(
-                `/admin/audit-logs?${queryString}`,
-            );
+            const endpoint = queryString
+                ? `/admin/audit-logs?${queryString}`
+                : "/admin/audit-logs";
+
+            const data = await apiGet<AuditLogsResponse>(endpoint);
 
             setLogs(data.items);
             setTotal(data.total);
         } catch (err) {
             setError(
-                err instanceof Error ? err.message : "Failed to load audit logs.",
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load audit logs.",
             );
         } finally {
             setIsLoading(false);
         }
-    }
+    }, [queryString]);
 
     useEffect(() => {
         void loadAuditLogs();
-    }, [queryString]);
+    }, [loadAuditLogs]);
 
     return (
-        <main className="p-8 space-y-6">
+        <main className="space-y-6 p-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-extrabold text-slate-950">
@@ -124,7 +157,7 @@ function AdminAuditLogsContent() {
 
                 <button
                     type="button"
-                    onClick={loadAuditLogs}
+                    onClick={() => void loadAuditLogs()}
                     className="rounded-xl border bg-white px-5 py-3 font-semibold hover:bg-slate-50"
                 >
                     Refresh
@@ -142,7 +175,9 @@ function AdminAuditLogsContent() {
 
                     <input
                         value={entityType}
-                        onChange={(event) => setEntityType(event.target.value)}
+                        onChange={(event) =>
+                            setEntityType(event.target.value)
+                        }
                         placeholder="Entity e.g. user"
                         className="rounded-xl border px-4 py-3"
                     />
@@ -198,17 +233,31 @@ function AdminAuditLogsContent() {
                         No audit logs found.
                     </div>
                 ) : (
-                    <div className="overflow-hidden rounded-xl border">
+                    <div className="overflow-x-auto rounded-xl border">
                         <table className="w-full text-left text-sm">
                             <thead className="bg-slate-50 text-slate-600">
                                 <tr>
-                                    <th className="px-4 py-4 font-bold">Action</th>
-                                    <th className="px-4 py-4 font-bold">Entity</th>
-                                    <th className="px-4 py-4 font-bold">Actor</th>
-                                    <th className="px-4 py-4 font-bold">Target</th>
-                                    <th className="px-4 py-4 font-bold">School</th>
-                                    <th className="px-4 py-4 font-bold">Date</th>
-                                    <th className="px-4 py-4 font-bold">Metadata</th>
+                                    <th className="px-4 py-4 font-bold">
+                                        Action
+                                    </th>
+                                    <th className="px-4 py-4 font-bold">
+                                        Entity
+                                    </th>
+                                    <th className="px-4 py-4 font-bold">
+                                        Actor
+                                    </th>
+                                    <th className="px-4 py-4 font-bold">
+                                        Target
+                                    </th>
+                                    <th className="px-4 py-4 font-bold">
+                                        School
+                                    </th>
+                                    <th className="px-4 py-4 font-bold">
+                                        Date
+                                    </th>
+                                    <th className="px-4 py-4 font-bold">
+                                        Metadata
+                                    </th>
                                 </tr>
                             </thead>
 
@@ -216,14 +265,19 @@ function AdminAuditLogsContent() {
                                 {logs.map((log) => (
                                     <tr key={log.id} className="border-t">
                                         <td className="px-4 py-4">
-                                            <span className="rounded-full bg-blue-50 px-3 py-1.5 font-bold capitalize text-blue-800">
+                                            <span
+                                                className={`rounded-full px-3 py-1.5 font-bold capitalize ${getActionStyle(
+                                                    log.action,
+                                                )}`}
+                                            >
                                                 {formatAction(log.action)}
                                             </span>
                                         </td>
 
                                         <td className="px-4 py-4 font-semibold">
                                             {log.entity_type}
-                                            {log.entity_id ? (
+
+                                            {log.entity_id !== null ? (
                                                 <span className="ml-1 text-slate-500">
                                                     #{log.entity_id}
                                                 </span>
@@ -231,15 +285,17 @@ function AdminAuditLogsContent() {
                                         </td>
 
                                         <td className="px-4 py-4 text-slate-700">
-                                            {log.actor_email || "System"}
+                                            {log.actor_email ?? "System"}
                                         </td>
 
                                         <td className="px-4 py-4 text-slate-700">
-                                            {log.target_user_email || "—"}
+                                            {log.target_user_email ?? "—"}
                                         </td>
 
                                         <td className="px-4 py-4 text-slate-700">
-                                            {log.school_name || log.school_id || "Global"}
+                                            {log.school_name ??
+                                                log.school_id ??
+                                                "Global"}
                                         </td>
 
                                         <td className="px-4 py-4 text-slate-700">
@@ -249,7 +305,9 @@ function AdminAuditLogsContent() {
                                         <td className="px-4 py-4">
                                             <button
                                                 type="button"
-                                                onClick={() => setSelectedLog(log)}
+                                                onClick={() =>
+                                                    setSelectedLog(log)
+                                                }
                                                 className="max-w-xs truncate rounded-lg bg-slate-100 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-200"
                                             >
                                                 {metadataPreview(log.metadata)}

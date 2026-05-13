@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import DashboardShell from "@/components/layout/DashboardShell";
-import { getToken, clearToken } from "@/lib/api";
+import { clearToken, getToken } from "@/lib/api";
 import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
 import { getSidebarSections } from "@/lib/navigation/sidebar";
 import { UserRole } from "@/types/user";
@@ -20,9 +20,7 @@ function formatEmailFallback(email?: string | null): string {
 
     const localPart = email.split("@")[0] || "";
 
-    const cleaned = localPart
-        .replace(/[._-]+/g, " ")
-        .trim();
+    const cleaned = localPart.replace(/[._-]+/g, " ").trim();
 
     if (!cleaned) {
         return "User";
@@ -31,39 +29,22 @@ function formatEmailFallback(email?: string | null): string {
     return cleaned
         .split(" ")
         .filter(Boolean)
-        .map(
-            (part) =>
-                part.charAt(0).toUpperCase() +
-                part.slice(1),
-        )
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
         .join(" ");
 }
 
-function getDisplayName(
-    user: CurrentUser,
-): string {
-    return (
-        user.full_name?.trim() ||
-        formatEmailFallback(user.email)
-    );
+function getDisplayName(user: CurrentUser): string {
+    return user.full_name?.trim() || formatEmailFallback(user.email);
 }
 
-function resolvePrimaryRole(
-    user: CurrentUser,
-): UserRole {
-    const roles = Array.isArray(user.roles)
-        ? user.roles
-        : [];
+function resolvePrimaryRole(user: CurrentUser): UserRole {
+    const roles = Array.isArray(user.roles) ? user.roles : [];
 
-    if (
-        roles.includes(UserRole.PLATFORM_ADMIN)
-    ) {
+    if (roles.includes(UserRole.PLATFORM_ADMIN)) {
         return UserRole.PLATFORM_ADMIN;
     }
 
-    if (
-        roles.includes(UserRole.SCHOOL_ADMIN)
-    ) {
+    if (roles.includes(UserRole.SCHOOL_ADMIN)) {
         return UserRole.SCHOOL_ADMIN;
     }
 
@@ -83,11 +64,8 @@ export default function DashboardShellWrapper({
 }: DashboardShellWrapperProps) {
     const router = useRouter();
 
-    const [user, setUser] =
-        useState<CurrentUser | null>(null);
-
-    const [loading, setLoading] =
-        useState(true);
+    const [user, setUser] = useState<CurrentUser | null>(null);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         async function loadUser() {
@@ -95,25 +73,17 @@ export default function DashboardShellWrapper({
 
             if (!token) {
                 setLoading(false);
-
                 router.replace("/login");
-
                 return;
             }
 
             try {
-                const me =
-                    await getCurrentUser(token);
-
+                const me = await getCurrentUser(token);
                 setUser(me);
             } catch (err) {
-                console.error(
-                    "Auth error:",
-                    err,
-                );
+                console.error("Auth error:", err);
 
                 clearToken();
-
                 router.replace("/login");
             } finally {
                 setLoading(false);
@@ -135,31 +105,22 @@ export default function DashboardShellWrapper({
         return null;
     }
 
-    const resolvedRole =
-        resolvePrimaryRole(user);
+    const resolvedRole = resolvePrimaryRole(user);
 
     const schoolLabel =
-        resolvedRole ===
-            UserRole.PLATFORM_ADMIN
+        resolvedRole === UserRole.PLATFORM_ADMIN
             ? "Global platform"
-            : user.school_name ||
-            "Unknown school";
+            : user.school_name || "Unknown school";
 
-    const displayName =
-        getDisplayName(user);
+    const displayName = getDisplayName(user);
 
-    const sidebarSections =
-        getSidebarSections(
-            resolvedRole,
-        );
+    const sidebarSections = getSidebarSections(resolvedRole);
 
     return (
         <DashboardShell
             userName={displayName}
             schoolName={schoolLabel}
-            sidebarSections={
-                sidebarSections
-            }
+            sidebarSections={sidebarSections}
         >
             {children}
         </DashboardShell>
