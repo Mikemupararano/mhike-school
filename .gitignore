@@ -10,6 +10,7 @@ __pycache__/
 .venv/
 venv/
 env/
+mhike-school-venv/
 
 # Python testing & coverage
 .pytest_cache/
@@ -18,9 +19,13 @@ htmlcov/
 
 # SQLite (local dev only)
 *.sqlite3
+*.db
 
 # Logs
 *.log
+
+# Backup files
+*.bak
 
 # =========================
 # Environment variables
