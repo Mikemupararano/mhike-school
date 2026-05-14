@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -25,7 +25,9 @@ class AuditLogsResponse(BaseModel):
 @router.get("/", response_model=AuditLogsResponse)
 async def list_audit_logs(
     actor_id: int | None = Query(default=None),
+    actor_email: str | None = Query(default=None),
     target_user_id: int | None = Query(default=None),
+    target_user_email: str | None = Query(default=None),
     school_id: int | None = Query(default=None),
     action: str | None = Query(default=None),
     entity_type: str | None = Query(default=None),
@@ -44,7 +46,9 @@ async def list_audit_logs(
 
     filters = AuditLogFilter(
         actor_id=actor_id,
+        actor_email=actor_email,
         target_user_id=target_user_id,
+        target_user_email=target_user_email,
         school_id=school_id,
         action=action,
         entity_type=entity_type,
@@ -55,11 +59,13 @@ async def list_audit_logs(
     )
 
     repo = AuditLogRepository(db)
+
     logs = await repo.list(filters)
+    total = await repo.count(filters)
 
     return AuditLogsResponse(
         items=logs,
-        total=len(logs),
+        total=total,
         skip=offset,
         limit=limit,
     )

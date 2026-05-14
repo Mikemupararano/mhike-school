@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,24 +25,32 @@ class AuditLogOut(BaseModel):
 
     id: int
 
-    actor_id: Optional[int]
-    actor_school_id: Optional[int]
+    actor_id: Optional[int] = None
+    actor_school_id: Optional[int] = None
+    actor_email: Optional[str] = None
 
     action: str
     entity_type: str
-    entity_id: Optional[int]
+    entity_id: Optional[int] = None
 
-    target_user_id: Optional[int]
-    school_id: Optional[int]
+    target_user_id: Optional[int] = None
+    target_user_email: Optional[str] = None
 
-    metadata: Optional[Dict[str, Any]]
+    school_id: Optional[int] = None
+    school_name: Optional[str] = None
+
+    metadata: Optional[Dict[str, Any]] = None
 
     created_at: datetime
 
 
 class AuditLogFilter(BaseModel):
     actor_id: Optional[int] = None
+    actor_email: Optional[str] = None
+
     target_user_id: Optional[int] = None
+    target_user_email: Optional[str] = None
+
     school_id: Optional[int] = None
 
     action: Optional[str] = None
