@@ -37,6 +37,18 @@ const ACTION_STYLES: Record<string, string> = {
     logout: "bg-purple-50 text-purple-800",
 };
 
+const ACTION_OPTIONS = [
+    "",
+    "user_created",
+    "school_created",
+    "role_assigned",
+    "login",
+    "logout",
+    "create",
+    "update",
+    "delete",
+];
+
 function formatDate(value: string) {
     return new Intl.DateTimeFormat("en-GB", {
         dateStyle: "medium",
@@ -71,6 +83,10 @@ function metadataPreview(metadata: Record<string, unknown> | null) {
         .join(" | ");
 }
 
+function escapeCsvValue(value: unknown) {
+    return `"${String(value ?? "").replaceAll('"', '""')}"`;
+}
+
 export default function AdminAuditLogsPage() {
     return <AdminAuditLogsContent />;
 }
@@ -83,6 +99,10 @@ function AdminAuditLogsContent() {
     const [action, setAction] = useState("");
     const [entityType, setEntityType] = useState("");
     const [schoolId, setSchoolId] = useState("");
+    const [actorEmail, setActorEmail] = useState("");
+    const [targetEmail, setTargetEmail] = useState("");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
 
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
@@ -109,11 +129,37 @@ function AdminAuditLogsContent() {
             params.set("school_id", schoolId.trim());
         }
 
+        if (actorEmail.trim()) {
+            params.set("actor_email", actorEmail.trim());
+        }
+
+        if (targetEmail.trim()) {
+            params.set("target_user_email", targetEmail.trim());
+        }
+
+        if (dateFrom) {
+            params.set("date_from", dateFrom);
+        }
+
+        if (dateTo) {
+            params.set("date_to", dateTo);
+        }
+
         params.set("limit", String(pageSize));
         params.set("offset", String((page - 1) * pageSize));
 
         return params.toString();
-    }, [action, entityType, schoolId, page, pageSize]);
+    }, [
+        action,
+        entityType,
+        schoolId,
+        actorEmail,
+        targetEmail,
+        dateFrom,
+        dateTo,
+        page,
+        pageSize,
+    ]);
 
     const loadAuditLogs = useCallback(async () => {
         try {
@@ -147,27 +193,67 @@ function AdminAuditLogsContent() {
         setAction("");
         setEntityType("");
         setSchoolId("");
-        setPage(1);
-    }
-
-    function handleActionChange(value: string) {
-        setAction(value);
-        setPage(1);
-    }
-
-    function handleEntityTypeChange(value: string) {
-        setEntityType(value);
-        setPage(1);
-    }
-
-    function handleSchoolIdChange(value: string) {
-        setSchoolId(value);
+        setActorEmail("");
+        setTargetEmail("");
+        setDateFrom("");
+        setDateTo("");
         setPage(1);
     }
 
     function handlePageSizeChange(value: string) {
         setPageSize(Number(value));
         setPage(1);
+    }
+
+    function exportToCsv() {
+        if (logs.length === 0) {
+            return;
+        }
+
+        const headers = [
+            "ID",
+            "Action",
+            "Entity Type",
+            "Entity ID",
+            "Actor Email",
+            "Target Email",
+            "School",
+            "Created At",
+            "Metadata",
+        ];
+
+        const rows = logs.map((log) => [
+            log.id,
+            log.action,
+            log.entity_type,
+            log.entity_id ?? "",
+            log.actor_email ?? "",
+            log.target_user_email ?? "",
+            log.school_name ?? log.school_id ?? "Global",
+            log.created_at,
+            log.metadata ? JSON.stringify(log.metadata) : "",
+        ]);
+
+        const csvContent = [
+            headers.map(escapeCsvValue).join(","),
+            ...rows.map((row) => row.map(escapeCsvValue).join(",")),
+        ].join("\n");
+
+        const blob = new Blob([csvContent], {
+            type: "text/csv;charset=utf-8;",
+        });
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.setAttribute("download", `audit-logs-page-${page}.csv`);
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        URL.revokeObjectURL(url);
     }
 
     return (
@@ -184,42 +270,103 @@ function AdminAuditLogsContent() {
                     </p>
                 </div>
 
-                <button
-                    type="button"
-                    onClick={() => void loadAuditLogs()}
-                    className="rounded-xl border bg-white px-5 py-3 font-semibold hover:bg-slate-50"
-                >
-                    Refresh
-                </button>
+                <div className="flex flex-wrap gap-3">
+                    <button
+                        type="button"
+                        onClick={exportToCsv}
+                        disabled={logs.length === 0}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Export CSV
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => void loadAuditLogs()}
+                        className="rounded-xl border bg-white px-5 py-3 font-semibold hover:bg-slate-50"
+                    >
+                        Refresh
+                    </button>
+                </div>
             </div>
 
             <section className="rounded-2xl border bg-white p-5">
-                <div className="grid gap-4 md:grid-cols-4">
-                    <input
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-8">
+                    <select
                         value={action}
-                        onChange={(event) =>
-                            handleActionChange(event.target.value)
-                        }
-                        placeholder="Action e.g. user_created"
-                        className="rounded-xl border px-4 py-3"
-                    />
+                        onChange={(event) => {
+                            setAction(event.target.value);
+                            setPage(1);
+                        }}
+                        className="rounded-xl border bg-white px-4 py-3"
+                    >
+                        <option value="">All actions</option>
+
+                        {ACTION_OPTIONS.filter(Boolean).map((option) => (
+                            <option key={option} value={option}>
+                                {formatAction(option)}
+                            </option>
+                        ))}
+                    </select>
 
                     <input
                         value={entityType}
-                        onChange={(event) =>
-                            handleEntityTypeChange(event.target.value)
-                        }
+                        onChange={(event) => {
+                            setEntityType(event.target.value);
+                            setPage(1);
+                        }}
                         placeholder="Entity e.g. user"
                         className="rounded-xl border px-4 py-3"
                     />
 
                     <input
                         value={schoolId}
-                        onChange={(event) =>
-                            handleSchoolIdChange(event.target.value)
-                        }
+                        onChange={(event) => {
+                            setSchoolId(event.target.value);
+                            setPage(1);
+                        }}
                         placeholder="School ID"
                         inputMode="numeric"
+                        className="rounded-xl border px-4 py-3"
+                    />
+
+                    <input
+                        value={actorEmail}
+                        onChange={(event) => {
+                            setActorEmail(event.target.value);
+                            setPage(1);
+                        }}
+                        placeholder="Actor email"
+                        className="rounded-xl border px-4 py-3"
+                    />
+
+                    <input
+                        value={targetEmail}
+                        onChange={(event) => {
+                            setTargetEmail(event.target.value);
+                            setPage(1);
+                        }}
+                        placeholder="Target email"
+                        className="rounded-xl border px-4 py-3"
+                    />
+
+                    <input
+                        type="date"
+                        value={dateFrom}
+                        onChange={(event) => {
+                            setDateFrom(event.target.value);
+                            setPage(1);
+                        }}
+                        className="rounded-xl border px-4 py-3"
+                    />
+
+                    <input
+                        type="date"
+                        value={dateTo}
+                        onChange={(event) => {
+                            setDateTo(event.target.value);
+                            setPage(1);
+                        }}
                         className="rounded-xl border px-4 py-3"
                     />
 
