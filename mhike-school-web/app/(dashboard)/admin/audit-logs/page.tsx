@@ -117,33 +117,15 @@ function AdminAuditLogsContent() {
     const queryString = useMemo(() => {
         const params = new URLSearchParams();
 
-        if (action.trim()) {
-            params.set("action", action.trim());
-        }
-
-        if (entityType.trim()) {
-            params.set("entity_type", entityType.trim());
-        }
-
-        if (schoolId.trim()) {
-            params.set("school_id", schoolId.trim());
-        }
-
-        if (actorEmail.trim()) {
-            params.set("actor_email", actorEmail.trim());
-        }
-
+        if (action.trim()) params.set("action", action.trim());
+        if (entityType.trim()) params.set("entity_type", entityType.trim());
+        if (schoolId.trim()) params.set("school_id", schoolId.trim());
+        if (actorEmail.trim()) params.set("actor_email", actorEmail.trim());
         if (targetEmail.trim()) {
             params.set("target_user_email", targetEmail.trim());
         }
-
-        if (dateFrom) {
-            params.set("date_from", dateFrom);
-        }
-
-        if (dateTo) {
-            params.set("date_to", dateTo);
-        }
+        if (dateFrom) params.set("date_from", dateFrom);
+        if (dateTo) params.set("date_to", dateTo);
 
         params.set("limit", String(pageSize));
         params.set("offset", String((page - 1) * pageSize));
@@ -205,10 +187,23 @@ function AdminAuditLogsContent() {
         setPage(1);
     }
 
+    function downloadFile(content: string, filename: string, type: string) {
+        const blob = new Blob([content], { type });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.setAttribute("download", filename);
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        URL.revokeObjectURL(url);
+    }
+
     function exportToCsv() {
-        if (logs.length === 0) {
-            return;
-        }
+        if (logs.length === 0) return;
 
         const headers = [
             "ID",
@@ -239,21 +234,42 @@ function AdminAuditLogsContent() {
             ...rows.map((row) => row.map(escapeCsvValue).join(",")),
         ].join("\n");
 
-        const blob = new Blob([csvContent], {
-            type: "text/csv;charset=utf-8;",
-        });
+        downloadFile(
+            csvContent,
+            `audit-logs-page-${page}.csv`,
+            "text/csv;charset=utf-8;",
+        );
+    }
 
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
+    function exportToJson() {
+        if (logs.length === 0) return;
 
-        link.href = url;
-        link.setAttribute("download", `audit-logs-page-${page}.csv`);
+        const jsonContent = JSON.stringify(
+            {
+                exported_at: new Date().toISOString(),
+                page,
+                page_size: pageSize,
+                total,
+                filters: {
+                    action,
+                    entity_type: entityType,
+                    school_id: schoolId,
+                    actor_email: actorEmail,
+                    target_email: targetEmail,
+                    date_from: dateFrom,
+                    date_to: dateTo,
+                },
+                items: logs,
+            },
+            null,
+            2,
+        );
 
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-
-        URL.revokeObjectURL(url);
+        downloadFile(
+            jsonContent,
+            `audit-logs-page-${page}.json`,
+            "application/json;charset=utf-8;",
+        );
     }
 
     return (
@@ -278,6 +294,15 @@ function AdminAuditLogsContent() {
                         className="rounded-xl bg-emerald-600 px-5 py-3 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         Export CSV
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={exportToJson}
+                        disabled={logs.length === 0}
+                        className="rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Export JSON
                     </button>
 
                     <button
@@ -437,7 +462,7 @@ function AdminAuditLogsContent() {
                     <>
                         <div className="overflow-x-auto rounded-xl border">
                             <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-50 text-slate-600">
+                                <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600">
                                     <tr>
                                         <th className="px-4 py-4 font-bold">
                                             Action
@@ -478,7 +503,6 @@ function AdminAuditLogsContent() {
 
                                             <td className="px-4 py-4 font-semibold">
                                                 {log.entity_type}
-
                                                 {log.entity_id !== null ? (
                                                     <span className="ml-1 text-slate-500">
                                                         #{log.entity_id}
