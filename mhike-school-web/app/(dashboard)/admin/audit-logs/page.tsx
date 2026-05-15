@@ -50,6 +50,10 @@ const ACTION_OPTIONS = [
 ];
 
 function formatDate(value: string) {
+    if (!value) {
+        return "—";
+    }
+
     return new Intl.DateTimeFormat("en-GB", {
         dateStyle: "medium",
         timeStyle: "short",
@@ -96,6 +100,7 @@ function AdminAuditLogsContent() {
     const [selectedLog, setSelectedLog] = useState<AuditLogItem | null>(null);
 
     const [total, setTotal] = useState(0);
+
     const [action, setAction] = useState("");
     const [entityType, setEntityType] = useState("");
     const [schoolId, setSchoolId] = useState("");
@@ -111,21 +116,40 @@ function AdminAuditLogsContent() {
     const [error, setError] = useState<string | null>(null);
 
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
     const canGoPrevious = page > 1;
     const canGoNext = page < totalPages;
 
     const queryString = useMemo(() => {
         const params = new URLSearchParams();
 
-        if (action.trim()) params.set("action", action.trim());
-        if (entityType.trim()) params.set("entity_type", entityType.trim());
-        if (schoolId.trim()) params.set("school_id", schoolId.trim());
-        if (actorEmail.trim()) params.set("actor_email", actorEmail.trim());
+        if (action.trim()) {
+            params.set("action", action.trim());
+        }
+
+        if (entityType.trim()) {
+            params.set("entity_type", entityType.trim());
+        }
+
+        if (schoolId.trim()) {
+            params.set("school_id", schoolId.trim());
+        }
+
+        if (actorEmail.trim()) {
+            params.set("actor_email", actorEmail.trim());
+        }
+
         if (targetEmail.trim()) {
             params.set("target_user_email", targetEmail.trim());
         }
-        if (dateFrom) params.set("date_from", dateFrom);
-        if (dateTo) params.set("date_to", dateTo);
+
+        if (dateFrom) {
+            params.set("date_from", dateFrom);
+        }
+
+        if (dateTo) {
+            params.set("date_to", dateTo);
+        }
 
         params.set("limit", String(pageSize));
         params.set("offset", String((page - 1) * pageSize));
@@ -183,27 +207,39 @@ function AdminAuditLogsContent() {
     }
 
     function handlePageSizeChange(value: string) {
-        setPageSize(Number(value));
+        const parsedValue = Number(value);
+
+        if (Number.isNaN(parsedValue)) {
+            return;
+        }
+
+        setPageSize(parsedValue);
         setPage(1);
     }
 
     function downloadFile(content: string, filename: string, type: string) {
         const blob = new Blob([content], { type });
+
         const url = URL.createObjectURL(blob);
+
         const link = document.createElement("a");
 
         link.href = url;
         link.setAttribute("download", filename);
 
         document.body.appendChild(link);
+
         link.click();
+
         document.body.removeChild(link);
 
         URL.revokeObjectURL(url);
     }
 
     function exportToCsv() {
-        if (logs.length === 0) return;
+        if (logs.length === 0) {
+            return;
+        }
 
         const headers = [
             "ID",
@@ -242,7 +278,9 @@ function AdminAuditLogsContent() {
     }
 
     function exportToJson() {
-        if (logs.length === 0) return;
+        if (logs.length === 0) {
+            return;
+        }
 
         const jsonContent = JSON.stringify(
             {
@@ -460,28 +498,34 @@ function AdminAuditLogsContent() {
                     </div>
                 ) : (
                     <>
-                        <div className="overflow-x-auto rounded-xl border">
-                            <table className="w-full text-left text-sm">
-                                <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600">
+                        <div className="max-h-[70vh] overflow-auto rounded-xl border">
+                            <table className="w-full min-w-[1100px] text-left text-sm">
+                                <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600 shadow-sm">
                                     <tr>
                                         <th className="px-4 py-4 font-bold">
                                             Action
                                         </th>
+
                                         <th className="px-4 py-4 font-bold">
                                             Entity
                                         </th>
+
                                         <th className="px-4 py-4 font-bold">
                                             Actor
                                         </th>
+
                                         <th className="px-4 py-4 font-bold">
                                             Target
                                         </th>
+
                                         <th className="px-4 py-4 font-bold">
                                             School
                                         </th>
+
                                         <th className="px-4 py-4 font-bold">
                                             Date
                                         </th>
+
                                         <th className="px-4 py-4 font-bold">
                                             Metadata
                                         </th>
@@ -490,7 +534,10 @@ function AdminAuditLogsContent() {
 
                                 <tbody>
                                     {logs.map((log) => (
-                                        <tr key={log.id} className="border-t">
+                                        <tr
+                                            key={log.id}
+                                            className="border-t hover:bg-slate-50"
+                                        >
                                             <td className="px-4 py-4">
                                                 <span
                                                     className={`rounded-full px-3 py-1.5 font-bold capitalize ${getActionStyle(
@@ -503,6 +550,7 @@ function AdminAuditLogsContent() {
 
                                             <td className="px-4 py-4 font-semibold">
                                                 {log.entity_type}
+
                                                 {log.entity_id !== null ? (
                                                     <span className="ml-1 text-slate-500">
                                                         #{log.entity_id}
@@ -524,7 +572,7 @@ function AdminAuditLogsContent() {
                                                     "Global"}
                                             </td>
 
-                                            <td className="px-4 py-4 text-slate-700">
+                                            <td className="whitespace-nowrap px-4 py-4 text-slate-700">
                                                 {formatDate(log.created_at)}
                                             </td>
 
