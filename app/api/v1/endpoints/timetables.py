@@ -188,6 +188,31 @@ async def get_my_student_timetable(
     return await service.list_entries(filters)
 
 
+@router.get("/parent/child/{student_id}", response_model=list[TimetableEntryOut])
+async def get_child_timetable(
+    student_id: int,
+    class_group_id: int | None = Query(default=None),
+    day_of_week: str | None = Query(default=None),
+    limit: int = Query(default=100, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    PermissionService.ensure_active_user(current_user)
+
+    filters = TimetableEntryFilter(
+        school_id=current_user.school_id,
+        class_group_id=class_group_id,
+        day_of_week=day_of_week,
+        limit=limit,
+        offset=offset,
+    )
+
+    service = TimetableService(db)
+
+    return await service.list_entries(filters)
+
+
 @router.post("/assignments", response_model=TimetableAssignmentOut)
 async def create_timetable_assignment(
     payload: TimetableAssignmentCreate,
