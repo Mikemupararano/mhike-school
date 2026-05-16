@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
     assignment_submissions,
     assignments,
     attendance,
+    attendance_dashboard,
     auth,
     classes,
     courses,
@@ -125,6 +126,12 @@ api_router.include_router(
     attendance.router,
     prefix="/attendance",
     tags=["attendance"],
+)
+
+api_router.include_router(
+    attendance_dashboard.router,
+    prefix="/attendance-dashboard",
+    tags=["attendance-dashboard"],
 )
 
 # =========================================================
