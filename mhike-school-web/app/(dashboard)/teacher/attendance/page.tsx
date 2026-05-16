@@ -40,6 +40,12 @@ type StudentAttendance = {
     notes: string;
 };
 
+type AttendanceRecord = {
+    student_id: number;
+    status: AttendanceStatus;
+    notes: string | null;
+};
+
 const STATUS_OPTIONS: AttendanceStatus[] = [
     "present",
     "late",
@@ -183,6 +189,43 @@ export default function TeacherAttendanceRegisterPage() {
         }));
     }
 
+    async function loadExistingAttendanceRecords(register: AttendanceSession) {
+        try {
+            const response = await fetch(
+                `/api/v1/attendance/records?class_group_id=${register.class_group_id}&session_date=${register.session_date}&timetable_entry_id=${register.timetable_entry_id ?? ""}`,
+                {
+                    credentials: "include",
+                },
+            );
+
+            if (!response.ok) {
+                throw new Error("Failed to load existing attendance records.");
+            }
+
+            const records = (await response.json()) as AttendanceRecord[];
+
+            setAttendanceMap((previous) => {
+                const next = { ...previous };
+
+                for (const record of records) {
+                    next[record.student_id] = {
+                        student_id: record.student_id,
+                        status: record.status,
+                        notes: record.notes ?? "",
+                    };
+                }
+
+                return next;
+            });
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load existing attendance records.",
+            );
+        }
+    }
+
     async function createAttendanceSession() {
         if (!selectedEntry || selectedEntry.class_group_id === null) {
             setError("Select a timetable entry with a class group first.");
@@ -217,6 +260,7 @@ export default function TeacherAttendanceRegisterPage() {
             const data = (await response.json()) as AttendanceSession;
 
             setSession(data);
+            await loadExistingAttendanceRecords(data);
             setMessage("Register loaded successfully.");
         } catch (err) {
             setError(
