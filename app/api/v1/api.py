@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     assignment_submissions,
     assignments,
+    attendance,
     auth,
     classes,
     courses,
@@ -12,40 +13,55 @@ from app.api.v1.endpoints import (
     school_admin,
     school_users,
     schools,
-    teacher_dashboard,  # ✅ NEW
+    teacher_dashboard,
 )
 
 api_router = APIRouter()
 
-# 🔐 AUTH
+# =========================================================
+# AUTH
+# =========================================================
+
 api_router.include_router(
     auth.router,
     prefix="/auth",
     tags=["auth"],
 )
 
-# 🏫 SCHOOL CORE
+# =========================================================
+# SCHOOL CORE
+# =========================================================
+
 api_router.include_router(
     schools.router,
     prefix="/schools",
     tags=["schools"],
 )
 
-# 👥 SCHOOL USERS (legacy)
+# =========================================================
+# SCHOOL USERS
+# =========================================================
+
 api_router.include_router(
     school_users.router,
     prefix="/school-users",
     tags=["school-users"],
 )
 
-# 🏫 SCHOOL ADMIN
+# =========================================================
+# SCHOOL ADMIN
+# =========================================================
+
 api_router.include_router(
     school_admin.router,
     prefix="/school-admin",
     tags=["school-admin"],
 )
 
-# 🧑‍🏫 CLASSES & ENROLLMENT
+# =========================================================
+# CLASSES & ENROLLMENTS
+# =========================================================
+
 api_router.include_router(
     classes.router,
     prefix="/classes",
@@ -58,28 +74,36 @@ api_router.include_router(
     tags=["enrollments"],
 )
 
-# 📊 DASHBOARD (student + admin)
+# =========================================================
+# DASHBOARDS
+# =========================================================
+
 api_router.include_router(
     dashboard.router,
     prefix="/dashboard",
     tags=["dashboard"],
 )
 
-# 👨‍🏫 TEACHER DASHBOARD ✅ NEW
 api_router.include_router(
     teacher_dashboard.router,
     prefix="/teacher-dashboard",
     tags=["teacher-dashboard"],
 )
 
-# 📚 COURSES
+# =========================================================
+# COURSES
+# =========================================================
+
 api_router.include_router(
     courses.router,
     prefix="/courses",
     tags=["courses"],
 )
 
-# 📝 ASSIGNMENTS
+# =========================================================
+# ASSIGNMENTS
+# =========================================================
+
 api_router.include_router(
     assignments.router,
     prefix="/assignments",
@@ -92,7 +116,20 @@ api_router.include_router(
     tags=["assignment-submissions"],
 )
 
-# 🌍 PLATFORM ADMIN
+# =========================================================
+# ATTENDANCE
+# =========================================================
+
+api_router.include_router(
+    attendance.router,
+    prefix="/attendance",
+    tags=["attendance"],
+)
+
+# =========================================================
+# PLATFORM ADMIN
+# =========================================================
+
 api_router.include_router(
     platform_admin.router,
     prefix="/admin",

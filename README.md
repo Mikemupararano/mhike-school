@@ -78,7 +78,6 @@ React
 TypeScript
 
 ## Project Structure
-
 mhike-school/
 ├── docker-compose.yml
 ├── .env.example
@@ -102,8 +101,13 @@ mhike-school/
 │   │       └── admin/
 │   │           ├── page.tsx
 │   │           ├── schools/
-│   │           ├── audit-logs/page.tsx
-│   │           └── billing/              # PLANNED: payment system UI
+│   │           ├── users/
+│   │           ├── content/
+│   │           ├── audit-logs/
+│   │           │   └── page.tsx
+│   │           ├── security/             # PLANNED
+│   │           ├── analytics/            # PLANNED
+│   │           └── billing/              # PLANNED
 │   │
 │   ├── components/
 │   │   ├── auth/
@@ -114,10 +118,17 @@ mhike-school/
 │   │   ├── assignments/
 │   │   ├── teacher/
 │   │   ├── student/
-│   │   ├── admin/
 │   │   ├── school-admin/
 │   │   ├── notifications/
-│   │   └── billing/                      # PLANNED
+│   │   ├── admin/
+│   │   │   ├── AuditLogTable.tsx
+│   │   │   ├── AuditLogMobileCard.tsx       # PLANNED
+│   │   │   ├── AuditLogFilters.tsx          # PLANNED
+│   │   │   ├── AuditLogExportButtons.tsx    # PLANNED
+│   │   │   ├── AuditLogMetadataModal.tsx    # PLANNED
+│   │   │   ├── AuditAnalyticsCards.tsx      # PLANNED
+│   │   │   └── SecurityEventsPanel.tsx      # PLANNED
+│   │   └── billing/                         # PLANNED
 │   │
 │   ├── lib/
 │   │   ├── api.ts
@@ -125,7 +136,9 @@ mhike-school/
 │   │   ├── assignmentApi.ts
 │   │   ├── hooks/
 │   │   │   ├── useAdminDashboard.ts
-│   │   │   └── useBilling.ts             # PLANNED
+│   │   │   ├── useAuditLogs.ts              # PLANNED
+│   │   │   ├── useAuditAnalytics.ts         # PLANNED
+│   │   │   └── useBilling.ts                # PLANNED
 │   │   ├── services/
 │   │   │   ├── admin.ts
 │   │   │   ├── platform-admin.ts
@@ -136,7 +149,8 @@ mhike-school/
 │   │   │   ├── content.ts
 │   │   │   ├── assignment.ts
 │   │   │   ├── notification.ts
-│   │   │   └── billing.ts                # PLANNED
+│   │   │   ├── audit-log.ts                 # PLANNED
+│   │   │   └── billing.ts                   # PLANNED
 │   │   └── utils/
 │   │
 │   ├── hooks/
@@ -151,7 +165,9 @@ mhike-school/
 │       ├── quizAttempt.ts
 │       ├── school.ts
 │       ├── user.ts
-│       └── billing.ts                    # PLANNED
+│       ├── auditAnalytics.ts              # PLANNED
+│       ├── securityEvent.ts               # PLANNED
+│       └── billing.ts                     # PLANNED
 │
 ├── app/                                  # FastAPI backend
 │   ├── main.py
@@ -166,6 +182,8 @@ mhike-school/
 │   │           ├── school_admin.py
 │   │           ├── platform_admin.py
 │   │           ├── audit_logs.py
+│   │           ├── audit_exports.py        # PLANNED
+│   │           ├── security_events.py      # PLANNED
 │   │           ├── classes.py
 │   │           ├── enrollments.py
 │   │           ├── announcements.py
@@ -178,8 +196,8 @@ mhike-school/
 │   │           ├── assignment_submissions.py
 │   │           ├── quiz_attempts.py
 │   │           ├── content_admin.py
-│   │           ├── billing.py             # PLANNED
-│   │           └── webhooks.py            # PLANNED: Stripe/payment webhooks
+│   │           ├── billing.py              # PLANNED
+│   │           └── webhooks.py             # PLANNED
 │   │
 │   ├── core/
 │   │   ├── config.py
@@ -187,7 +205,7 @@ mhike-school/
 │   │   ├── permissions.py
 │   │   ├── security.py
 │   │   ├── tenancy.py
-│   │   └── feature_flags.py              # PLANNED
+│   │   └── feature_flags.py                # PLANNED
 │   │
 │   ├── db/
 │   ├── models/
@@ -206,15 +224,19 @@ mhike-school/
 │   │   ├── notification.py
 │   │   ├── announcement.py
 │   │   ├── audit_log.py
-│   │   ├── billing_plan.py               # PLANNED
-│   │   ├── subscription.py               # PLANNED
-│   │   ├── invoice.py                    # PLANNED
-│   │   └── payment_event.py              # PLANNED
+│   │   ├── security_event.py               # PLANNED
+│   │   ├── billing_plan.py                 # PLANNED
+│   │   ├── subscription.py                 # PLANNED
+│   │   ├── invoice.py                      # PLANNED
+│   │   └── payment_event.py                # PLANNED
 │   │
 │   ├── schemas/
 │   │   ├── assignment.py
 │   │   ├── assignment_submission.py
 │   │   ├── audit_log.py
+│   │   ├── audit_export.py                 # PLANNED
+│   │   ├── audit_analytics.py              # PLANNED
+│   │   ├── security_event.py               # PLANNED
 │   │   ├── auth.py
 │   │   ├── class_group.py
 │   │   ├── content_item.py
@@ -225,13 +247,14 @@ mhike-school/
 │   │   ├── quiz_attempt.py
 │   │   ├── school.py
 │   │   ├── user.py
-│   │   ├── billing.py                    # PLANNED
-│   │   ├── subscription.py               # PLANNED
-│   │   └── invoice.py                    # PLANNED
+│   │   ├── billing.py                      # PLANNED
+│   │   ├── subscription.py                 # PLANNED
+│   │   └── invoice.py                      # PLANNED
 │   │
 │   ├── repositories/
 │   │   ├── assignment.py
 │   │   ├── audit_log.py
+│   │   ├── audit_analytics.py              # PLANNED
 │   │   ├── class_group.py
 │   │   ├── content_item.py
 │   │   ├── course.py
@@ -239,12 +262,15 @@ mhike-school/
 │   │   ├── quiz_attempt.py
 │   │   ├── school.py
 │   │   ├── user.py
-│   │   └── billing.py                    # PLANNED
+│   │   └── billing.py                      # PLANNED
 │   │
 │   ├── services/
 │   │   ├── assignment_service.py
 │   │   ├── assignment_submission_service.py
 │   │   ├── audit_log_service.py
+│   │   ├── audit_export_service.py          # PLANNED
+│   │   ├── audit_analytics_service.py       # PLANNED
+│   │   ├── security_event_service.py        # PLANNED
 │   │   ├── auth_service.py
 │   │   ├── class_service.py
 │   │   ├── content_admin_service.py
@@ -254,16 +280,17 @@ mhike-school/
 │   │   ├── quiz_attempt_service.py
 │   │   ├── school_service.py
 │   │   ├── school_user_service.py
-│   │   ├── billing_service.py            # PLANNED
-│   │   ├── stripe_service.py             # PLANNED
-│   │   └── webhook_service.py            # PLANNED
+│   │   ├── billing_service.py              # PLANNED
+│   │   ├── stripe_service.py               # PLANNED
+│   │   └── webhook_service.py              # PLANNED
 │   │
 │   ├── middleware/
 │   ├── exceptions/
 │   ├── tasks/
 │   │   ├── email_tasks.py
 │   │   ├── notification_tasks.py
-│   │   ├── billing_tasks.py              # PLANNED
+│   │   ├── audit_retention_tasks.py         # PLANNED
+│   │   ├── billing_tasks.py                 # PLANNED
 │   │   └── worker.py
 │   └── utils/
 │
@@ -272,10 +299,12 @@ mhike-school/
 │       ├── 0017_create_audit_logs.py
 │       ├── 0018_create_assignment_submissions.py
 │       ├── 0019_add_user_lifecycle_fields.py
-│       ├── 0020_create_billing_plans.py       # PLANNED
-│       ├── 0021_create_subscriptions.py       # PLANNED
-│       ├── 0022_create_invoices.py            # PLANNED
-│       └── 0023_create_payment_events.py      # PLANNED
+│       ├── 0020_add_audit_log_security_fields.py     # PLANNED
+│       ├── 0021_create_audit_indexes.py              # PLANNED
+│       ├── 0022_create_billing_plans.py              # PLANNED
+│       ├── 0023_create_subscriptions.py              # PLANNED
+│       ├── 0024_create_invoices.py                   # PLANNED
+│       └── 0025_create_payment_events.py             # PLANNED
 │
 ├── tests/
 │   ├── factories/
@@ -287,7 +316,10 @@ mhike-school/
 │   ├── test_assignments.py
 │   ├── test_assignment_submissions.py
 │   ├── test_audit_logs.py
-│   └── billing/                         # PLANNED
+│   ├── test_audit_log_authorization.py       # PLANNED
+│   ├── test_audit_log_exports.py             # PLANNED
+│   ├── test_audit_analytics.py               # PLANNED
+│   └── billing/                              # PLANNED
 │       ├── test_billing.py
 │       ├── test_subscriptions.py
 │       └── test_webhooks.py
@@ -300,8 +332,9 @@ mhike-school/
 │   ├── seed_topics.py
 │   ├── seed_content.py
 │   ├── seed_school.py
-│   ├── seed_billing_plans.py            # PLANNED
-│   └── sync_stripe_products.py          # PLANNED
+│   ├── seed_audit_logs.py                    # PLANNED
+│   ├── seed_billing_plans.py                 # PLANNED
+│   └── sync_stripe_products.py               # PLANNED
 │
 └── compliance/
     ├── gdpr/
@@ -311,17 +344,175 @@ mhike-school/
     │   ├── cookie_policy.md
     │   ├── security_policy.md
     │   ├── incident_response_policy.md
-    │   ├── terms_of_service.md          # ADD
-    │   └── refund_policy.md             # PLANNED
+    │   ├── audit_retention_policy.md         # PLANNED
+    │   ├── terms_of_service.md               # ADD
+    │   └── refund_policy.md                  # PLANNED
     ├── records/
     │   ├── processing_activities.md
     │   ├── consent_records.md
     │   ├── third_party_processors.md
-    │   └── payment_processing_records.md # PLANNED
-    └── billing/                         # PLANNED
+    │   ├── audit_export_records.md           # PLANNED
+    │   └── payment_processing_records.md     # PLANNED
+    └── billing/                              # PLANNED
         ├── payment_security.md
         ├── subscription_terms.md
         └── stripe_webhook_policy.md
+
+## Updated Planned Structure
+mhike-school/
+│
+├── mhike-school-web/
+│   ├── app/
+│   │   └── (dashboard)/
+│   │       ├── teacher/
+│   │       │   ├── reports/                    # PLANNED
+│   │       │   ├── attendance/                 # PLANNED
+│   │       │   ├── registration/               # PLANNED
+│   │       │   └── extracurricular/            # PLANNED
+│   │       │
+│   │       ├── student/
+│   │       │   ├── reports/                    # PLANNED
+│   │       │   ├── attendance/                 # PLANNED
+│   │       │   ├── progress/                   # PLANNED
+│   │       │   └── extracurricular/            # PLANNED
+│   │       │
+│   │       ├── parent/                         # PLANNED
+│   │       │   ├── dashboard/
+│   │       │   ├── attendance/
+│   │       │   ├── absence-reporting/
+│   │       │   ├── reports/
+│   │       │   ├── progress/
+│   │       │   └── extracurricular/
+│   │       │
+│   │       ├── school-admin/
+│   │       │   ├── attendance/                 # PLANNED
+│   │       │   ├── reports/                    # PLANNED
+│   │       │   ├── analytics/                  # PLANNED
+│   │       │   ├── demographics/               # PLANNED
+│   │       │   └── extracurricular/            # PLANNED
+│   │       │
+│   │       └── admin/
+│   │           ├── analytics/
+│   │           │   ├── attendance/             # PLANNED
+│   │           │   ├── attainment/             # PLANNED
+│   │           │   ├── effort/                 # PLANNED
+│   │           │   ├── demographics/           # PLANNED
+│   │           │   └── safeguarding/           # PLANNED
+│   │
+│   ├── components/
+│   │   ├── attendance/                         # PLANNED
+│   │   │   ├── AttendanceTable.tsx
+│   │   │   ├── RegistrationForm.tsx
+│   │   │   ├── AttendanceSummaryCard.tsx
+│   │   │   └── AbsenceBadge.tsx
+│   │   │
+│   │   ├── reports/                            # PLANNED
+│   │   │   ├── ReportEditor.tsx
+│   │   │   ├── ReportGradeSelector.tsx
+│   │   │   ├── ReportPublishModal.tsx
+│   │   │   └── StudentReportCard.tsx
+│   │   │
+│   │   ├── progress/                           # PLANNED
+│   │   │   ├── ProgressChart.tsx
+│   │   │   ├── SubjectTrendChart.tsx
+│   │   │   ├── CohortComparison.tsx
+│   │   │   └── DemographicAnalytics.tsx
+│   │   │
+│   │   ├── parent/                             # PLANNED
+│   │   │   ├── AbsenceRequestForm.tsx
+│   │   │   ├── ParentDashboard.tsx
+│   │   │   └── AttendanceHistory.tsx
+│   │   │
+│   │   └── extracurricular/                    # PLANNED
+│   │       ├── ClubRegistration.tsx
+│   │       ├── ActivityAttendance.tsx
+│   │       └── ActivityDashboard.tsx
+│   │
+│   ├── types/
+│   │   ├── attendance.ts                       # PLANNED
+│   │   ├── report.ts                           # PLANNED
+│   │   ├── progress.ts                         # PLANNED
+│   │   ├── demographicAnalytics.ts             # PLANNED
+│   │   ├── extracurricular.ts                  # PLANNED
+│   │   └── examBoard.ts                        # PLANNED
+│
+├── app/
+│   ├── api/v1/endpoints/
+│   │   ├── attendance.py                       # PLANNED
+│   │   ├── attendance_reports.py               # PLANNED
+│   │   ├── pupil_reports.py                    # PLANNED
+│   │   ├── parent_portal.py                    # PLANNED
+│   │   ├── absence_requests.py                 # PLANNED
+│   │   ├── extracurricular.py                  # PLANNED
+│   │   ├── progress_analytics.py               # PLANNED
+│   │   ├── demographic_analytics.py            # PLANNED
+│   │   └── attainment_tracking.py              # PLANNED
+│   │
+│   ├── models/
+│   │   ├── attendance_record.py                # PLANNED
+│   │   ├── attendance_session.py               # PLANNED
+│   │   ├── pupil_report.py                     # PLANNED
+│   │   ├── report_grade.py                     # PLANNED
+│   │   ├── absence_request.py                  # PLANNED
+│   │   ├── extracurricular_activity.py         # PLANNED
+│   │   ├── extracurricular_registration.py     # PLANNED
+│   │   ├── academic_result.py                  # PLANNED
+│   │   ├── assessment.py                       # PLANNED
+│   │   ├── assessment_result.py                # PLANNED
+│   │   ├── demographic_group.py                # PLANNED
+│   │   ├── exam_board.py                       # EXPANDED
+│   │   └── school_exam_board.py                # PLANNED
+│   │
+│   ├── schemas/
+│   │   ├── attendance.py                       # PLANNED
+│   │   ├── pupil_report.py                     # PLANNED
+│   │   ├── absence_request.py                  # PLANNED
+│   │   ├── extracurricular.py                  # PLANNED
+│   │   ├── progress_analytics.py               # PLANNED
+│   │   └── assessment.py                       # PLANNED
+│   │
+│   ├── repositories/
+│   │   ├── attendance.py                       # PLANNED
+│   │   ├── pupil_report.py                     # PLANNED
+│   │   ├── absence_request.py                  # PLANNED
+│   │   ├── extracurricular.py                  # PLANNED
+│   │   ├── assessment.py                       # PLANNED
+│   │   └── progress_analytics.py               # PLANNED
+│   │
+│   ├── services/
+│   │   ├── attendance_service.py               # PLANNED
+│   │   ├── registration_service.py             # PLANNED
+│   │   ├── pupil_report_service.py             # PLANNED
+│   │   ├── absence_service.py                  # PLANNED
+│   │   ├── extracurricular_service.py          # PLANNED
+│   │   ├── attainment_service.py               # PLANNED
+│   │   ├── demographic_analytics_service.py    # PLANNED
+│   │   └── progress_tracking_service.py        # PLANNED
+│
+├── tests/
+│   ├── test_attendance.py                      # PLANNED
+│   ├── test_pupil_reports.py                   # PLANNED
+│   ├── test_absence_requests.py                # PLANNED
+│   ├── test_progress_tracking.py               # PLANNED
+│   ├── test_demographic_analytics.py           # PLANNED
+│   ├── test_exam_board_selection.py            # PLANNED
+│   └── test_extracurricular.py                 # PLANNED
+│
+├── alembic/versions/
+│   ├── 0026_create_attendance_tables.py        # PLANNED
+│   ├── 0027_create_pupil_reports.py            # PLANNED
+│   ├── 0028_create_absence_requests.py         # PLANNED
+│   ├── 0029_create_extracurricular_tables.py   # PLANNED
+│   ├── 0030_create_assessment_tables.py        # PLANNED
+│   ├── 0031_create_demographic_tracking.py     # PLANNED
+│   └── 0032_create_school_exam_boards.py       # PLANNED
+│
+└── compliance/
+    ├── safeguarding/                           # PLANNED
+    │   ├── attendance_monitoring.md
+    │   ├── absence_reporting_policy.md
+    │   ├── pupil_reporting_guidelines.md
+    │   └── parental_access_policy.md
 ## 🏆 Why this is FINAL (no more restructuring)
 
 This structure gives you:
