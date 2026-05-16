@@ -36,10 +36,6 @@ class PermissionService:
         current_user: User,
         resource_school_id: int | None,
     ) -> None:
-        """
-        Platform admins may access resources across schools.
-        All other users are restricted to their own school.
-        """
         if current_user.is_platform_admin:
             return
 
@@ -95,14 +91,6 @@ class PermissionService:
 
     @staticmethod
     def ensure_school_admin_or_platform_admin(current_user: User) -> None:
-        """
-        Allows:
-        - platform_admin
-        - school_admin
-
-        A user may also have teacher at the same time:
-        ["school_admin", "teacher"]
-        """
         PermissionService.ensure_has_any_role(
             current_user,
             {
@@ -113,12 +101,17 @@ class PermissionService:
 
     @staticmethod
     def ensure_school_staff_or_platform_admin(current_user: User) -> None:
-        """
-        Allows:
-        - platform_admin
-        - school_admin
-        - teacher
-        """
+        PermissionService.ensure_has_any_role(
+            current_user,
+            {
+                UserRole.PLATFORM_ADMIN,
+                UserRole.SCHOOL_ADMIN,
+                UserRole.TEACHER,
+            },
+        )
+
+    @staticmethod
+    def ensure_school_admin_or_teacher(current_user: User) -> None:
         PermissionService.ensure_has_any_role(
             current_user,
             {
@@ -130,15 +123,6 @@ class PermissionService:
 
     @staticmethod
     def ensure_can_teach(current_user: User) -> None:
-        """
-        Allows teaching actions for:
-        - platform_admin
-        - school_admin
-        - teacher
-
-        This correctly supports users with both:
-        ["school_admin", "teacher"]
-        """
         PermissionService.ensure_has_any_role(
             current_user,
             {
@@ -150,13 +134,6 @@ class PermissionService:
 
     @staticmethod
     def ensure_user_belongs_to_school(user: User) -> None:
-        """
-        Current product rule:
-        - platform_admin users must not belong to a school.
-        - school_admin, teacher, and student users must belong to a school.
-
-        A user with roles ["school_admin", "teacher"] must belong to a school.
-        """
         if user.is_platform_admin:
             if user.school_id is not None:
                 raise HTTPException(
@@ -176,11 +153,6 @@ class PermissionService:
         current_user: User,
         target_user: User,
     ) -> None:
-        """
-        Allows:
-        - platform_admin to manage any user
-        - school_admin to manage users in their own school
-        """
         PermissionService.ensure_school_admin_or_platform_admin(current_user)
 
         if current_user.is_platform_admin:
@@ -209,10 +181,6 @@ class PermissionService:
         target_user: User,
         active_school_admin_count: int,
     ) -> None:
-        """
-        Prevent removing, deactivating, anonymising, or demoting
-        the final active school admin in a school.
-        """
         if not target_user.is_school_admin:
             return
 

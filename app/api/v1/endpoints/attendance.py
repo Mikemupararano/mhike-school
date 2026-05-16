@@ -25,7 +25,7 @@ from app.schemas.attendance import (
 )
 from app.services.attendance_service import AttendanceService
 
-router = APIRouter(prefix="/attendance", tags=["Attendance"])
+router = APIRouter(tags=["Attendance"])
 
 
 @router.post("/sessions", response_model=AttendanceSessionOut)
