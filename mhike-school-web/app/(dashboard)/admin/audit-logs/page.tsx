@@ -116,7 +116,6 @@ function AdminAuditLogsContent() {
     const [error, setError] = useState<string | null>(null);
 
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
     const canGoPrevious = page > 1;
     const canGoNext = page < totalPages;
 
@@ -219,18 +218,14 @@ function AdminAuditLogsContent() {
 
     function downloadFile(content: string, filename: string, type: string) {
         const blob = new Blob([content], { type });
-
         const url = URL.createObjectURL(blob);
-
         const link = document.createElement("a");
 
         link.href = url;
         link.setAttribute("download", filename);
 
         document.body.appendChild(link);
-
         link.click();
-
         document.body.removeChild(link);
 
         URL.revokeObjectURL(url);
@@ -310,8 +305,83 @@ function AdminAuditLogsContent() {
         );
     }
 
+    function renderMobileCard(log: AuditLogItem) {
+        return (
+            <div
+                key={log.id}
+                className="rounded-2xl border bg-white p-4 shadow-sm"
+            >
+                <div className="flex items-start justify-between gap-3">
+                    <span
+                        className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${getActionStyle(
+                            log.action,
+                        )}`}
+                    >
+                        {formatAction(log.action)}
+                    </span>
+
+                    <span className="text-xs text-slate-500">#{log.id}</span>
+                </div>
+
+                <div className="mt-4 space-y-3 text-sm">
+                    <div>
+                        <p className="font-semibold text-slate-500">Entity</p>
+                        <p className="font-medium text-slate-900">
+                            {log.entity_type}
+                            {log.entity_id !== null
+                                ? ` #${log.entity_id}`
+                                : ""}
+                        </p>
+                    </div>
+
+                    <div>
+                        <p className="font-semibold text-slate-500">Actor</p>
+                        <p className="break-all text-slate-900">
+                            {log.actor_email ?? "System"}
+                        </p>
+                    </div>
+
+                    <div>
+                        <p className="font-semibold text-slate-500">Target</p>
+                        <p className="break-all text-slate-900">
+                            {log.target_user_email ?? "—"}
+                        </p>
+                    </div>
+
+                    <div>
+                        <p className="font-semibold text-slate-500">School</p>
+                        <p className="text-slate-900">
+                            {log.school_name ?? log.school_id ?? "Global"}
+                        </p>
+                    </div>
+
+                    <div>
+                        <p className="font-semibold text-slate-500">Date</p>
+                        <p className="text-slate-900">
+                            {formatDate(log.created_at)}
+                        </p>
+                    </div>
+
+                    <div>
+                        <p className="font-semibold text-slate-500">
+                            Metadata
+                        </p>
+
+                        <button
+                            type="button"
+                            onClick={() => setSelectedLog(log)}
+                            className="mt-1 w-full rounded-lg bg-slate-100 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                        >
+                            {metadataPreview(log.metadata)}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <main className="space-y-6 p-8">
+        <main className="space-y-6 p-4 md:p-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-extrabold text-slate-950">
@@ -498,34 +568,28 @@ function AdminAuditLogsContent() {
                     </div>
                 ) : (
                     <>
-                        <div className="max-h-[70vh] overflow-auto rounded-xl border">
+                        <div className="hidden max-h-[70vh] overflow-auto rounded-xl border md:block">
                             <table className="w-full min-w-[1100px] text-left text-sm">
                                 <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600 shadow-sm">
                                     <tr>
                                         <th className="px-4 py-4 font-bold">
                                             Action
                                         </th>
-
                                         <th className="px-4 py-4 font-bold">
                                             Entity
                                         </th>
-
                                         <th className="px-4 py-4 font-bold">
                                             Actor
                                         </th>
-
                                         <th className="px-4 py-4 font-bold">
                                             Target
                                         </th>
-
                                         <th className="px-4 py-4 font-bold">
                                             School
                                         </th>
-
                                         <th className="px-4 py-4 font-bold">
                                             Date
                                         </th>
-
                                         <th className="px-4 py-4 font-bold">
                                             Metadata
                                         </th>
@@ -593,6 +657,10 @@ function AdminAuditLogsContent() {
                                     ))}
                                 </tbody>
                             </table>
+                        </div>
+
+                        <div className="space-y-4 md:hidden">
+                            {logs.map((log) => renderMobileCard(log))}
                         </div>
 
                         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
