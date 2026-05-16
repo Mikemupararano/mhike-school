@@ -27,6 +27,8 @@ type AttendanceStatus =
     | "authorised_absence"
     | "unauthorised_absence";
 
+type RegisterStatus = "not_loaded" | "empty" | "incomplete" | "ready";
+
 type Student = {
     id: number;
     first_name?: string;
@@ -126,6 +128,37 @@ export default function TeacherAttendanceRegisterPage() {
     const selectedEntry = useMemo(() => {
         return entries.find((entry) => entry.id === selectedEntryId) ?? null;
     }, [entries, selectedEntryId]);
+
+    const attendanceSummary = useMemo(() => {
+        const values = Object.values(attendanceMap);
+
+        return {
+            present: values.filter((item) => item.status === "present").length,
+            late: values.filter((item) => item.status === "late").length,
+            authorisedAbsence: values.filter(
+                (item) => item.status === "authorised_absence",
+            ).length,
+            unauthorisedAbsence: values.filter(
+                (item) => item.status === "unauthorised_absence",
+            ).length,
+        };
+    }, [attendanceMap]);
+
+    const registerStatus: RegisterStatus = useMemo(() => {
+        if (!session) {
+            return "not_loaded";
+        }
+
+        if (students.length === 0) {
+            return "empty";
+        }
+
+        if (Object.keys(attendanceMap).length < students.length) {
+            return "incomplete";
+        }
+
+        return "ready";
+    }, [attendanceMap, session, students.length]);
 
     useEffect(() => {
         async function loadStudents() {
@@ -399,14 +432,68 @@ export default function TeacherAttendanceRegisterPage() {
                     </section>
 
                     <section className="rounded-2xl border bg-white p-6">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                             <h2 className="text-xl font-bold">
                                 Pupil Attendance
                             </h2>
 
-                            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
-                                {students.length} pupils
-                            </span>
+                            <div className="flex flex-wrap gap-2">
+                                <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
+                                    {students.length} pupils
+                                </span>
+
+                                <span className="rounded-full bg-purple-100 px-4 py-2 text-sm font-semibold text-purple-700">
+                                    {registerStatus === "not_loaded" &&
+                                        "Register not loaded"}
+                                    {registerStatus === "empty" && "No pupils"}
+                                    {registerStatus === "incomplete" &&
+                                        "Incomplete"}
+                                    {registerStatus === "ready" &&
+                                        "Ready to submit"}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 md:grid-cols-4">
+                            <div className="rounded-xl border bg-green-50 p-4">
+                                <div className="text-sm font-semibold text-green-700">
+                                    Present
+                                </div>
+
+                                <div className="mt-1 text-2xl font-extrabold text-green-900">
+                                    {attendanceSummary.present}
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border bg-yellow-50 p-4">
+                                <div className="text-sm font-semibold text-yellow-700">
+                                    Late
+                                </div>
+
+                                <div className="mt-1 text-2xl font-extrabold text-yellow-900">
+                                    {attendanceSummary.late}
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border bg-blue-50 p-4">
+                                <div className="text-sm font-semibold text-blue-700">
+                                    Authorised
+                                </div>
+
+                                <div className="mt-1 text-2xl font-extrabold text-blue-900">
+                                    {attendanceSummary.authorisedAbsence}
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border bg-red-50 p-4">
+                                <div className="text-sm font-semibold text-red-700">
+                                    Unauthorised
+                                </div>
+
+                                <div className="mt-1 text-2xl font-extrabold text-red-900">
+                                    {attendanceSummary.unauthorisedAbsence}
+                                </div>
+                            </div>
                         </div>
 
                         {students.length === 0 ? (
@@ -488,7 +575,9 @@ export default function TeacherAttendanceRegisterPage() {
                         <button
                             type="button"
                             disabled={
-                                isSubmitting || !session || students.length === 0
+                                isSubmitting ||
+                                !session ||
+                                students.length === 0
                             }
                             onClick={submitAllAttendanceRecords}
                             className="mt-6 rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
