@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     school_users,
     schools,
     teacher_dashboard,
+    timetables,
 )
 
 api_router = APIRouter()
@@ -124,6 +125,16 @@ api_router.include_router(
     attendance.router,
     prefix="/attendance",
     tags=["attendance"],
+)
+
+# =========================================================
+# TIMETABLES
+# =========================================================
+
+api_router.include_router(
+    timetables.router,
+    prefix="/timetables",
+    tags=["timetables"],
 )
 
 # =========================================================
