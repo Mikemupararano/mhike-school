@@ -23,7 +23,7 @@ class AttendanceRecord(Base):
         UniqueConstraint(
             "attendance_session_id",
             "student_id",
-            name="uq_attendance_session_student",
+            name="uq_attendance_record_session_student",
         ),
     )
 
