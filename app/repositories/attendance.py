@@ -125,6 +125,20 @@ class AttendanceRepository:
 
         return result.scalar_one_or_none()
 
+    async def get_record_by_session_and_student(
+        self,
+        attendance_session_id: int,
+        student_id: int,
+    ) -> AttendanceRecord | None:
+        result = await self.db.execute(
+            select(AttendanceRecord).where(
+                AttendanceRecord.attendance_session_id == attendance_session_id,
+                AttendanceRecord.student_id == student_id,
+            )
+        )
+
+        return result.scalar_one_or_none()
+
     async def list_records(
         self,
         filters: AttendanceFilter,

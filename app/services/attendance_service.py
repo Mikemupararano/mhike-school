@@ -74,13 +74,35 @@ class AttendanceService:
         self,
         records: list[AttendanceRecordCreate],
     ) -> list[AttendanceRecord]:
-        created_records: list[AttendanceRecord] = []
+        upserted_records: list[AttendanceRecord] = []
 
         for record_data in records:
-            created_record = await self.create_record(record_data)
-            created_records.append(created_record)
+            await self.get_session_or_404(record_data.attendance_session_id)
 
-        return created_records
+            existing_record = await self.repo.get_record_by_session_and_student(
+                attendance_session_id=record_data.attendance_session_id,
+                student_id=record_data.student_id,
+            )
+
+            if existing_record is not None:
+                updated_record = await self.repo.update_record(
+                    existing_record,
+                    AttendanceRecordUpdate(
+                        status=record_data.status,
+                        notes=record_data.notes,
+                    ),
+                )
+
+                if record_data.marked_by_id is not None:
+                    updated_record.marked_by_id = record_data.marked_by_id
+
+                upserted_records.append(updated_record)
+                continue
+
+            created_record = await self.repo.create_record(record_data)
+            upserted_records.append(created_record)
+
+        return upserted_records
 
     async def get_record_or_404(
         self,
