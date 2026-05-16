@@ -83,6 +83,14 @@ class AttendanceRecordCreate(AttendanceRecordBase):
     marked_by_id: Optional[int] = None
 
 
+class AttendanceRecordBulkCreate(BaseModel):
+    records: list[AttendanceRecordCreate] = Field(
+        ...,
+        min_length=1,
+        max_length=300,
+    )
+
+
 class AttendanceRecordUpdate(BaseModel):
     status: Optional[AttendanceStatus] = None
     notes: Optional[str] = Field(default=None, max_length=500)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.absence_request import AbsenceRequest
 from app.models.attendance_record import AttendanceRecord
 from app.models.attendance_session import AttendanceSession
 from app.repositories.attendance import AttendanceRepository
@@ -59,6 +60,18 @@ class AttendanceService:
 
         return await self.repo.create_record(data)
 
+    async def create_records_bulk(
+        self,
+        records: list[AttendanceRecordCreate],
+    ) -> list[AttendanceRecord]:
+        created_records: list[AttendanceRecord] = []
+
+        for record_data in records:
+            created_record = await self.create_record(record_data)
+            created_records.append(created_record)
+
+        return created_records
+
     async def get_record_or_404(
         self,
         record_id: int,
@@ -91,5 +104,5 @@ class AttendanceService:
     async def list_absence_requests(
         self,
         filters: AbsenceRequestFilter,
-    ):
+    ) -> list[AbsenceRequest]:
         return await self.repo.list_absence_requests(filters)

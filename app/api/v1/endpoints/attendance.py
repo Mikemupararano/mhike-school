@@ -15,6 +15,7 @@ from app.schemas.attendance import (
     AbsenceRequestStatus,
     AbsenceRequestType,
     AttendanceFilter,
+    AttendanceRecordBulkCreate,
     AttendanceRecordCreate,
     AttendanceRecordOut,
     AttendanceRecordUpdate,
@@ -98,6 +99,29 @@ async def create_attendance_record(
     return await service.create_record(data)
 
 
+@router.post(
+    "/records/bulk",
+    response_model=list[AttendanceRecordOut],
+)
+async def create_attendance_records_bulk(
+    payload: AttendanceRecordBulkCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[AttendanceRecordOut]:
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_school_admin_or_teacher(current_user)
+
+    prepared_records: list[AttendanceRecordCreate] = []
+
+    for record in payload.records:
+        record.marked_by_id = current_user.id
+        prepared_records.append(record)
+
+    service = AttendanceService(db)
+
+    return await service.create_records_bulk(prepared_records)
+
+
 @router.get("/records", response_model=list[AttendanceRecordOut])
 async def list_attendance_records(
     school_id: int | None = Query(default=None),
@@ -151,7 +175,10 @@ async def update_attendance_record(
     return await service.update_record(record_id, data)
 
 
-@router.get("/absence-requests", response_model=list[AbsenceRequestOut])
+@router.get(
+    "/absence-requests",
+    response_model=list[AbsenceRequestOut],
+)
 async def list_absence_requests(
     school_id: int | None = Query(default=None),
     student_id: int | None = Query(default=None),
