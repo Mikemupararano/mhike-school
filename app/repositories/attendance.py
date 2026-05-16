@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.absence_request import AbsenceRequest
 from app.models.attendance_record import AttendanceRecord
-from app.models.attendance_session import AttendanceSession
+from app.models.attendance_session import (
+    AttendanceSession,
+    AttendanceSessionType,
+)
 from app.schemas.attendance import (
     AbsenceRequestFilter,
     AttendanceFilter,
@@ -18,6 +23,24 @@ from app.schemas.attendance import (
 class AttendanceRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def get_existing_session(
+        self,
+        school_id: int,
+        class_group_id: int,
+        session_date: date,
+        session_type: AttendanceSessionType,
+    ) -> AttendanceSession | None:
+        result = await self.db.execute(
+            select(AttendanceSession).where(
+                AttendanceSession.school_id == school_id,
+                AttendanceSession.class_group_id == class_group_id,
+                AttendanceSession.session_date == session_date,
+                AttendanceSession.session_type == session_type,
+            )
+        )
+
+        return result.scalar_one_or_none()
 
     async def create_session(
         self,

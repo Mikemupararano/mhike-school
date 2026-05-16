@@ -24,6 +24,16 @@ class AttendanceService:
         self,
         data: AttendanceSessionCreate,
     ) -> AttendanceSession:
+        existing_session = await self.repo.get_existing_session(
+            school_id=data.school_id,
+            class_group_id=data.class_group_id,
+            session_date=data.session_date,
+            session_type=data.session_type,
+        )
+
+        if existing_session is not None:
+            return existing_session
+
         return await self.repo.create_session(data)
 
     async def get_session_or_404(
