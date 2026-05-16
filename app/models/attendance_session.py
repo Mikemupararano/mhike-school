@@ -41,6 +41,18 @@ class AttendanceSession(Base):
         index=True,
     )
 
+    timetable_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("timetable_entries.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    timetable_period_id: Mapped[int | None] = mapped_column(
+        ForeignKey("timetable_periods.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     session_date: Mapped[date] = mapped_column(
         Date,
         nullable=False,
@@ -81,3 +93,6 @@ class AttendanceSession(Base):
         back_populates="session",
         cascade="all, delete-orphan",
     )
+
+    timetable_entry = relationship("TimetableEntry")
+    timetable_period = relationship("TimetablePeriod")

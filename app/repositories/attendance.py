@@ -64,6 +64,16 @@ class AttendanceRepository:
         if filters.session_type is not None:
             query = query.where(AttendanceSession.session_type == filters.session_type)
 
+        if filters.timetable_entry_id is not None:
+            query = query.where(
+                AttendanceSession.timetable_entry_id == filters.timetable_entry_id
+            )
+
+        if filters.timetable_period_id is not None:
+            query = query.where(
+                AttendanceSession.timetable_period_id == filters.timetable_period_id
+            )
+
         query = query.offset(filters.offset).limit(filters.limit)
 
         result = await self.db.execute(query)
@@ -124,6 +134,16 @@ class AttendanceRepository:
 
         if filters.status is not None:
             query = query.where(AttendanceRecord.status == filters.status)
+
+        if filters.timetable_entry_id is not None:
+            query = query.where(
+                AttendanceSession.timetable_entry_id == filters.timetable_entry_id
+            )
+
+        if filters.timetable_period_id is not None:
+            query = query.where(
+                AttendanceSession.timetable_period_id == filters.timetable_period_id
+            )
 
         query = query.offset(filters.offset).limit(filters.limit)
 

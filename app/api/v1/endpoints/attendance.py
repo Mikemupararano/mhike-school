@@ -40,6 +40,8 @@ async def create_attendance_session(
     if not current_user.is_platform_admin:
         data.school_id = current_user.school_id
 
+    data.created_by_id = current_user.id
+
     service = AttendanceService(db)
 
     return await service.create_session(data)
@@ -51,6 +53,8 @@ async def list_attendance_sessions(
     class_group_id: int | None = Query(default=None),
     session_date: date | None = Query(default=None),
     session_type: AttendanceSessionType | None = Query(default=None),
+    timetable_entry_id: int | None = Query(default=None),
+    timetable_period_id: int | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -67,6 +71,8 @@ async def list_attendance_sessions(
         class_group_id=class_group_id,
         session_date=session_date,
         session_type=session_type,
+        timetable_entry_id=timetable_entry_id,
+        timetable_period_id=timetable_period_id,
         limit=limit,
         offset=offset,
     )
@@ -100,6 +106,8 @@ async def list_attendance_records(
     session_date: date | None = Query(default=None),
     session_type: AttendanceSessionType | None = Query(default=None),
     status: AttendanceStatus | None = Query(default=None),
+    timetable_entry_id: int | None = Query(default=None),
+    timetable_period_id: int | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -117,6 +125,8 @@ async def list_attendance_records(
         session_date=session_date,
         session_type=session_type,
         status=status,
+        timetable_entry_id=timetable_entry_id,
+        timetable_period_id=timetable_period_id,
         limit=limit,
         offset=offset,
     )

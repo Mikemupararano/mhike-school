@@ -46,6 +46,9 @@ class AttendanceSessionBase(BaseModel):
     session_date: date
     session_type: AttendanceSessionType
 
+    timetable_entry_id: Optional[int] = None
+    timetable_period_id: Optional[int] = None
+
 
 class AttendanceSessionCreate(AttendanceSessionBase):
     created_by_id: Optional[int] = None
@@ -155,8 +158,10 @@ class AttendanceFilter(BaseModel):
     session_date: Optional[date] = None
 
     session_type: Optional[AttendanceSessionType] = None
-
     status: Optional[AttendanceStatus] = None
+
+    timetable_entry_id: Optional[int] = None
+    timetable_period_id: Optional[int] = None
 
     limit: int = Field(default=50, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
