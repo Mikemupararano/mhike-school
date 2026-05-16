@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user
 from app.core.permissions import PermissionService
 from app.db.session import get_db
-from app.api.deps import get_current_user
 from app.models.user import User
 from app.schemas.timetable import (
     TimetableAssignmentCreate,
@@ -39,6 +39,7 @@ async def create_timetable_period(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     payload.school_id = current_user.school_id
@@ -56,6 +57,7 @@ async def list_timetable_periods(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     service = TimetableService(db)
@@ -77,6 +79,7 @@ async def create_timetable(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     payload.school_id = current_user.school_id
@@ -98,6 +101,7 @@ async def list_timetables(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     filters = TimetableFilter(
@@ -127,6 +131,7 @@ async def create_timetable_entry(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     payload.school_id = current_user.school_id
@@ -151,6 +156,7 @@ async def list_timetable_entries(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     filters = TimetableEntryFilter(
@@ -159,6 +165,38 @@ async def list_timetable_entries(
         class_group_id=class_group_id,
         course_id=course_id,
         teacher_id=teacher_id,
+        day_of_week=day_of_week,
+        limit=limit,
+        offset=offset,
+    )
+
+    service = TimetableService(db)
+
+    return await service.list_entries(filters)
+
+
+# =========================================================
+# TEACHER TIMETABLE
+# =========================================================
+
+
+@router.get(
+    "/teacher/me",
+    response_model=list[TimetableEntryOut],
+)
+async def get_my_teacher_timetable(
+    day_of_week: str | None = Query(default=None),
+    limit: int = Query(default=100, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_can_teach(current_user)
+
+    filters = TimetableEntryFilter(
+        school_id=current_user.school_id,
+        teacher_id=current_user.id,
         day_of_week=day_of_week,
         limit=limit,
         offset=offset,
@@ -183,6 +221,7 @@ async def create_timetable_assignment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     payload.school_id = current_user.school_id
@@ -206,6 +245,7 @@ async def list_timetable_assignments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    PermissionService.ensure_active_user(current_user)
     PermissionService.ensure_school_admin_or_teacher(current_user)
 
     filters = TimetableAssignmentFilter(
