@@ -59,6 +59,10 @@ class AttendanceSessionOut(AttendanceSessionBase):
 
     id: int
 
+    is_submitted: bool
+    submitted_at: Optional[datetime]
+    submitted_by_id: Optional[int]
+
     created_by_id: Optional[int]
 
     created_at: datetime

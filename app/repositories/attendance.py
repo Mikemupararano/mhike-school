@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +47,21 @@ class AttendanceRepository:
         data: AttendanceSessionCreate,
     ) -> AttendanceSession:
         session = AttendanceSession(**data.model_dump())
+
+        self.db.add(session)
+        await self.db.flush()
+        await self.db.refresh(session)
+
+        return session
+
+    async def mark_session_submitted(
+        self,
+        session: AttendanceSession,
+        submitted_by_id: int,
+    ) -> AttendanceSession:
+        session.is_submitted = True
+        session.submitted_at = datetime.utcnow()
+        session.submitted_by_id = submitted_by_id
 
         self.db.add(session)
         await self.db.flush()

@@ -68,6 +68,12 @@ class AttendanceService:
                 detail="Attendance session is missing a school.",
             )
 
+        if session.is_submitted:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Attendance register has already been submitted.",
+            )
+
         return await self.repo.create_record(data)
 
     async def create_records_bulk(
@@ -76,8 +82,27 @@ class AttendanceService:
     ) -> list[AttendanceRecord]:
         upserted_records: list[AttendanceRecord] = []
 
+        if not records:
+            return upserted_records
+
+        session = await self.get_session_or_404(records[0].attendance_session_id)
+
+        if session.is_submitted:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Attendance register has already been submitted.",
+            )
+
+        submitted_by_id = records[0].marked_by_id
+
         for record_data in records:
-            await self.get_session_or_404(record_data.attendance_session_id)
+            if record_data.attendance_session_id != session.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Bulk attendance records must belong " "to the same session."
+                    ),
+                )
 
             existing_record = await self.repo.get_record_by_session_and_student(
                 attendance_session_id=record_data.attendance_session_id,
@@ -101,6 +126,12 @@ class AttendanceService:
 
             created_record = await self.repo.create_record(record_data)
             upserted_records.append(created_record)
+
+        if submitted_by_id is not None:
+            await self.repo.mark_session_submitted(
+                session=session,
+                submitted_by_id=submitted_by_id,
+            )
 
         return upserted_records
 
@@ -130,6 +161,14 @@ class AttendanceService:
         data: AttendanceRecordUpdate,
     ) -> AttendanceRecord:
         record = await self.get_record_or_404(record_id)
+
+        session = await self.get_session_or_404(record.attendance_session_id)
+
+        if session.is_submitted:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Attendance register has already been submitted.",
+            )
 
         return await self.repo.update_record(record, data)
 
