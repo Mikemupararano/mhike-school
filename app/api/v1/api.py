@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     attendance_analytics,
     attendance_dashboard,
     attendance_exports,
+    attendance_pdf_exports,
     attendance_registers,
     auth,
     classes,
@@ -153,6 +154,12 @@ api_router.include_router(
     attendance_exports.router,
     prefix="/attendance-exports",
     tags=["attendance-exports"],
+)
+
+api_router.include_router(
+    attendance_pdf_exports.router,
+    prefix="/attendance-pdf-exports",
+    tags=["attendance-pdf-exports"],
 )
 
 # =========================================================
