@@ -52,22 +52,22 @@ class AttendanceDashboardService:
             AttendanceRegisterSummary(
                 session_id=session.id,
                 class_group_id=session.class_group_id,
-                class_name=None,
+                class_name=class_name,
                 session_date=session.session_date,
-                session_type=session.session_type,
+                session_type=str(session.session_type),
                 is_submitted=session.is_submitted,
                 total_records=total_records,
             )
-            for session, total_records in register_rows
+            for session, class_name, total_records in register_rows
         ]
 
         class_summary_map: dict[int, AttendanceClassSummary] = {}
 
-        for class_group_id, status, count in class_rows:
+        for class_group_id, class_name, status, count in class_rows:
             if class_group_id not in class_summary_map:
                 class_summary_map[class_group_id] = AttendanceClassSummary(
                     class_group_id=class_group_id,
-                    class_name=None,
+                    class_name=class_name,
                     total_records=0,
                     present=0,
                     late=0,
@@ -98,7 +98,10 @@ class AttendanceDashboardService:
             present=status_counts.get("present", 0),
             late=status_counts.get("late", 0),
             authorised_absence=status_counts.get("authorised_absence", 0),
-            unauthorised_absence=status_counts.get("unauthorised_absence", 0),
+            unauthorised_absence=status_counts.get(
+                "unauthorised_absence",
+                0,
+            ),
             registers=registers,
             classes=list(class_summary_map.values()),
         )

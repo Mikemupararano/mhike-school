@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.attendance_record import AttendanceRecord
 from app.models.attendance_session import AttendanceSession
+from app.models.class_group import ClassGroup
 
 
 class AttendanceDashboardRepository:
@@ -56,11 +57,16 @@ class AttendanceDashboardRepository:
         self,
         school_id: int,
         summary_date: date,
-    ) -> list[tuple[AttendanceSession, int]]:
+    ) -> list[tuple[AttendanceSession, str | None, int]]:
         result = await self.db.execute(
             select(
                 AttendanceSession,
+                ClassGroup.name,
                 func.count(AttendanceRecord.id),
+            )
+            .join(
+                ClassGroup,
+                AttendanceSession.class_group_id == ClassGroup.id,
             )
             .outerjoin(
                 AttendanceRecord,
@@ -70,7 +76,10 @@ class AttendanceDashboardRepository:
                 AttendanceSession.school_id == school_id,
                 AttendanceSession.session_date == summary_date,
             )
-            .group_by(AttendanceSession.id)
+            .group_by(
+                AttendanceSession.id,
+                ClassGroup.name,
+            )
             .order_by(
                 AttendanceSession.session_type.asc(),
                 AttendanceSession.id.asc(),
@@ -83,10 +92,11 @@ class AttendanceDashboardRepository:
         self,
         school_id: int,
         summary_date: date,
-    ) -> list[tuple[int, str, int]]:
+    ) -> list[tuple[int, str | None, str, int]]:
         result = await self.db.execute(
             select(
                 AttendanceSession.class_group_id,
+                ClassGroup.name,
                 AttendanceRecord.status,
                 func.count(AttendanceRecord.id),
             )
@@ -94,14 +104,20 @@ class AttendanceDashboardRepository:
                 AttendanceSession,
                 AttendanceRecord.attendance_session_id == AttendanceSession.id,
             )
+            .join(
+                ClassGroup,
+                AttendanceSession.class_group_id == ClassGroup.id,
+            )
             .where(
                 AttendanceSession.school_id == school_id,
                 AttendanceSession.session_date == summary_date,
             )
             .group_by(
                 AttendanceSession.class_group_id,
+                ClassGroup.name,
                 AttendanceRecord.status,
             )
+            .order_by(ClassGroup.name.asc())
         )
 
         return list(result.all())

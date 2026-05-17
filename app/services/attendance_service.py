@@ -60,7 +60,9 @@ class AttendanceService:
         self,
         data: AttendanceRecordCreate,
     ) -> AttendanceRecord:
-        session = await self.get_session_or_404(data.attendance_session_id)
+        session = await self.get_session_or_404(
+            data.attendance_session_id,
+        )
 
         if session.school_id is None:
             raise HTTPException(
@@ -85,7 +87,9 @@ class AttendanceService:
         if not records:
             return upserted_records
 
-        session = await self.get_session_or_404(records[0].attendance_session_id)
+        session = await self.get_session_or_404(
+            records[0].attendance_session_id,
+        )
 
         if session.is_submitted:
             raise HTTPException(
@@ -105,7 +109,7 @@ class AttendanceService:
                 )
 
             existing_record = await self.repo.get_record_by_session_and_student(
-                attendance_session_id=record_data.attendance_session_id,
+                attendance_session_id=(record_data.attendance_session_id),
                 student_id=record_data.student_id,
             )
 
@@ -124,7 +128,10 @@ class AttendanceService:
                 upserted_records.append(updated_record)
                 continue
 
-            created_record = await self.repo.create_record(record_data)
+            created_record = await self.repo.create_record(
+                record_data,
+            )
+
             upserted_records.append(created_record)
 
         if submitted_by_id is not None:
@@ -162,7 +169,9 @@ class AttendanceService:
     ) -> AttendanceRecord:
         record = await self.get_record_or_404(record_id)
 
-        session = await self.get_session_or_404(record.attendance_session_id)
+        session = await self.get_session_or_404(
+            record.attendance_session_id,
+        )
 
         if session.is_submitted:
             raise HTTPException(
@@ -171,6 +180,27 @@ class AttendanceService:
             )
 
         return await self.repo.update_record(record, data)
+
+    async def reopen_register(
+        self,
+        session_id: int,
+    ) -> AttendanceSession:
+        session = await self.get_session_or_404(session_id)
+
+        if not session.is_submitted:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Attendance register is already open.",
+            )
+
+        session.is_submitted = False
+        session.submitted_at = None
+        session.submitted_by_id = None
+
+        await self.repo.db.commit()
+        await self.repo.db.refresh(session)
+
+        return session
 
     async def list_absence_requests(
         self,
