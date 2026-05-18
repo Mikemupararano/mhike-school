@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 type AttendanceSession = {
     id: number;
@@ -36,16 +36,45 @@ function formatStatus(status: AttendanceRecord["status"]) {
     return status.replaceAll("_", " ");
 }
 
+function getStatusBadge(status: AttendanceRecord["status"]) {
+    switch (status) {
+        case "present":
+            return "bg-green-100 text-green-700";
+
+        case "late":
+            return "bg-yellow-100 text-yellow-700";
+
+        case "authorised_absence":
+            return "bg-blue-100 text-blue-700";
+
+        case "unauthorised_absence":
+            return "bg-red-100 text-red-700";
+
+        default:
+            return "bg-slate-100 text-slate-700";
+    }
+}
+
 export default function AttendanceRegisterDrillDownPage() {
     const params = useParams<{ sessionId: string }>();
     const sessionId = params.sessionId;
 
-    const [session, setSession] = useState<AttendanceSession | null>(null);
-    const [records, setRecords] = useState<AttendanceRecord[]>([]);
+    const [session, setSession] =
+        useState<AttendanceSession | null>(null);
+
+    const [records, setRecords] =
+        useState<AttendanceRecord[]>([]);
+
     const [loading, setLoading] = useState(true);
-    const [reopening, setReopening] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [message, setMessage] = useState<string | null>(null);
+
+    const [reopening, setReopening] =
+        useState(false);
+
+    const [error, setError] =
+        useState<string | null>(null);
+
+    const [message, setMessage] =
+        useState<string | null>(null);
 
     useEffect(() => {
         async function loadRegister() {
@@ -53,21 +82,32 @@ export default function AttendanceRegisterDrillDownPage() {
                 setLoading(true);
                 setError(null);
 
-                const [sessionResponse, recordsResponse] = await Promise.all([
-                    fetch(`/api/v1/attendance-registers/${sessionId}`, {
-                        credentials: "include",
-                    }),
-                    fetch(`/api/v1/attendance-registers/${sessionId}/records`, {
-                        credentials: "include",
-                    }),
-                ]);
+                const [sessionResponse, recordsResponse] =
+                    await Promise.all([
+                        fetch(
+                            `/api/v1/attendance-registers/${sessionId}`,
+                            {
+                                credentials: "include",
+                            },
+                        ),
+                        fetch(
+                            `/api/v1/attendance-registers/${sessionId}/records`,
+                            {
+                                credentials: "include",
+                            },
+                        ),
+                    ]);
 
                 if (!sessionResponse.ok) {
-                    throw new Error("Failed to load attendance register.");
+                    throw new Error(
+                        "Failed to load attendance register.",
+                    );
                 }
 
                 if (!recordsResponse.ok) {
-                    throw new Error("Failed to load attendance records.");
+                    throw new Error(
+                        "Failed to load attendance records.",
+                    );
                 }
 
                 const sessionData =
@@ -107,13 +147,19 @@ export default function AttendanceRegisterDrillDownPage() {
             );
 
             if (!response.ok) {
-                throw new Error("Failed to reopen attendance register.");
+                throw new Error(
+                    "Failed to reopen attendance register.",
+                );
             }
 
-            const data = (await response.json()) as AttendanceSession;
+            const data =
+                (await response.json()) as AttendanceSession;
 
             setSession(data);
-            setMessage("Attendance register reopened successfully.");
+
+            setMessage(
+                "Attendance register reopened successfully.",
+            );
         } catch (err) {
             setError(
                 err instanceof Error
@@ -125,9 +171,32 @@ export default function AttendanceRegisterDrillDownPage() {
         }
     }
 
+    const stats = useMemo(() => {
+        return {
+            present: records.filter(
+                (record) => record.status === "present",
+            ).length,
+
+            late: records.filter(
+                (record) => record.status === "late",
+            ).length,
+
+            authorised: records.filter(
+                (record) =>
+                    record.status === "authorised_absence",
+            ).length,
+
+            unauthorised: records.filter(
+                (record) =>
+                    record.status ===
+                    "unauthorised_absence",
+            ).length,
+        };
+    }, [records]);
+
     return (
         <main className="space-y-6 p-8">
-            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                     <Link
                         href="/school-admin/attendance"
@@ -141,23 +210,24 @@ export default function AttendanceRegisterDrillDownPage() {
                     </h1>
 
                     <p className="mt-2 text-slate-500">
-                        View register details, attendance records, and export
-                        files.
+                        View register details,
+                        attendance records, exports,
+                        and submission status.
                     </p>
                 </div>
 
                 {session ? (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-3">
                         <a
                             href={`/api/v1/attendance-exports/registers/export/${session.id}`}
-                            className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800"
+                            className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
                         >
                             Export CSV
                         </a>
 
                         <a
                             href={`/api/v1/attendance-pdf-exports/registers/export/${session.id}/pdf`}
-                            className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700"
+                            className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700"
                         >
                             Export PDF
                         </a>
@@ -167,11 +237,17 @@ export default function AttendanceRegisterDrillDownPage() {
                                 type="button"
                                 disabled={reopening}
                                 onClick={reopenRegister}
-                                className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-bold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                {reopening ? "Reopening..." : "Reopen"}
+                                {reopening
+                                    ? "Reopening..."
+                                    : "Reopen Register"}
                             </button>
-                        ) : null}
+                        ) : (
+                            <div className="rounded-xl bg-green-100 px-4 py-3 text-sm font-bold text-green-700">
+                                Register Open
+                            </div>
+                        )}
                     </div>
                 ) : null}
             </div>
@@ -190,11 +266,11 @@ export default function AttendanceRegisterDrillDownPage() {
 
             {loading ? (
                 <section className="rounded-2xl border bg-white p-6 text-slate-500">
-                    Loading register...
+                    Loading attendance register...
                 </section>
             ) : !session ? (
                 <section className="rounded-2xl border bg-white p-6 text-slate-500">
-                    Register not found.
+                    Attendance register not found.
                 </section>
             ) : (
                 <>
@@ -203,15 +279,17 @@ export default function AttendanceRegisterDrillDownPage() {
                             <div className="text-sm font-semibold text-slate-500">
                                 Session ID
                             </div>
-                            <div className="mt-2 text-2xl font-extrabold text-slate-950">
+
+                            <div className="mt-2 text-3xl font-extrabold text-slate-950">
                                 {session.id}
                             </div>
                         </article>
 
                         <article className="rounded-2xl border bg-white p-5">
                             <div className="text-sm font-semibold text-slate-500">
-                                Date
+                                Session Date
                             </div>
+
                             <div className="mt-2 text-2xl font-extrabold text-slate-950">
                                 {session.session_date}
                             </div>
@@ -219,8 +297,9 @@ export default function AttendanceRegisterDrillDownPage() {
 
                         <article className="rounded-2xl border bg-white p-5">
                             <div className="text-sm font-semibold text-slate-500">
-                                Session
+                                Session Type
                             </div>
+
                             <div className="mt-2 text-2xl font-extrabold uppercase text-slate-950">
                                 {session.session_type}
                             </div>
@@ -228,11 +307,12 @@ export default function AttendanceRegisterDrillDownPage() {
 
                         <article className="rounded-2xl border bg-white p-5">
                             <div className="text-sm font-semibold text-slate-500">
-                                Status
+                                Register Status
                             </div>
-                            <div className="mt-2">
+
+                            <div className="mt-4">
                                 <span
-                                    className={`rounded-full px-3 py-1 text-sm font-bold ${session.is_submitted
+                                    className={`rounded-full px-3 py-2 text-sm font-bold ${session.is_submitted
                                         ? "bg-green-100 text-green-700"
                                         : "bg-orange-100 text-orange-700"
                                         }`}
@@ -245,32 +325,88 @@ export default function AttendanceRegisterDrillDownPage() {
                         </article>
                     </section>
 
+                    <section className="grid gap-4 md:grid-cols-4">
+                        <article className="rounded-2xl border bg-green-50 p-5">
+                            <div className="text-sm font-semibold text-green-700">
+                                Present
+                            </div>
+
+                            <div className="mt-2 text-3xl font-extrabold text-green-900">
+                                {stats.present}
+                            </div>
+                        </article>
+
+                        <article className="rounded-2xl border bg-yellow-50 p-5">
+                            <div className="text-sm font-semibold text-yellow-700">
+                                Late
+                            </div>
+
+                            <div className="mt-2 text-3xl font-extrabold text-yellow-900">
+                                {stats.late}
+                            </div>
+                        </article>
+
+                        <article className="rounded-2xl border bg-blue-50 p-5">
+                            <div className="text-sm font-semibold text-blue-700">
+                                Authorised
+                            </div>
+
+                            <div className="mt-2 text-3xl font-extrabold text-blue-900">
+                                {stats.authorised}
+                            </div>
+                        </article>
+
+                        <article className="rounded-2xl border bg-red-50 p-5">
+                            <div className="text-sm font-semibold text-red-700">
+                                Unauthorised
+                            </div>
+
+                            <div className="mt-2 text-3xl font-extrabold text-red-900">
+                                {stats.unauthorised}
+                            </div>
+                        </article>
+                    </section>
+
                     <section className="rounded-2xl border bg-white p-6">
-                        <h2 className="text-xl font-bold text-slate-950">
-                            Attendance Records
-                        </h2>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-950">
+                                    Attendance Records
+                                </h2>
+
+                                <p className="mt-1 text-sm text-slate-500">
+                                    {records.length} total
+                                    attendance records.
+                                </p>
+                            </div>
+                        </div>
 
                         {records.length === 0 ? (
-                            <p className="mt-4 text-slate-500">
-                                No attendance records found for this register.
+                            <p className="mt-6 text-slate-500">
+                                No attendance records found
+                                for this register.
                             </p>
                         ) : (
-                            <div className="mt-4 overflow-x-auto">
+                            <div className="mt-6 overflow-x-auto">
                                 <table className="w-full text-left text-sm">
                                     <thead className="border-b text-slate-500">
                                         <tr>
                                             <th className="py-3 pr-4">
                                                 Record ID
                                             </th>
+
                                             <th className="py-3 pr-4">
                                                 Student ID
                                             </th>
+
                                             <th className="py-3 pr-4">
                                                 Status
                                             </th>
+
                                             <th className="py-3 pr-4">
                                                 Notes
                                             </th>
+
                                             <th className="py-3 pr-4">
                                                 Marked By
                                             </th>
@@ -283,21 +419,32 @@ export default function AttendanceRegisterDrillDownPage() {
                                                 key={record.id}
                                                 className="border-b last:border-0"
                                             >
-                                                <td className="py-3 pr-4 font-semibold">
+                                                <td className="py-4 pr-4 font-semibold">
                                                     {record.id}
                                                 </td>
-                                                <td className="py-3 pr-4">
+
+                                                <td className="py-4 pr-4">
                                                     {record.student_id}
                                                 </td>
-                                                <td className="py-3 pr-4 capitalize">
-                                                    {formatStatus(
-                                                        record.status,
-                                                    )}
+
+                                                <td className="py-4 pr-4">
+                                                    <span
+                                                        className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${getStatusBadge(
+                                                            record.status,
+                                                        )}`}
+                                                    >
+                                                        {formatStatus(
+                                                            record.status,
+                                                        )}
+                                                    </span>
                                                 </td>
-                                                <td className="py-3 pr-4">
-                                                    {record.notes ?? "—"}
+
+                                                <td className="py-4 pr-4">
+                                                    {record.notes ??
+                                                        "—"}
                                                 </td>
-                                                <td className="py-3 pr-4">
+
+                                                <td className="py-4 pr-4">
                                                     {record.marked_by_id ??
                                                         "—"}
                                                 </td>
