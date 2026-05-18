@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -46,6 +46,59 @@ async def create_attendance_session(
     service = AttendanceService(db)
 
     return await service.create_session(data)
+
+
+@router.post(
+    "/sessions/from-timetable",
+    response_model=AttendanceSessionOut,
+)
+async def create_or_get_session_from_timetable(
+    timetable_entry_id: int,
+    timetable_period_id: int,
+    class_group_id: int,
+    session_date: date,
+    session_type: AttendanceSessionType,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AttendanceSessionOut:
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_school_admin_or_teacher(current_user)
+
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current user is not linked to a school.",
+        )
+
+    service = AttendanceService(db)
+
+    filters = AttendanceFilter(
+        school_id=current_user.school_id,
+        class_group_id=class_group_id,
+        session_date=session_date,
+        session_type=session_type,
+        timetable_entry_id=timetable_entry_id,
+        timetable_period_id=timetable_period_id,
+        limit=1,
+        offset=0,
+    )
+
+    existing_sessions = await service.list_sessions(filters)
+
+    if existing_sessions:
+        return existing_sessions[0]
+
+    session_data = AttendanceSessionCreate(
+        school_id=current_user.school_id,
+        class_group_id=class_group_id,
+        session_date=session_date,
+        session_type=session_type,
+        timetable_entry_id=timetable_entry_id,
+        timetable_period_id=timetable_period_id,
+        created_by_id=current_user.id,
+    )
+
+    return await service.create_session(session_data)
 
 
 @router.get("/sessions", response_model=list[AttendanceSessionOut])
