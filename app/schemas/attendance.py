@@ -192,3 +192,17 @@ class AbsenceRequestFilter(BaseModel):
 
     limit: int = Field(default=50, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
+
+
+class AttendanceRecordBulkUpdateItem(BaseModel):
+    record_id: int
+    status: AttendanceStatus | None = None
+    notes: Optional[str] = Field(default=None, max_length=500)
+
+
+class AttendanceRecordBulkUpdate(BaseModel):
+    records: list[AttendanceRecordBulkUpdateItem] = Field(
+        ...,
+        min_length=1,
+        max_length=300,
+    )

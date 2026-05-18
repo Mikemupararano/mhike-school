@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     timetables,
     attendance_trends,
     parent_attendance,
+    attendance_bulk_actions,
 )
 
 api_router = APIRouter()
@@ -200,4 +201,9 @@ api_router.include_router(
     parent_attendance.router,
     prefix="/parent-attendance",
     tags=["parent-attendance"],
+)
+api_router.include_router(
+    attendance_bulk_actions.router,
+    prefix="/attendance-bulk-actions",
+    tags=["attendance-bulk-actions"],
 )
