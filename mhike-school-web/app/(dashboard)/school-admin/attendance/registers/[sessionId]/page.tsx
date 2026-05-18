@@ -57,6 +57,7 @@ function getStatusBadge(status: AttendanceRecord["status"]) {
 
 export default function AttendanceRegisterDrillDownPage() {
     const params = useParams<{ sessionId: string }>();
+
     const sessionId = params.sessionId;
 
     const [session, setSession] =
@@ -211,7 +212,8 @@ export default function AttendanceRegisterDrillDownPage() {
 
                     <p className="mt-2 text-slate-500">
                         View register details,
-                        attendance records, exports,
+                        attendance records,
+                        exports,
                         and submission status.
                     </p>
                 </div>
@@ -424,7 +426,12 @@ export default function AttendanceRegisterDrillDownPage() {
                                                 </td>
 
                                                 <td className="py-4 pr-4">
-                                                    {record.student_id}
+                                                    <Link
+                                                        href={`/school-admin/attendance/students/${record.student_id}`}
+                                                        className="font-semibold text-blue-600 hover:text-blue-700"
+                                                    >
+                                                        {record.student_id}
+                                                    </Link>
                                                 </td>
 
                                                 <td className="py-4 pr-4">
