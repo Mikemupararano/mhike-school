@@ -18,6 +18,7 @@ from app.api.v1.endpoints import (
     school_admin,
     school_users,
     schools,
+    student_attendance,
     teacher_dashboard,
     timetables,
 )
@@ -160,6 +161,12 @@ api_router.include_router(
     attendance_pdf_exports.router,
     prefix="/attendance-pdf-exports",
     tags=["attendance-pdf-exports"],
+)
+
+api_router.include_router(
+    student_attendance.router,
+    prefix="/student-attendance",
+    tags=["student-attendance"],
 )
 
 # =========================================================
