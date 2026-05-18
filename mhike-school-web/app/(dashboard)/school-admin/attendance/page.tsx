@@ -37,6 +37,23 @@ type AttendanceDashboardSummary = {
     classes: ClassSummary[];
 };
 
+type AttendanceTrendPoint = {
+    trend_date: string;
+    total_records: number;
+    present: number;
+    late: number;
+    authorised_absence: number;
+    unauthorised_absence: number;
+    attendance_percentage: number;
+};
+
+type AttendanceTrendSummary = {
+    school_id: number;
+    start_date: string;
+    end_date: string;
+    points: AttendanceTrendPoint[];
+};
+
 function getTodayIsoDate() {
     return new Date().toISOString().slice(0, 10);
 }
@@ -62,9 +79,7 @@ function PercentageBar({
             <div className="h-3 overflow-hidden rounded-full bg-slate-200">
                 <div
                     className={`h-full rounded-full ${colorClass}`}
-                    style={{
-                        width: `${percentage}%`,
-                    }}
+                    style={{ width: `${percentage}%` }}
                 />
             </div>
         </div>
@@ -75,6 +90,7 @@ export default function SchoolAdminAttendanceDashboardPage() {
     const [summaryDate, setSummaryDate] = useState(getTodayIsoDate());
     const [summary, setSummary] =
         useState<AttendanceDashboardSummary | null>(null);
+    const [trends, setTrends] = useState<AttendanceTrendSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -84,21 +100,32 @@ export default function SchoolAdminAttendanceDashboardPage() {
                 setLoading(true);
                 setError(null);
 
-                const response = await fetch(
-                    `/api/v1/attendance-dashboard/summary?summary_date=${summaryDate}`,
-                    {
+                const [summaryResponse, trendResponse] = await Promise.all([
+                    fetch(
+                        `/api/v1/attendance-dashboard/summary?summary_date=${summaryDate}`,
+                        { credentials: "include" },
+                    ),
+                    fetch("/api/v1/attendance-trends/summary", {
                         credentials: "include",
-                    },
-                );
+                    }),
+                ]);
 
-                if (!response.ok) {
+                if (!summaryResponse.ok) {
                     throw new Error("Failed to load attendance dashboard.");
                 }
 
-                const data =
-                    (await response.json()) as AttendanceDashboardSummary;
+                if (!trendResponse.ok) {
+                    throw new Error("Failed to load attendance trends.");
+                }
 
-                setSummary(data);
+                const summaryData =
+                    (await summaryResponse.json()) as AttendanceDashboardSummary;
+
+                const trendData =
+                    (await trendResponse.json()) as AttendanceTrendSummary;
+
+                setSummary(summaryData);
+                setTrends(trendData);
             } catch (err) {
                 setError(
                     err instanceof Error
@@ -119,16 +146,8 @@ export default function SchoolAdminAttendanceDashboardPage() {
         }
 
         return [
-            {
-                label: "Present",
-                value: summary.present,
-                color: "bg-green-500",
-            },
-            {
-                label: "Late",
-                value: summary.late,
-                color: "bg-yellow-500",
-            },
+            { label: "Present", value: summary.present, color: "bg-green-500" },
+            { label: "Late", value: summary.late, color: "bg-yellow-500" },
             {
                 label: "Authorised",
                 value: summary.authorised_absence,
@@ -151,8 +170,8 @@ export default function SchoolAdminAttendanceDashboardPage() {
                     </h1>
 
                     <p className="mt-2 text-slate-500">
-                        Monitor today&apos;s registers, absences, and class
-                        attendance patterns.
+                        Monitor today&apos;s registers, absences, class
+                        attendance patterns, and trends over time.
                     </p>
                 </div>
 
@@ -191,7 +210,6 @@ export default function SchoolAdminAttendanceDashboardPage() {
                             <div className="text-sm font-semibold text-green-700">
                                 Present
                             </div>
-
                             <div className="mt-2 text-3xl font-extrabold text-green-900">
                                 {summary.present}
                             </div>
@@ -201,7 +219,6 @@ export default function SchoolAdminAttendanceDashboardPage() {
                             <div className="text-sm font-semibold text-yellow-700">
                                 Late
                             </div>
-
                             <div className="mt-2 text-3xl font-extrabold text-yellow-900">
                                 {summary.late}
                             </div>
@@ -211,7 +228,6 @@ export default function SchoolAdminAttendanceDashboardPage() {
                             <div className="text-sm font-semibold text-blue-700">
                                 Authorised Absence
                             </div>
-
                             <div className="mt-2 text-3xl font-extrabold text-blue-900">
                                 {summary.authorised_absence}
                             </div>
@@ -221,7 +237,6 @@ export default function SchoolAdminAttendanceDashboardPage() {
                             <div className="text-sm font-semibold text-red-700">
                                 Unauthorised Absence
                             </div>
-
                             <div className="mt-2 text-3xl font-extrabold text-red-900">
                                 {summary.unauthorised_absence}
                             </div>
@@ -306,7 +321,6 @@ export default function SchoolAdminAttendanceDashboardPage() {
                                     <div className="text-sm font-semibold text-slate-500">
                                         Total Records
                                     </div>
-
                                     <div className="mt-1 text-3xl font-extrabold text-slate-950">
                                         {summary.total_records}
                                     </div>
@@ -316,7 +330,6 @@ export default function SchoolAdminAttendanceDashboardPage() {
                                     <div className="text-sm font-semibold text-slate-500">
                                         Classes
                                     </div>
-
                                     <div className="mt-1 text-3xl font-extrabold text-slate-950">
                                         {summary.classes.length}
                                     </div>
@@ -326,13 +339,62 @@ export default function SchoolAdminAttendanceDashboardPage() {
                                     <div className="text-sm font-semibold text-slate-500">
                                         Registers
                                     </div>
-
                                     <div className="mt-1 text-3xl font-extrabold text-slate-950">
                                         {summary.registers.length}
                                     </div>
                                 </div>
                             </div>
                         </article>
+                    </section>
+
+                    <section className="rounded-2xl border bg-white p-6">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-950">
+                                    Attendance Trends
+                                </h2>
+
+                                <p className="mt-1 text-sm text-slate-500">
+                                    Daily attendance percentages over time.
+                                </p>
+                            </div>
+                        </div>
+
+                        {!trends || trends.points.length === 0 ? (
+                            <p className="mt-6 text-slate-500">
+                                No attendance trend data found.
+                            </p>
+                        ) : (
+                            <div className="mt-8">
+                                <div className="flex h-64 items-end gap-2 overflow-x-auto">
+                                    {trends.points.map((point) => (
+                                        <div
+                                            key={point.trend_date}
+                                            className="flex min-w-[60px] flex-1 flex-col items-center"
+                                        >
+                                            <div className="mb-2 text-xs font-bold text-slate-700">
+                                                {point.attendance_percentage}%
+                                            </div>
+
+                                            <div
+                                                className="w-full rounded-t-xl bg-blue-500 transition-all"
+                                                style={{
+                                                    height: `${Math.max(
+                                                        point.attendance_percentage *
+                                                        2,
+                                                        8,
+                                                    )}px`,
+                                                }}
+                                            />
+
+                                            <div className="mt-2 text-center text-xs text-slate-500">
+                                                {point.trend_date.slice(5)}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </section>
 
                     <section className="rounded-2xl border bg-white p-6">
