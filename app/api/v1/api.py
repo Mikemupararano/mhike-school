@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     teacher_dashboard,
     timetables,
     attendance_trends,
+    parent_attendance,
 )
 
 api_router = APIRouter()
@@ -194,4 +195,9 @@ api_router.include_router(
     attendance_trends.router,
     prefix="/attendance-trends",
     tags=["attendance-trends"],
+)
+api_router.include_router(
+    parent_attendance.router,
+    prefix="/parent-attendance",
+    tags=["parent-attendance"],
 )
