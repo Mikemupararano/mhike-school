@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type TimetableEntry = {
     id: number;
@@ -27,11 +27,7 @@ type AttendanceStatus =
     | "authorised_absence"
     | "unauthorised_absence";
 
-type RegisterStatus =
-    | "not_loaded"
-    | "empty"
-    | "incomplete"
-    | "ready";
+type RegisterStatus = "not_loaded" | "empty" | "incomplete" | "ready";
 
 type Student = {
     id: number;
@@ -70,24 +66,20 @@ function getTodayIsoDate() {
 export default function TeacherAttendanceRegisterPage() {
     const [entries, setEntries] = useState<TimetableEntry[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
-    const [selectedEntryId, setSelectedEntryId] =
-        useState<number | null>(null);
+    const [selectedEntryId, setSelectedEntryId] = useState<number | null>(null);
+    const [autoLoadedEntryId, setAutoLoadedEntryId] = useState<number | null>(
+        null,
+    );
 
-    const [session, setSession] =
-        useState<AttendanceSession | null>(null);
-
+    const [session, setSession] = useState<AttendanceSession | null>(null);
     const [attendanceMap, setAttendanceMap] = useState<
         Record<number, StudentAttendance>
     >({});
 
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const [message, setMessage] =
-        useState<string | null>(null);
-
-    const [error, setError] =
-        useState<string | null>(null);
+    const [message, setMessage] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         async function loadTeacherTimetable() {
@@ -95,21 +87,15 @@ export default function TeacherAttendanceRegisterPage() {
                 setIsLoading(true);
                 setError(null);
 
-                const response = await fetch(
-                    "/api/v1/timetables/teacher/me",
-                    {
-                        credentials: "include",
-                    },
-                );
+                const response = await fetch("/api/v1/timetables/teacher/me", {
+                    credentials: "include",
+                });
 
                 if (!response.ok) {
-                    throw new Error(
-                        "Failed to load teacher timetable.",
-                    );
+                    throw new Error("Failed to load teacher timetable.");
                 }
 
-                const data =
-                    (await response.json()) as TimetableEntry[];
+                const data = (await response.json()) as TimetableEntry[];
 
                 setEntries(data);
 
@@ -120,15 +106,11 @@ export default function TeacherAttendanceRegisterPage() {
                     .toLowerCase();
 
                 const todaysEntries = data.filter(
-                    (entry) =>
-                        entry.day_of_week.toLowerCase() ===
-                        todayName,
+                    (entry) => entry.day_of_week.toLowerCase() === todayName,
                 );
 
                 if (todaysEntries.length > 0) {
-                    setSelectedEntryId(
-                        todaysEntries[0].id,
-                    );
+                    setSelectedEntryId(todaysEntries[0].id);
                 } else if (data.length > 0) {
                     setSelectedEntryId(data[0].id);
                 }
@@ -147,65 +129,43 @@ export default function TeacherAttendanceRegisterPage() {
     }, []);
 
     const selectedEntry = useMemo(() => {
-        return (
-            entries.find(
-                (entry) => entry.id === selectedEntryId,
-            ) ?? null
-        );
+        return entries.find((entry) => entry.id === selectedEntryId) ?? null;
     }, [entries, selectedEntryId]);
 
     const attendanceSummary = useMemo(() => {
         const values = Object.values(attendanceMap);
 
         return {
-            present: values.filter(
-                (item) => item.status === "present",
-            ).length,
-
-            late: values.filter(
-                (item) => item.status === "late",
-            ).length,
-
+            present: values.filter((item) => item.status === "present").length,
+            late: values.filter((item) => item.status === "late").length,
             authorisedAbsence: values.filter(
-                (item) =>
-                    item.status ===
-                    "authorised_absence",
+                (item) => item.status === "authorised_absence",
             ).length,
-
             unauthorisedAbsence: values.filter(
-                (item) =>
-                    item.status ===
-                    "unauthorised_absence",
+                (item) => item.status === "unauthorised_absence",
             ).length,
         };
     }, [attendanceMap]);
 
-    const registerStatus: RegisterStatus =
-        useMemo(() => {
-            if (!session) {
-                return "not_loaded";
-            }
+    const registerStatus: RegisterStatus = useMemo(() => {
+        if (!session) {
+            return "not_loaded";
+        }
 
-            if (students.length === 0) {
-                return "empty";
-            }
+        if (students.length === 0) {
+            return "empty";
+        }
 
-            if (
-                Object.keys(attendanceMap).length <
-                students.length
-            ) {
-                return "incomplete";
-            }
+        if (Object.keys(attendanceMap).length < students.length) {
+            return "incomplete";
+        }
 
-            return "ready";
-        }, [attendanceMap, session, students.length]);
+        return "ready";
+    }, [attendanceMap, session, students.length]);
 
     useEffect(() => {
         async function loadStudents() {
-            if (
-                !selectedEntry ||
-                selectedEntry.class_group_id === null
-            ) {
+            if (!selectedEntry || selectedEntry.class_group_id === null) {
                 setStudents([]);
                 setAttendanceMap({});
                 return;
@@ -222,20 +182,14 @@ export default function TeacherAttendanceRegisterPage() {
                 );
 
                 if (!response.ok) {
-                    throw new Error(
-                        "Failed to load class pupils.",
-                    );
+                    throw new Error("Failed to load class pupils.");
                 }
 
-                const data =
-                    (await response.json()) as Student[];
+                const data = (await response.json()) as Student[];
 
                 setStudents(data);
 
-                const initialMap: Record<
-                    number,
-                    StudentAttendance
-                > = {};
+                const initialMap: Record<number, StudentAttendance> = {};
 
                 for (const student of data) {
                     initialMap[student.id] = {
@@ -248,9 +202,7 @@ export default function TeacherAttendanceRegisterPage() {
                 setAttendanceMap(initialMap);
             } catch (err) {
                 setError(
-                    err instanceof Error
-                        ? err.message
-                        : "Failed to load pupils.",
+                    err instanceof Error ? err.message : "Failed to load pupils.",
                 );
             }
         }
@@ -266,67 +218,58 @@ export default function TeacherAttendanceRegisterPage() {
             ...previous,
             [studentId]: {
                 student_id: studentId,
-                status:
-                    previous[studentId]?.status ??
-                    "present",
-                notes:
-                    previous[studentId]?.notes ?? "",
+                status: previous[studentId]?.status ?? "present",
+                notes: previous[studentId]?.notes ?? "",
                 ...updates,
             },
         }));
     }
 
-    async function loadExistingAttendanceRecords(
-        register: AttendanceSession,
-    ) {
-        try {
-            const response = await fetch(
-                `/api/v1/attendance/records?class_group_id=${register.class_group_id}&session_date=${register.session_date}&timetable_entry_id=${register.timetable_entry_id ?? ""}`,
-                {
-                    credentials: "include",
-                },
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    "Failed to load existing attendance records.",
+    const loadExistingAttendanceRecords = useCallback(
+        async (register: AttendanceSession) => {
+            try {
+                const response = await fetch(
+                    `/api/v1/attendance/records?class_group_id=${register.class_group_id}&session_date=${register.session_date}&timetable_entry_id=${register.timetable_entry_id ?? ""}`,
+                    {
+                        credentials: "include",
+                    },
                 );
-            }
 
-            const records =
-                (await response.json()) as AttendanceRecord[];
-
-            setAttendanceMap((previous) => {
-                const next = { ...previous };
-
-                for (const record of records) {
-                    next[record.student_id] = {
-                        student_id: record.student_id,
-                        status: record.status,
-                        notes: record.notes ?? "",
-                    };
+                if (!response.ok) {
+                    throw new Error(
+                        "Failed to load existing attendance records.",
+                    );
                 }
 
-                return next;
-            });
-        } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to load existing attendance records.",
-            );
-        }
-    }
+                const records = (await response.json()) as AttendanceRecord[];
 
-    async function createAttendanceSession() {
-        if (
-            !selectedEntry ||
-            selectedEntry.class_group_id === null
-        ) {
-            setError(
-                "Select a timetable entry with a class group first.",
-            );
+                setAttendanceMap((previous) => {
+                    const next = { ...previous };
 
+                    for (const record of records) {
+                        next[record.student_id] = {
+                            student_id: record.student_id,
+                            status: record.status,
+                            notes: record.notes ?? "",
+                        };
+                    }
+
+                    return next;
+                });
+            } catch (err) {
+                setError(
+                    err instanceof Error
+                        ? err.message
+                        : "Failed to load existing attendance records.",
+                );
+            }
+        },
+        [],
+    );
+
+    const createAttendanceSession = useCallback(async () => {
+        if (!selectedEntry || selectedEntry.class_group_id === null) {
+            setError("Select a timetable entry with a class group first.");
             return;
         }
 
@@ -341,45 +284,27 @@ export default function TeacherAttendanceRegisterPage() {
                     method: "POST",
                     credentials: "include",
                     headers: {
-                        "Content-Type":
-                            "application/json",
+                        "Content-Type": "application/json",
                     },
                     body: JSON.stringify({
-                        timetable_entry_id:
-                            selectedEntry.id,
-
-                        timetable_period_id:
-                            selectedEntry.timetable_period_id,
-
-                        class_group_id:
-                            selectedEntry.class_group_id,
-
-                        session_date:
-                            getTodayIsoDate(),
-
+                        timetable_entry_id: selectedEntry.id,
+                        timetable_period_id: selectedEntry.timetable_period_id,
+                        class_group_id: selectedEntry.class_group_id,
+                        session_date: getTodayIsoDate(),
                         session_type: "am",
                     }),
                 },
             );
 
             if (!response.ok) {
-                throw new Error(
-                    "Failed to load attendance register.",
-                );
+                throw new Error("Failed to load attendance register.");
             }
 
-            const data =
-                (await response.json()) as AttendanceSession;
+            const data = (await response.json()) as AttendanceSession;
 
             setSession(data);
-
-            await loadExistingAttendanceRecords(
-                data,
-            );
-
-            setMessage(
-                "Register loaded successfully.",
-            );
+            await loadExistingAttendanceRecords(data);
+            setMessage("Register loaded successfully.");
         } catch (err) {
             setError(
                 err instanceof Error
@@ -389,14 +314,38 @@ export default function TeacherAttendanceRegisterPage() {
         } finally {
             setIsSubmitting(false);
         }
-    }
+    }, [loadExistingAttendanceRecords, selectedEntry]);
+
+    useEffect(() => {
+        if (!selectedEntry || selectedEntry.class_group_id === null) {
+            return;
+        }
+
+        if (students.length === 0) {
+            return;
+        }
+
+        if (session) {
+            return;
+        }
+
+        if (autoLoadedEntryId === selectedEntry.id) {
+            return;
+        }
+
+        setAutoLoadedEntryId(selectedEntry.id);
+        void createAttendanceSession();
+    }, [
+        autoLoadedEntryId,
+        createAttendanceSession,
+        selectedEntry,
+        session,
+        students.length,
+    ]);
 
     async function submitAllAttendanceRecords() {
         if (!session) {
-            setError(
-                "Create or load an attendance register first.",
-            );
-
+            setError("Create or load an attendance register first.");
             return;
         }
 
@@ -405,48 +354,29 @@ export default function TeacherAttendanceRegisterPage() {
             setError(null);
             setMessage(null);
 
-            const attendanceValues =
-                Object.values(attendanceMap);
+            const attendanceValues = Object.values(attendanceMap);
 
-            const response = await fetch(
-                "/api/v1/attendance/records/bulk",
-                {
-                    method: "POST",
-                    credentials: "include",
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                    body: JSON.stringify({
-                        records:
-                            attendanceValues.map(
-                                (item) => ({
-                                    attendance_session_id:
-                                        session.id,
-
-                                    student_id:
-                                        item.student_id,
-
-                                    status: item.status,
-
-                                    notes:
-                                        item.notes.trim() ||
-                                        null,
-                                }),
-                            ),
-                    }),
+            const response = await fetch("/api/v1/attendance/records/bulk", {
+                method: "POST",
+                credentials: "include",
+                headers: {
+                    "Content-Type": "application/json",
                 },
-            );
+                body: JSON.stringify({
+                    records: attendanceValues.map((item) => ({
+                        attendance_session_id: session.id,
+                        student_id: item.student_id,
+                        status: item.status,
+                        notes: item.notes.trim() || null,
+                    })),
+                }),
+            });
 
             if (!response.ok) {
-                throw new Error(
-                    "Failed to submit attendance records.",
-                );
+                throw new Error("Failed to submit attendance records.");
             }
 
-            setMessage(
-                "Attendance records submitted successfully.",
-            );
+            setMessage("Attendance records submitted successfully.");
         } catch (err) {
             setError(
                 err instanceof Error
@@ -466,8 +396,7 @@ export default function TeacherAttendanceRegisterPage() {
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    Select a lesson and mark
-                    attendance for the class.
+                    Select a lesson and mark attendance for the class.
                 </p>
             </div>
 
@@ -496,8 +425,7 @@ export default function TeacherAttendanceRegisterPage() {
                             </h2>
 
                             <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-semibold text-blue-700">
-                                Auto-selected
-                                today&apos;s lesson
+                                Auto-selected today&apos;s lesson
                             </span>
                         </div>
 
@@ -507,37 +435,28 @@ export default function TeacherAttendanceRegisterPage() {
                                     key={entry.id}
                                     type="button"
                                     onClick={() => {
-                                        setSelectedEntryId(
-                                            entry.id,
-                                        );
-
+                                        setSelectedEntryId(entry.id);
                                         setSession(null);
-
                                         setMessage(null);
+                                        setAutoLoadedEntryId(null);
                                     }}
-                                    className={`rounded-xl border p-4 text-left transition ${selectedEntryId ===
-                                        entry.id
+                                    className={`rounded-xl border p-4 text-left transition ${selectedEntryId === entry.id
                                         ? "border-slate-950 bg-slate-950 text-white"
                                         : "bg-white text-slate-700 hover:bg-slate-50"
                                         }`}
                                 >
                                     <div className="font-bold">
-                                        {entry.title ??
-                                            "Untitled Lesson"}
+                                        {entry.title ?? "Untitled Lesson"}
                                     </div>
 
                                     <div className="mt-1 text-sm opacity-80">
-                                        {entry.day_of_week} ·
-                                        Period{" "}
-                                        {
-                                            entry.timetable_period_id
-                                        }
+                                        {entry.day_of_week} · Period{" "}
+                                        {entry.timetable_period_id}
                                     </div>
 
                                     {entry.room ? (
                                         <div className="mt-1 text-xs opacity-70">
-                                            Room:{" "}
-                                            {entry.room}
+                                            Room: {entry.room}
                                         </div>
                                     ) : null}
                                 </button>
@@ -546,18 +465,15 @@ export default function TeacherAttendanceRegisterPage() {
 
                         <button
                             type="button"
-                            disabled={
-                                isSubmitting ||
-                                !selectedEntry
-                            }
-                            onClick={
-                                createAttendanceSession
-                            }
+                            disabled={isSubmitting || !selectedEntry}
+                            onClick={createAttendanceSession}
                             className="mt-5 rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            {session
-                                ? `Register Loaded #${session.id}`
-                                : "Load Register"}
+                            {isSubmitting
+                                ? "Loading Register..."
+                                : session
+                                    ? `Register Loaded #${session.id}`
+                                    : "Load Register"}
                         </button>
                     </section>
 
@@ -573,20 +489,12 @@ export default function TeacherAttendanceRegisterPage() {
                                 </span>
 
                                 <span className="rounded-full bg-purple-100 px-4 py-2 text-sm font-semibold text-purple-700">
-                                    {registerStatus ===
-                                        "not_loaded" &&
+                                    {registerStatus === "not_loaded" &&
                                         "Register not loaded"}
-
-                                    {registerStatus ===
-                                        "empty" &&
-                                        "No pupils"}
-
-                                    {registerStatus ===
-                                        "incomplete" &&
+                                    {registerStatus === "empty" && "No pupils"}
+                                    {registerStatus === "incomplete" &&
                                         "Incomplete"}
-
-                                    {registerStatus ===
-                                        "ready" &&
+                                    {registerStatus === "ready" &&
                                         "Ready to submit"}
                                 </span>
                             </div>
@@ -599,9 +507,7 @@ export default function TeacherAttendanceRegisterPage() {
                                 </div>
 
                                 <div className="mt-1 text-2xl font-extrabold text-green-900">
-                                    {
-                                        attendanceSummary.present
-                                    }
+                                    {attendanceSummary.present}
                                 </div>
                             </div>
 
@@ -611,9 +517,7 @@ export default function TeacherAttendanceRegisterPage() {
                                 </div>
 
                                 <div className="mt-1 text-2xl font-extrabold text-yellow-900">
-                                    {
-                                        attendanceSummary.late
-                                    }
+                                    {attendanceSummary.late}
                                 </div>
                             </div>
 
@@ -623,9 +527,7 @@ export default function TeacherAttendanceRegisterPage() {
                                 </div>
 
                                 <div className="mt-1 text-2xl font-extrabold text-blue-900">
-                                    {
-                                        attendanceSummary.authorisedAbsence
-                                    }
+                                    {attendanceSummary.authorisedAbsence}
                                 </div>
                             </div>
 
@@ -635,121 +537,84 @@ export default function TeacherAttendanceRegisterPage() {
                                 </div>
 
                                 <div className="mt-1 text-2xl font-extrabold text-red-900">
-                                    {
-                                        attendanceSummary.unauthorisedAbsence
-                                    }
+                                    {attendanceSummary.unauthorisedAbsence}
                                 </div>
                             </div>
                         </div>
 
                         {students.length === 0 ? (
                             <div className="mt-4 text-slate-500">
-                                No pupils found for this
-                                class.
+                                No pupils found for this class.
                             </div>
                         ) : (
                             <div className="mt-5 space-y-4">
-                                {students.map(
-                                    (student) => {
-                                        const attendance =
-                                            attendanceMap[
-                                            student.id
-                                            ];
+                                {students.map((student) => {
+                                    const attendance =
+                                        attendanceMap[student.id];
 
-                                        return (
-                                            <div
-                                                key={
-                                                    student.id
-                                                }
-                                                className="grid gap-4 rounded-xl border p-4 md:grid-cols-4"
-                                            >
-                                                <div>
-                                                    <div className="font-semibold text-slate-950">
-                                                        {
-                                                            student.first_name
-                                                        }{" "}
-                                                        {
-                                                            student.last_name
-                                                        }
-                                                    </div>
-
-                                                    <div className="text-sm text-slate-500">
-                                                        #
-                                                        {
-                                                            student.id
-                                                        }
-                                                    </div>
+                                    return (
+                                        <div
+                                            key={student.id}
+                                            className="grid gap-4 rounded-xl border p-4 md:grid-cols-4"
+                                        >
+                                            <div>
+                                                <div className="font-semibold text-slate-950">
+                                                    {student.first_name}{" "}
+                                                    {student.last_name}
                                                 </div>
 
-                                                <select
-                                                    value={
-                                                        attendance?.status ??
-                                                        "present"
-                                                    }
-                                                    onChange={(
-                                                        event,
-                                                    ) =>
-                                                        updateStudentAttendance(
-                                                            student.id,
-                                                            {
-                                                                status:
-                                                                    event
-                                                                        .target
-                                                                        .value as AttendanceStatus,
-                                                            },
-                                                        )
-                                                    }
-                                                    className="rounded-xl border px-4 py-3"
-                                                >
-                                                    {STATUS_OPTIONS.map(
-                                                        (
-                                                            option,
-                                                        ) => (
-                                                            <option
-                                                                key={
-                                                                    option
-                                                                }
-                                                                value={
-                                                                    option
-                                                                }
-                                                            >
-                                                                {formatStatus(
-                                                                    option,
-                                                                )}
-                                                            </option>
-                                                        ),
-                                                    )}
-                                                </select>
-
-                                                <input
-                                                    value={
-                                                        attendance?.notes ??
-                                                        ""
-                                                    }
-                                                    onChange={(
-                                                        event,
-                                                    ) =>
-                                                        updateStudentAttendance(
-                                                            student.id,
-                                                            {
-                                                                notes:
-                                                                    event
-                                                                        .target
-                                                                        .value,
-                                                            },
-                                                        )
-                                                    }
-                                                    placeholder="Notes optional"
-                                                    className="rounded-xl border px-4 py-3"
-                                                />
-
-                                                <div className="flex items-center text-sm text-slate-500">
-                                                    Ready
+                                                <div className="text-sm text-slate-500">
+                                                    #{student.id}
                                                 </div>
                                             </div>
-                                        );
-                                    },
-                                )}
+
+                                            <select
+                                                value={
+                                                    attendance?.status ??
+                                                    "present"
+                                                }
+                                                onChange={(event) =>
+                                                    updateStudentAttendance(
+                                                        student.id,
+                                                        {
+                                                            status: event.target
+                                                                .value as AttendanceStatus,
+                                                        },
+                                                    )
+                                                }
+                                                className="rounded-xl border px-4 py-3"
+                                            >
+                                                {STATUS_OPTIONS.map((option) => (
+                                                    <option
+                                                        key={option}
+                                                        value={option}
+                                                    >
+                                                        {formatStatus(option)}
+                                                    </option>
+                                                ))}
+                                            </select>
+
+                                            <input
+                                                value={attendance?.notes ?? ""}
+                                                onChange={(event) =>
+                                                    updateStudentAttendance(
+                                                        student.id,
+                                                        {
+                                                            notes: event.target
+                                                                .value,
+                                                        },
+                                                    )
+                                                }
+                                                placeholder="Notes optional"
+                                                className="rounded-xl border px-4 py-3"
+                                            />
+
+                                            <div className="flex items-center text-sm text-slate-500">
+                                                Ready
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
 
@@ -760,9 +625,7 @@ export default function TeacherAttendanceRegisterPage() {
                                 !session ||
                                 students.length === 0
                             }
-                            onClick={
-                                submitAllAttendanceRecords
-                            }
+                            onClick={submitAllAttendanceRecords}
                             className="mt-6 rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             Submit Full Register
