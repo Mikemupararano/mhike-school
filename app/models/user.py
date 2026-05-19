@@ -22,6 +22,7 @@ class UserRole(str, Enum):
     SCHOOL_ADMIN = "school_admin"
     TEACHER = "teacher"
     STUDENT = "student"
+    PARENT = "parent"
 
 
 class UserStatus(str, Enum):
@@ -33,8 +34,13 @@ class UserStatus(str, Enum):
 
 class User(Base):
     __tablename__ = "users"
+
     __table_args__ = (
-        UniqueConstraint("email", "school_id", name="uq_users_email_school_id"),
+        UniqueConstraint(
+            "email",
+            "school_id",
+            name="uq_users_email_school_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -51,7 +57,8 @@ class User(Base):
     )
 
     # Transitional legacy role column.
-    # Keep until all backend, auth, schemas, tests, and frontend code use roles[].
+    # Keep until all backend, auth, schemas, tests,
+    # and frontend code use roles[].
     role: Mapped[UserRole] = mapped_column(
         SqlEnum(
             UserRole,
@@ -149,14 +156,19 @@ class User(Base):
 
         During Phase 1:
         - Prefer roles from the user_roles association table.
-        - Fall back to the legacy users.role column if no role assignments exist.
+        - Fall back to the legacy users.role column if
+          no role assignments exist.
         """
+
         if self.user_roles:
             return sorted(
                 {
                     (
                         assignment.role.value
-                        if isinstance(assignment.role, UserRole)
+                        if isinstance(
+                            assignment.role,
+                            UserRole,
+                        )
                         else str(assignment.role)
                     )
                     for assignment in self.user_roles
@@ -168,23 +180,34 @@ class User(Base):
     @property
     def primary_role(self) -> str | None:
         """
-        Compatibility helper for old code that still expects one role.
+        Compatibility helper for old code that
+        still expects one role.
 
-        Prefer using roles, has_role(), or has_any_role() in new code.
+        Prefer using roles, has_role(), or
+        has_any_role() in new code.
         """
+
         if self.role:
             return self.role.value
 
         return self.roles[0] if self.roles else None
 
-    def has_role(self, role: UserRole | str) -> bool:
+    def has_role(
+        self,
+        role: UserRole | str,
+    ) -> bool:
         role_value = role.value if isinstance(role, UserRole) else role
+
         return role_value in self.roles
 
-    def has_any_role(self, roles: list[UserRole | str] | set[UserRole | str]) -> bool:
+    def has_any_role(
+        self,
+        roles: list[UserRole | str] | set[UserRole | str],
+    ) -> bool:
         role_values = {
-            role.value if isinstance(role, UserRole) else role for role in roles
+            (role.value if isinstance(role, UserRole) else role) for role in roles
         }
+
         return bool(set(self.roles).intersection(role_values))
 
     @property
@@ -202,6 +225,10 @@ class User(Base):
     @property
     def is_student(self) -> bool:
         return self.has_role(UserRole.STUDENT)
+
+    @property
+    def is_parent(self) -> bool:
+        return self.has_role(UserRole.PARENT)
 
     @property
     def is_school_staff(self) -> bool:
@@ -222,6 +249,7 @@ class User(Base):
         This supports users with both roles:
         ["school_admin", "teacher"]
         """
+
         return self.has_any_role(
             {
                 UserRole.SCHOOL_ADMIN,

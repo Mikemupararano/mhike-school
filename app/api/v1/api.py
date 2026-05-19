@@ -5,15 +5,19 @@ from app.api.v1.endpoints import (
     assignments,
     attendance,
     attendance_analytics,
+    attendance_bulk_actions,
     attendance_dashboard,
     attendance_exports,
     attendance_pdf_exports,
     attendance_registers,
+    attendance_trends,
     auth,
     classes,
     courses,
     dashboard,
     enrollments,
+    parent_attendance,
+    parent_students,
     platform_admin,
     school_admin,
     school_users,
@@ -21,9 +25,6 @@ from app.api.v1.endpoints import (
     student_attendance,
     teacher_dashboard,
     timetables,
-    attendance_trends,
-    parent_attendance,
-    attendance_bulk_actions,
 )
 
 api_router = APIRouter()
@@ -167,9 +168,33 @@ api_router.include_router(
 )
 
 api_router.include_router(
+    attendance_trends.router,
+    prefix="/attendance-trends",
+    tags=["attendance-trends"],
+)
+
+api_router.include_router(
+    attendance_bulk_actions.router,
+    prefix="/attendance-bulk-actions",
+    tags=["attendance-bulk-actions"],
+)
+
+api_router.include_router(
     student_attendance.router,
     prefix="/student-attendance",
     tags=["student-attendance"],
+)
+
+api_router.include_router(
+    parent_attendance.router,
+    prefix="/parent-attendance",
+    tags=["parent-attendance"],
+)
+
+api_router.include_router(
+    parent_students.router,
+    prefix="/parent-students",
+    tags=["parent-students"],
 )
 
 # =========================================================
@@ -190,20 +215,4 @@ api_router.include_router(
     platform_admin.router,
     prefix="/admin",
     tags=["platform-admin"],
-)
-
-api_router.include_router(
-    attendance_trends.router,
-    prefix="/attendance-trends",
-    tags=["attendance-trends"],
-)
-api_router.include_router(
-    parent_attendance.router,
-    prefix="/parent-attendance",
-    tags=["parent-attendance"],
-)
-api_router.include_router(
-    attendance_bulk_actions.router,
-    prefix="/attendance-bulk-actions",
-    tags=["attendance-bulk-actions"],
 )

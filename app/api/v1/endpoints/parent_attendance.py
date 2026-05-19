@@ -8,6 +8,7 @@ from app.core.permissions import PermissionService
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.student_attendance import StudentAttendanceProfile
+from app.services.parent_student_service import ParentStudentService
 from app.services.student_attendance_service import StudentAttendanceService
 
 router = APIRouter(tags=["Parent Attendance"])
@@ -30,15 +31,19 @@ async def get_child_attendance_profile(
             detail="Current user is not linked to a school.",
         )
 
-    # Temporary secure baseline:
-    # School admins/platform admins can view this immediately.
-    # Parent-child relationship enforcement can be added once the
-    # parent/student link model is confirmed.
-    PermissionService.ensure_school_admin_or_platform_admin(current_user)
+    if current_user.is_parent:
+        parent_student_service = ParentStudentService(db)
 
-    service = StudentAttendanceService(db)
+        await parent_student_service.validate_parent_access(
+            parent_id=current_user.id,
+            student_id=student_id,
+        )
+    else:
+        PermissionService.ensure_school_admin_or_platform_admin(current_user)
 
-    return await service.get_student_profile(
+    attendance_service = StudentAttendanceService(db)
+
+    return await attendance_service.get_student_profile(
         school_id=current_user.school_id,
         student_id=student_id,
     )

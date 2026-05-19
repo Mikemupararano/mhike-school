@@ -5,16 +5,26 @@ from collections.abc import AsyncGenerator
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import StaticPool
 
-from app.core.security import create_access_token, get_password_hash
+from app.core.security import (
+    create_access_token,
+    get_password_hash,
+)
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models.user import User, UserRole, UserStatus
+from app.models.user import (
+    User,
+    UserRole,
+    UserStatus,
+)
 from app.models.user_role import UserRoleAssignment
-
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -39,7 +49,9 @@ async def test_engine():
 
 
 @pytest_asyncio.fixture()
-async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
+async def db_session(
+    test_engine,
+) -> AsyncGenerator[AsyncSession, None]:
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -56,8 +68,13 @@ async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture()
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+async def client(
+    db_session: AsyncSession,
+) -> AsyncGenerator[AsyncClient, None]:
+    async def override_get_db() -> AsyncGenerator[
+        AsyncSession,
+        None,
+    ]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
@@ -92,7 +109,11 @@ async def create_test_user(
         else (
             UserRole.SCHOOL_ADMIN
             if UserRole.SCHOOL_ADMIN in roles
-            else UserRole.TEACHER if UserRole.TEACHER in roles else UserRole.STUDENT
+            else (
+                UserRole.TEACHER
+                if UserRole.TEACHER in roles
+                else (UserRole.PARENT if UserRole.PARENT in roles else UserRole.STUDENT)
+            )
         )
     )
 
@@ -107,13 +128,23 @@ async def create_test_user(
     )
 
     db.add(user)
+
     await db.flush()
 
     for role in roles:
-        db.add(UserRoleAssignment(user_id=user.id, role=role))
+        db.add(
+            UserRoleAssignment(
+                user_id=user.id,
+                role=role,
+            )
+        )
 
     await db.flush()
-    await db.refresh(user, attribute_names=["user_roles"])
+
+    await db.refresh(
+        user,
+        attribute_names=["user_roles"],
+    )
 
     return user
 
@@ -130,7 +161,9 @@ def make_token(user: User) -> str:
 
 
 @pytest_asyncio.fixture()
-async def student_user(db_session: AsyncSession) -> User:
+async def student_user(
+    db_session: AsyncSession,
+) -> User:
     return await create_test_user(
         db_session,
         email="student@example.com",
@@ -140,7 +173,21 @@ async def student_user(db_session: AsyncSession) -> User:
 
 
 @pytest_asyncio.fixture()
-async def teacher_user(db_session: AsyncSession) -> User:
+async def parent_user(
+    db_session: AsyncSession,
+) -> User:
+    return await create_test_user(
+        db_session,
+        email="parent@example.com",
+        roles=[UserRole.PARENT],
+        school_id=1,
+    )
+
+
+@pytest_asyncio.fixture()
+async def teacher_user(
+    db_session: AsyncSession,
+) -> User:
     return await create_test_user(
         db_session,
         email="teacher@example.com",
@@ -150,7 +197,9 @@ async def teacher_user(db_session: AsyncSession) -> User:
 
 
 @pytest_asyncio.fixture()
-async def school_admin_user(db_session: AsyncSession) -> User:
+async def school_admin_user(
+    db_session: AsyncSession,
+) -> User:
     return await create_test_user(
         db_session,
         email="school.admin@example.com",
@@ -160,17 +209,24 @@ async def school_admin_user(db_session: AsyncSession) -> User:
 
 
 @pytest_asyncio.fixture()
-async def school_admin_teacher_user(db_session: AsyncSession) -> User:
+async def school_admin_teacher_user(
+    db_session: AsyncSession,
+) -> User:
     return await create_test_user(
         db_session,
         email="admin.teacher@example.com",
-        roles=[UserRole.SCHOOL_ADMIN, UserRole.TEACHER],
+        roles=[
+            UserRole.SCHOOL_ADMIN,
+            UserRole.TEACHER,
+        ],
         school_id=1,
     )
 
 
 @pytest_asyncio.fixture()
-async def platform_admin_user(db_session: AsyncSession) -> User:
+async def platform_admin_user(
+    db_session: AsyncSession,
+) -> User:
     return await create_test_user(
         db_session,
         email="platform.admin@example.com",
@@ -182,6 +238,6 @@ async def platform_admin_user(db_session: AsyncSession) -> User:
 @pytest.fixture()
 def auth_headers():
     def _headers(user: User) -> dict[str, str]:
-        return {"Authorization": f"Bearer {make_token(user)}"}
+        return {"Authorization": (f"Bearer {make_token(user)}")}
 
     return _headers
