@@ -9,6 +9,7 @@ import {
     Brush,
     FileText,
     History,
+    Settings,
     type LucideIcon,
 } from "lucide-react";
 
@@ -38,6 +39,11 @@ export const studentSidebar: SidebarSection[] = [
             { label: "Dashboard", href: "/student", icon: LayoutDashboard },
             { label: "Courses", href: "/courses", icon: BookOpen },
             { label: "Notifications", href: "/notifications", icon: Bell },
+            {
+                label: "Notification Settings",
+                href: "/dashboard/settings/notifications",
+                icon: Settings,
+            },
             { label: "Profile", href: "/profile", icon: User },
         ],
     },
@@ -50,6 +56,11 @@ export const teacherSidebar: SidebarSection[] = [
             { label: "Dashboard", href: "/teacher", icon: LayoutDashboard },
             { label: "Courses", href: "/courses", icon: BookOpen },
             { label: "Notifications", href: "/notifications", icon: Bell },
+            {
+                label: "Notification Settings",
+                href: "/dashboard/settings/notifications",
+                icon: Settings,
+            },
             { label: "Profile", href: "/profile", icon: User },
         ],
     },
@@ -74,6 +85,11 @@ export const schoolAdminSidebar: SidebarSection[] = [
         title: "Account",
         items: [
             { label: "Notifications", href: "/notifications", icon: Bell },
+            {
+                label: "Notification Settings",
+                href: "/dashboard/settings/notifications",
+                icon: Settings,
+            },
             { label: "Profile", href: "/profile", icon: User },
         ],
     },
@@ -94,6 +110,11 @@ export const platformAdminSidebar: SidebarSection[] = [
         title: "Account",
         items: [
             { label: "Notifications", href: "/notifications", icon: Bell },
+            {
+                label: "Notification Settings",
+                href: "/dashboard/settings/notifications",
+                icon: Settings,
+            },
             { label: "Profile", href: "/profile", icon: User },
         ],
     },
@@ -125,7 +146,7 @@ function resolvePrimaryRole(roles: UserRole[]): UserRole {
 
 export function getSidebarSections(
     role?: SidebarRole | null,
-    roles?: UserRole[]
+    roles?: UserRole[],
 ): SidebarSection[] {
     const resolvedRole =
         roles && roles.length > 0
@@ -150,7 +171,9 @@ export function getSidebarSections(
 
 export function getSidebarItems(
     role?: SidebarRole | null,
-    roles?: UserRole[]
+    roles?: UserRole[],
 ): SidebarItem[] {
-    return getSidebarSections(role, roles).flatMap((section) => section.items);
+    return getSidebarSections(role, roles).flatMap(
+        (section) => section.items,
+    );
 }

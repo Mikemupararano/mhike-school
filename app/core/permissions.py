@@ -90,6 +90,14 @@ class PermissionService:
             )
 
     @staticmethod
+    def ensure_parent(current_user: User) -> None:
+        if not current_user.is_parent:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Parent access required.",
+            )
+
+    @staticmethod
     def ensure_school_admin_or_platform_admin(current_user: User) -> None:
         PermissionService.ensure_has_any_role(
             current_user,

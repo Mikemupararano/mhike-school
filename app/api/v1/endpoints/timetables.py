@@ -199,6 +199,15 @@ async def get_child_timetable(
     current_user: User = Depends(get_current_user),
 ):
     PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_parent(current_user)
+
+    service = TimetableService(db)
+
+    await service.ensure_parent_can_access_student(
+        parent_id=current_user.id,
+        student_id=student_id,
+        school_id=current_user.school_id,
+    )
 
     filters = TimetableEntryFilter(
         school_id=current_user.school_id,
@@ -207,8 +216,6 @@ async def get_child_timetable(
         limit=limit,
         offset=offset,
     )
-
-    service = TimetableService(db)
 
     return await service.list_entries(filters)
 

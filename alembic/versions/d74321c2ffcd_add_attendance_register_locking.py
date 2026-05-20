@@ -1,17 +1,17 @@
 """add attendance register locking
 
 Revision ID: d74321c2ffcd
-Revises: 5cad7798514b
+Revises: 155cea059f2a
 Create Date: 2026-05-16 20:53:05.332265+00:00
 
 """
+
 from alembic import op
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
-revision = 'd74321c2ffcd'
-down_revision = '5cad7798514b'
+revision = "d74321c2ffcd"
+down_revision = "155cea059f2a"
 branch_labels = None
 depends_on = None
 

@@ -57,6 +57,26 @@ class TimetableService:
     async def list_entries(self, filters: TimetableEntryFilter):
         return await self.repo.list_entries(filters)
 
+    async def ensure_parent_can_access_student(
+        self,
+        parent_id: int,
+        student_id: int,
+        school_id: int | None,
+    ) -> None:
+        if school_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Parent is not linked to a school.",
+            )
+
+        # Temporary relationship validation.
+        # Replace this with a real parent-child relationship repository query.
+        if parent_id == student_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid parent-child relationship.",
+            )
+
     async def create_assignment(self, data: TimetableAssignmentCreate):
         timetable = await self.get_timetable_or_404(data.timetable_id)
 

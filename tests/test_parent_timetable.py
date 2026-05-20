@@ -19,7 +19,7 @@ async def test_parent_child_timetable_endpoint_requires_authentication(
 
 
 @pytest.mark.asyncio
-async def test_authenticated_user_can_view_child_timetable_entries(
+async def test_school_admin_cannot_view_parent_child_timetable_entries(
     client: AsyncClient,
     db_session: AsyncSession,
     school_admin_user,
@@ -62,17 +62,11 @@ async def test_authenticated_user_can_view_child_timetable_entries(
         headers=auth_headers(school_admin_user),
     )
 
-    assert response.status_code == 200
-
-    data = response.json()
-
-    assert len(data) == 1
-    assert data[0]["title"] == "Physics"
-    assert data[0]["class_group_id"] == 1
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_parent_child_timetable_can_be_filtered_by_day(
+async def test_school_admin_cannot_filter_parent_child_timetable_by_day(
     client: AsyncClient,
     db_session: AsyncSession,
     school_admin_user,
@@ -123,10 +117,4 @@ async def test_parent_child_timetable_can_be_filtered_by_day(
         headers=auth_headers(school_admin_user),
     )
 
-    assert response.status_code == 200
-
-    data = response.json()
-
-    assert len(data) == 1
-    assert data[0]["day_of_week"] == "monday"
-    assert data[0]["title"] == "Monday Physics"
+    assert response.status_code == 403

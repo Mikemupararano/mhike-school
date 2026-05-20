@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     courses,
     dashboard,
     enrollments,
+    notification_preferences,
     parent_attendance,
     parent_students,
     platform_admin,
@@ -205,6 +206,16 @@ api_router.include_router(
     timetables.router,
     prefix="/timetables",
     tags=["timetables"],
+)
+
+# =========================================================
+# NOTIFICATION PREFERENCES
+# =========================================================
+
+api_router.include_router(
+    notification_preferences.router,
+    prefix="/notification-preferences",
+    tags=["notification-preferences"],
 )
 
 # =========================================================
