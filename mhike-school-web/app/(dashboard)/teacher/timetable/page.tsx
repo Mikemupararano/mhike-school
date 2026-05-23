@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type TimetableEntry = {
     id: number;
@@ -24,11 +24,7 @@ export default function TeacherTimetablePage() {
     const [loading, setLoading] = useState(true);
     const [selectedDay, setSelectedDay] = useState("monday");
 
-    useEffect(() => {
-        fetchTimetable();
-    }, []);
-
-    async function fetchTimetable() {
+    const fetchTimetable = useCallback(async () => {
         try {
             setLoading(true);
 
@@ -36,14 +32,14 @@ export default function TeacherTimetablePage() {
                 "/api/v1/timetables/teacher/me",
                 {
                     credentials: "include",
-                }
+                },
             );
 
             if (!response.ok) {
                 throw new Error("Failed to load timetable");
             }
 
-            const data = await response.json();
+            const data = (await response.json()) as TimetableEntry[];
 
             setEntries(data);
         } catch (error) {
@@ -51,39 +47,41 @@ export default function TeacherTimetablePage() {
         } finally {
             setLoading(false);
         }
-    }
+    }, []);
+
+    useEffect(() => {
+        void fetchTimetable();
+    }, [fetchTimetable]);
 
     const filteredEntries = useMemo(() => {
         return entries
-            .filter(
-                (entry) => entry.day_of_week === selectedDay
-            )
+            .filter((entry) => entry.day_of_week === selectedDay)
             .sort(
                 (a, b) =>
                     a.timetable_period_id -
-                    b.timetable_period_id
+                    b.timetable_period_id,
             );
     }, [entries, selectedDay]);
 
     return (
-        <div className="p-6 space-y-6">
+        <div className="space-y-6 p-6">
             <div>
                 <h1 className="text-3xl font-bold">
                     My Timetable
                 </h1>
 
-                <p className="text-gray-500 mt-1">
+                <p className="mt-1 text-gray-500">
                     View your weekly teaching schedule.
                 </p>
             </div>
 
-            {/* Day Tabs */}
             <div className="flex flex-wrap gap-2">
                 {DAYS.map((day) => (
                     <button
                         key={day}
+                        type="button"
                         onClick={() => setSelectedDay(day)}
-                        className={`px-4 py-2 rounded-xl border transition ${selectedDay === day
+                        className={`rounded-xl border px-4 py-2 transition ${selectedDay === day
                             ? "bg-black text-white"
                             : "bg-white hover:bg-gray-100"
                             }`}
@@ -94,53 +92,46 @@ export default function TeacherTimetablePage() {
                 ))}
             </div>
 
-            {/* Loading */}
-            {loading && (
+            {loading ? (
                 <div className="rounded-2xl border p-6">
                     Loading timetable...
                 </div>
-            )}
+            ) : null}
 
-            {/* Empty */}
-            {!loading &&
-                filteredEntries.length === 0 && (
-                    <div className="rounded-2xl border p-6 text-gray-500">
-                        No timetable entries found for{" "}
-                        {selectedDay}.
-                    </div>
-                )}
+            {!loading && filteredEntries.length === 0 ? (
+                <div className="rounded-2xl border p-6 text-gray-500">
+                    No timetable entries found for {selectedDay}.
+                </div>
+            ) : null}
 
-            {/* Timetable */}
-            {!loading &&
-                filteredEntries.length > 0 && (
-                    <div className="grid gap-4">
-                        {filteredEntries.map((entry) => (
-                            <div
-                                key={entry.id}
-                                className="rounded-2xl border p-5 shadow-sm bg-white"
-                            >
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <h2 className="text-xl font-semibold">
-                                            {entry.title ??
-                                                "Untitled Lesson"}
-                                        </h2>
+            {!loading && filteredEntries.length > 0 ? (
+                <div className="grid gap-4">
+                    {filteredEntries.map((entry) => (
+                        <div
+                            key={entry.id}
+                            className="rounded-2xl border bg-white p-5 shadow-sm"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h2 className="text-xl font-semibold">
+                                        {entry.title ??
+                                            "Untitled Lesson"}
+                                    </h2>
 
-                                        <p className="text-gray-500 mt-1">
-                                            Room:{" "}
-                                            {entry.room ?? "TBC"}
-                                        </p>
-                                    </div>
+                                    <p className="mt-1 text-gray-500">
+                                        Room: {entry.room ?? "TBC"}
+                                    </p>
+                                </div>
 
-                                    <div className="text-sm text-gray-600">
-                                        Period{" "}
-                                        {entry.timetable_period_id}
-                                    </div>
+                                <div className="text-sm text-gray-600">
+                                    Period{" "}
+                                    {entry.timetable_period_id}
                                 </div>
                             </div>
-                        ))}
-                    </div>
-                )}
+                        </div>
+                    ))}
+                </div>
+            ) : null}
         </div>
     );
 }
