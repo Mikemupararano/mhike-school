@@ -28,10 +28,6 @@ export type SidebarSection = {
     items: SidebarItem[];
 };
 
-/* =========================
-   SIDEBAR DEFINITIONS
-========================= */
-
 export const studentSidebar: SidebarSection[] = [
     {
         title: "Main",
@@ -104,25 +100,18 @@ export const platformAdminSidebar: SidebarSection[] = [
             { label: "Users", href: "/admin/users", icon: Users },
             { label: "Content", href: "/admin/content", icon: FileText },
             { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
+            {
+                label: "Notification Monitoring",
+                href: "/admin/notifications",
+                icon: Bell,
+            },
         ],
     },
     {
         title: "Account",
-        items: [
-            { label: "Notifications", href: "/notifications", icon: Bell },
-            {
-                label: "Notification Settings",
-                href: "/dashboard/settings/notifications",
-                icon: Settings,
-            },
-            { label: "Profile", href: "/profile", icon: User },
-        ],
+        items: [{ label: "Profile", href: "/profile", icon: User }],
     },
 ];
-
-/* =========================
-   ROLE PRIORITY (IMPORTANT)
-========================= */
 
 function resolvePrimaryRole(roles: UserRole[]): UserRole {
     if (roles.includes(UserRole.PLATFORM_ADMIN)) {
@@ -139,10 +128,6 @@ function resolvePrimaryRole(roles: UserRole[]): UserRole {
 
     return UserRole.STUDENT;
 }
-
-/* =========================
-   MULTI-ROLE SAFE FUNCTIONS
-========================= */
 
 export function getSidebarSections(
     role?: SidebarRole | null,

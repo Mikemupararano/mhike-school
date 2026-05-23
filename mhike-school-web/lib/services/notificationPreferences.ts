@@ -1,4 +1,4 @@
-import axios from "axios";
+import { apiGet, apiPatch } from "@/lib/api";
 
 export interface NotificationPreferences {
     id: number;
@@ -23,37 +23,22 @@ export interface UpdateNotificationPreferencesPayload {
     sms_enabled?: boolean;
 }
 
-const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-export async function getNotificationPreferences(
-    token: string,
+export function getNotificationPreferences(
+    token?: string,
 ): Promise<NotificationPreferences> {
-    const response = await axios.get(
-        `${API_BASE_URL}/api/v1/notification-preferences/me`,
-        {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        },
+    return apiGet<NotificationPreferences>(
+        "/notification-preferences/me",
+        token,
     );
-
-    return response.data;
 }
 
-export async function updateNotificationPreferences(
-    token: string,
+export function updateNotificationPreferences(
     payload: UpdateNotificationPreferencesPayload,
+    token?: string,
 ): Promise<NotificationPreferences> {
-    const response = await axios.put(
-        `${API_BASE_URL}/api/v1/notification-preferences/me`,
+    return apiPatch<NotificationPreferences>(
+        "/notification-preferences/me",
         payload,
-        {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        },
+        token,
     );
-
-    return response.data;
 }

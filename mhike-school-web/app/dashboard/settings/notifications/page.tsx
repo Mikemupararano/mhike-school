@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 
 import NotificationPreferencesForm from "@/components/settings/NotificationPreferencesForm";
 
+import { getToken } from "@/lib/api";
+
 import {
     getNotificationPreferences,
     NotificationPreferences,
@@ -24,7 +26,7 @@ export default function NotificationPreferencesPage() {
             setLoading(true);
             setError(null);
 
-            const token = localStorage.getItem("token");
+            const token = getToken();
 
             if (!token) {
                 throw new Error("Authentication token not found.");
@@ -46,7 +48,7 @@ export default function NotificationPreferencesPage() {
         payload: UpdateNotificationPreferencesPayload,
     ) {
         try {
-            const token = localStorage.getItem("token");
+            const token = getToken();
 
             if (!token) {
                 throw new Error("Authentication token not found.");
