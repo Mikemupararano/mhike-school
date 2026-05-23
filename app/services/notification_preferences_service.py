@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.notification_preferences import NotificationPreference
+from app.models.notification_preference import NotificationPreference
 from app.schemas.notification_preferences import (
     NotificationPreferenceUpdate,
 )

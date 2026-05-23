@@ -28,9 +28,14 @@ class School(Base):
         back_populates="school",
     )
 
-    # ✅ ADD THIS
     classes: Mapped[list["ClassGroup"]] = relationship(
         "ClassGroup",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+
+    notifications: Mapped[list["Notification"]] = relationship(
+        "Notification",
         back_populates="school",
         cascade="all, delete-orphan",
     )

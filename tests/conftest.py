@@ -25,8 +25,18 @@ from app.models.user import (
     UserStatus,
 )
 from app.models.user_role import UserRoleAssignment
+from app.tasks.notifications import process_notification_delivery
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+@pytest.fixture(autouse=True)
+def mock_celery_delay(monkeypatch):
+    monkeypatch.setattr(
+        process_notification_delivery,
+        "delay",
+        lambda *args, **kwargs: None,
+    )
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -238,6 +248,8 @@ async def platform_admin_user(
 @pytest.fixture()
 def auth_headers():
     def _headers(user: User) -> dict[str, str]:
-        return {"Authorization": (f"Bearer {make_token(user)}")}
+        return {
+            "Authorization": f"Bearer {make_token(user)}",
+        }
 
     return _headers

@@ -56,9 +56,6 @@ class User(Base):
         nullable=True,
     )
 
-    # Transitional legacy role column.
-    # Keep until all backend, auth, schemas, tests,
-    # and frontend code use roles[].
     role: Mapped[UserRole] = mapped_column(
         SqlEnum(
             UserRole,
@@ -85,16 +82,9 @@ class User(Base):
         index=True,
     )
 
-    full_name: Mapped[str | None] = mapped_column(
-        String(255),
-        nullable=True,
-    )
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    is_active: Mapped[bool] = mapped_column(
-        Boolean,
-        default=True,
-        nullable=False,
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     school_id: Mapped[int | None] = mapped_column(
         ForeignKey("schools.id"),
@@ -146,29 +136,20 @@ class User(Base):
         lazy="selectin",
     )
 
+    notifications: Mapped[list["Notification"]] = relationship(
+        "Notification",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
     @property
     def roles(self) -> list[str]:
-        """
-        Transitional multi-role accessor.
-
-        A user may have multiple roles, for example:
-        ["school_admin", "teacher"]
-
-        During Phase 1:
-        - Prefer roles from the user_roles association table.
-        - Fall back to the legacy users.role column if
-          no role assignments exist.
-        """
-
         if self.user_roles:
             return sorted(
                 {
                     (
                         assignment.role.value
-                        if isinstance(
-                            assignment.role,
-                            UserRole,
-                        )
+                        if isinstance(assignment.role, UserRole)
                         else str(assignment.role)
                     )
                     for assignment in self.user_roles
@@ -179,33 +160,18 @@ class User(Base):
 
     @property
     def primary_role(self) -> str | None:
-        """
-        Compatibility helper for old code that
-        still expects one role.
-
-        Prefer using roles, has_role(), or
-        has_any_role() in new code.
-        """
-
         if self.role:
             return self.role.value
 
         return self.roles[0] if self.roles else None
 
-    def has_role(
-        self,
-        role: UserRole | str,
-    ) -> bool:
+    def has_role(self, role: UserRole | str) -> bool:
         role_value = role.value if isinstance(role, UserRole) else role
-
         return role_value in self.roles
 
-    def has_any_role(
-        self,
-        roles: list[UserRole | str] | set[UserRole | str],
-    ) -> bool:
+    def has_any_role(self, roles: list[UserRole | str] | set[UserRole | str]) -> bool:
         role_values = {
-            (role.value if isinstance(role, UserRole) else role) for role in roles
+            role.value if isinstance(role, UserRole) else role for role in roles
         }
 
         return bool(set(self.roles).intersection(role_values))
@@ -241,15 +207,6 @@ class User(Base):
 
     @property
     def can_teach(self) -> bool:
-        """
-        School admins can also teach if they have either:
-        - teacher role
-        - school_admin role
-
-        This supports users with both roles:
-        ["school_admin", "teacher"]
-        """
-
         return self.has_any_role(
             {
                 UserRole.SCHOOL_ADMIN,

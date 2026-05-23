@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     dashboard,
     enrollments,
     notification_preferences,
+    notifications,
     parent_attendance,
     parent_students,
     platform_admin,
@@ -209,13 +210,19 @@ api_router.include_router(
 )
 
 # =========================================================
-# NOTIFICATION PREFERENCES
+# NOTIFICATIONS
 # =========================================================
 
 api_router.include_router(
     notification_preferences.router,
     prefix="/notification-preferences",
     tags=["notification-preferences"],
+)
+
+api_router.include_router(
+    notifications.router,
+    prefix="/notifications",
+    tags=["notifications"],
 )
 
 # =========================================================
