@@ -19,7 +19,6 @@ function formatEmailFallback(email?: string | null): string {
     }
 
     const localPart = email.split("@")[0] || "";
-
     const cleaned = localPart.replace(/[._-]+/g, " ").trim();
 
     if (!cleaned) {
@@ -82,7 +81,6 @@ export default function DashboardShellWrapper({
                 setUser(me);
             } catch (err) {
                 console.error("Auth error:", err);
-
                 clearToken();
                 router.replace("/login");
             } finally {
@@ -113,7 +111,6 @@ export default function DashboardShellWrapper({
             : user.school_name || "Unknown school";
 
     const displayName = getDisplayName(user);
-
     const sidebarSections = getSidebarSections(resolvedRole);
 
     return (

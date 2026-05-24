@@ -4,6 +4,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.socket_manager import (
+    emit_school_notification,
+    emit_user_notification,
+)
+
 from app.models.notification import Notification
 from app.models.notification_delivery import NotificationDelivery
 from app.models.notification_preference import NotificationPreference
@@ -41,6 +46,7 @@ class NotificationService:
         )
 
         self.db.add(notification)
+
         await self.db.flush()
 
         preferences: NotificationPreference | None = None
@@ -76,15 +82,44 @@ class NotificationService:
             )
 
             self.db.add(delivery)
+
             await self.db.flush()
 
             delivery_ids.append(delivery.id)
 
         await self.db.commit()
+
         await self.db.refresh(notification)
 
+        payload = {
+            "id": notification.id,
+            "title": notification.title,
+            "message": notification.message,
+            "category": notification.category,
+            "priority": notification.priority,
+            "is_read": notification.is_read,
+            "read_at": notification.read_at,
+            "created_at": (
+                notification.created_at.isoformat() if notification.created_at else None
+            ),
+        }
+
+        if notification.user_id is not None:
+            await emit_user_notification(
+                user_id=notification.user_id,
+                payload=payload,
+            )
+
+        if notification.school_id is not None:
+            await emit_school_notification(
+                school_id=notification.school_id,
+                payload=payload,
+            )
+
         for delivery_id in delivery_ids:
-            process_notification_delivery.delay(delivery_id)
+            process_notification_delivery.delay(
+                delivery_id,
+            )
 
         return notification
 
@@ -125,6 +160,7 @@ class NotificationService:
         notification.read_at = datetime.now(UTC)
 
         await self.db.commit()
+
         await self.db.refresh(notification)
 
         return notification
@@ -152,6 +188,7 @@ class NotificationService:
         delivery.last_attempted_at = datetime.now(UTC)
 
         await self.db.commit()
+
         await self.db.refresh(delivery)
 
         return delivery
@@ -179,11 +216,14 @@ class NotificationService:
         delivery.last_attempted_at = datetime.now(UTC)
 
         await self.db.commit()
+
         await self.db.refresh(delivery)
 
         return delivery
 
-    async def get_delivery_metrics(self) -> dict:
+    async def get_delivery_metrics(
+        self,
+    ) -> dict:
         total_result = await self.db.execute(
             select(func.count(NotificationDelivery.id))
         )

@@ -7,6 +7,7 @@ from fastapi.openapi.utils import get_openapi
 from app.api.v1.api import api_router
 from app.core.bootstrap import bootstrap_admin
 from app.core.config import settings
+from app.core.socket_manager import socket_app
 from app.db.session import AsyncSessionLocal
 from app.exceptions.handlers import register_exception_handlers
 
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
             email=settings.bootstrap_admin_email,
             password=settings.bootstrap_admin_password,
         )
+
     yield
 
 
@@ -31,6 +33,8 @@ app = FastAPI(
     lifespan=lifespan,
     swagger_ui_parameters={"persistAuthorization": False},
 )
+
+app.mount("/socket.io", socket_app)
 
 register_exception_handlers(app)
 
@@ -58,6 +62,7 @@ def custom_openapi():
     openapi_schema["security"] = [{"BearerAuth": []}]
 
     app.openapi_schema = openapi_schema
+
     return app.openapi_schema
 
 
