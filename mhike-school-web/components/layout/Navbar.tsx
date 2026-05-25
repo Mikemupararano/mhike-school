@@ -4,10 +4,16 @@ import { useRouter } from "next/navigation";
 
 import BrandLogo from "@/components/layout/BrandLogo";
 import NotificationBell from "@/components/notifications/NotificationBell";
+
 import { clearToken } from "@/lib/api";
-import { brandColors, brandShadows } from "@/lib/brand";
+import {
+    brandColors,
+    brandShadows,
+} from "@/lib/brand";
 
 type NavbarProps = {
+    userId?: number | null;
+    schoolId?: number | null;
     userName?: string;
     schoolName?: string;
     showRefresh?: boolean;
@@ -17,6 +23,8 @@ type NavbarProps = {
 };
 
 export default function Navbar({
+    userId,
+    schoolId,
     userName = "Guest",
     schoolName,
     showRefresh = true,
@@ -28,10 +36,12 @@ export default function Navbar({
 
     function handleLogout() {
         clearToken();
+
         router.push("/login");
     }
 
-    const trimmedName = userName.trim() || "Guest";
+    const trimmedName =
+        userName.trim() || "Guest";
 
     const initial =
         trimmedName.charAt(0).toUpperCase() || "U";
@@ -76,7 +86,10 @@ export default function Navbar({
                         flexShrink: 0,
                     }}
                 >
-                    <NotificationBell />
+                    <NotificationBell
+                        userId={userId}
+                        schoolId={schoolId}
+                    />
 
                     <div
                         style={{

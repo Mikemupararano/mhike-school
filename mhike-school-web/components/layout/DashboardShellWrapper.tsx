@@ -115,6 +115,8 @@ export default function DashboardShellWrapper({
 
     return (
         <DashboardShell
+            userId={user.id}
+            schoolId={user.school_id}
             userName={displayName}
             schoolName={schoolLabel}
             sidebarSections={sidebarSections}

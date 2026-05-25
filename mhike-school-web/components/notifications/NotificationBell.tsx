@@ -18,7 +18,15 @@ import {
     getSocket,
 } from "@/lib/socket";
 
-export default function NotificationBell() {
+type NotificationBellProps = {
+    userId?: number | null;
+    schoolId?: number | null;
+};
+
+export default function NotificationBell({
+    userId,
+    schoolId,
+}: NotificationBellProps) {
     const [notifications, setNotifications] = useState<
         Notification[]
     >([]);
@@ -32,6 +40,7 @@ export default function NotificationBell() {
 
         if (!token) {
             setLoading(false);
+
             return;
         }
 
@@ -95,7 +104,10 @@ export default function NotificationBell() {
             return;
         }
 
-        const socket = getSocket({});
+        const socket = getSocket({
+            user_id: userId,
+            school_id: schoolId,
+        });
 
         socket.on(
             "connect",
@@ -150,7 +162,10 @@ export default function NotificationBell() {
                 "notification:new",
             );
         };
-    }, []);
+    }, [
+        userId,
+        schoolId,
+    ]);
 
     const unreadCount = useMemo(() => {
         return notifications.filter(
