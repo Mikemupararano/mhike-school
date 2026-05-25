@@ -58,8 +58,7 @@ class NotificationService:
                 )
             )
 
-            preferences = preference_result.scalar_one_or_none()
-
+            preferences = preference_result.scalars().first()
         delivery_channels: list[str] = []
 
         if email_enabled and (preferences is None or preferences.email_enabled):

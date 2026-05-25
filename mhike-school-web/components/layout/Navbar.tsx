@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 
 import BrandLogo from "@/components/layout/BrandLogo";
-import NotificationBell from "@/components/notifications/NotificationBell";
+import NotificationDropdown from "@/components/notifications/NotificationDropdown";
 
 import { clearToken } from "@/lib/api";
 import {
@@ -86,7 +86,7 @@ export default function Navbar({
                         flexShrink: 0,
                     }}
                 >
-                    <NotificationBell
+                    <NotificationDropdown
                         userId={userId}
                         schoolId={schoolId}
                     />

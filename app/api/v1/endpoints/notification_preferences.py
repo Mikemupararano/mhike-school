@@ -1,56 +1,89 @@
-from __future__ import annotations
-
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
-from app.core.permissions import PermissionService
 from app.db.session import get_db
+from app.models.notification_preference import NotificationPreference
 from app.models.user import User
-from app.schemas.notification_preferences import (
-    NotificationPreferenceOut,
+from app.schemas.notification_preference import (
+    NotificationPreferenceResponse,
     NotificationPreferenceUpdate,
 )
-from app.services.notification_preferences_service import (
-    NotificationPreferencesService,
-)
 
-router = APIRouter(tags=["Notification Preferences"])
+router = APIRouter()
+
+
+async def get_existing_preferences(
+    db: AsyncSession,
+    user_id: int,
+) -> NotificationPreference | None:
+    result = await db.execute(
+        select(NotificationPreference)
+        .where(NotificationPreference.user_id == user_id)
+        .limit(1)
+    )
+
+    return result.scalar_one_or_none()
 
 
 @router.get(
     "/me",
-    response_model=NotificationPreferenceOut,
+    response_model=NotificationPreferenceResponse,
 )
-async def get_my_notification_preferences(
+async def get_my_preferences(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    PermissionService.ensure_active_user(current_user)
-
-    service = NotificationPreferencesService(db)
-
-    return await service.get_or_create_for_user(
-        school_id=current_user.school_id,
+    preferences = await get_existing_preferences(
+        db=db,
         user_id=current_user.id,
     )
+
+    if preferences is None:
+        preferences = NotificationPreference(
+            school_id=current_user.school_id or 1,
+            user_id=current_user.id,
+        )
+
+        db.add(preferences)
+        await db.commit()
+        await db.refresh(preferences)
+
+    return preferences
 
 
 @router.patch(
     "/me",
-    response_model=NotificationPreferenceOut,
+    response_model=NotificationPreferenceResponse,
 )
-async def update_my_notification_preferences(
+async def update_my_preferences(
     payload: NotificationPreferenceUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    PermissionService.ensure_active_user(current_user)
-
-    service = NotificationPreferencesService(db)
-
-    return await service.update_for_user(
-        school_id=current_user.school_id,
+    preferences = await get_existing_preferences(
+        db=db,
         user_id=current_user.id,
-        payload=payload,
     )
+
+    if preferences is None:
+        preferences = NotificationPreference(
+            school_id=current_user.school_id or 1,
+            user_id=current_user.id,
+        )
+
+        db.add(preferences)
+        await db.flush()
+
+    update_data = payload.model_dump(
+        exclude_unset=True,
+    )
+
+    for field, value in update_data.items():
+        setattr(preferences, field, value)
+
+    await db.commit()
+    await db.refresh(preferences)
+
+    return preferences

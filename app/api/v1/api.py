@@ -27,6 +27,7 @@ from app.api.v1.endpoints import (
     student_attendance,
     teacher_dashboard,
     timetables,
+    notification_preferences,
 )
 
 api_router = APIRouter()
@@ -233,4 +234,9 @@ api_router.include_router(
     platform_admin.router,
     prefix="/admin",
     tags=["platform-admin"],
+)
+api_router.include_router(
+    notification_preferences.router,
+    prefix="/notification-preferences",
+    tags=["notification-preferences"],
 )
