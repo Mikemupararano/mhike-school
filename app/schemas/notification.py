@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -6,6 +7,23 @@ from pydantic import BaseModel, ConfigDict
 class NotificationCreate(BaseModel):
     school_id: int | None = None
     user_id: int | None = None
+    title: str
+    message: str
+    category: str = "general"
+    priority: str = "normal"
+    email_enabled: bool = False
+    push_enabled: bool = True
+    sms_enabled: bool = False
+
+
+class NotificationBroadcastCreate(BaseModel):
+    school_id: int | None = None
+    target: Literal[
+        "all",
+        "teachers",
+        "students",
+        "parents",
+    ]
     title: str
     message: str
     category: str = "general"

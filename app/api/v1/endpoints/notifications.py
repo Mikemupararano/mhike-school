@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.models.user import User, UserRole
 from app.schemas.notification import (
+    NotificationBroadcastCreate,
     NotificationCreate,
     NotificationMetricsOut,
     NotificationOut,
@@ -68,6 +70,86 @@ async def create_notification(
         push_enabled=payload.push_enabled,
         sms_enabled=payload.sms_enabled,
     )
+
+
+@router.post(
+    "/broadcast",
+    response_model=list[NotificationOut],
+    status_code=status.HTTP_201_CREATED,
+)
+async def broadcast_notification(
+    payload: NotificationBroadcastCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[NotificationOut]:
+    is_platform_admin = _has_role(current_user, UserRole.PLATFORM_ADMIN)
+    is_school_admin = _has_role(current_user, UserRole.SCHOOL_ADMIN)
+
+    if not is_platform_admin and not is_school_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to broadcast notifications.",
+        )
+
+    school_id = payload.school_id
+
+    if is_school_admin:
+        if current_user.school_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User is not linked to a school.",
+            )
+
+        school_id = current_user.school_id
+
+    query = select(User)
+
+    if school_id is not None:
+        query = query.where(User.school_id == school_id)
+
+    users_result = await db.execute(query)
+    users = list(users_result.scalars().all())
+
+    filtered_users: list[User] = []
+
+    for user in users:
+        user_roles = set(user.roles or [])
+
+        if payload.target == "all":
+            filtered_users.append(user)
+
+        elif payload.target == "teachers":
+            if UserRole.TEACHER.value in user_roles:
+                filtered_users.append(user)
+
+        elif payload.target == "students":
+            if UserRole.STUDENT.value in user_roles:
+                filtered_users.append(user)
+
+        elif payload.target == "parents":
+            if UserRole.PARENT.value in user_roles:
+                filtered_users.append(user)
+
+    service = NotificationService(db)
+
+    created_notifications: list[NotificationOut] = []
+
+    for user in filtered_users:
+        notification = await service.create_notification(
+            school_id=user.school_id,
+            user_id=user.id,
+            title=payload.title,
+            message=payload.message,
+            category=payload.category,
+            priority=payload.priority,
+            email_enabled=payload.email_enabled,
+            push_enabled=payload.push_enabled,
+            sms_enabled=payload.sms_enabled,
+        )
+
+        created_notifications.append(notification)
+
+    return created_notifications
 
 
 @router.get(
