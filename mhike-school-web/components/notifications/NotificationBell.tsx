@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import NotificationToast from "@/components/notifications/NotificationToast";
+
 import {
     clearToken,
     getToken,
@@ -30,6 +32,9 @@ export default function NotificationBell({
     const [notifications, setNotifications] = useState<
         Notification[]
     >([]);
+
+    const [toastNotification, setToastNotification] =
+        useState<Notification | null>(null);
 
     const [open, setOpen] = useState(false);
 
@@ -138,6 +143,10 @@ export default function NotificationBell({
                     notification,
                 );
 
+                setToastNotification(
+                    notification,
+                );
+
                 setNotifications(
                     (current) => [
                         notification,
@@ -239,10 +248,36 @@ export default function NotificationBell({
                                                     }
                                                 </p>
 
-                                                <p className="mt-1 text-sm text-gray-600">
-                                                    {
-                                                        notification.message
-                                                    }
+                                                <p className="mt-1 break-words text-sm text-gray-600">
+                                                    {notification.message
+                                                        .split(/(https?:\/\/[^\s]+)/g)
+                                                        .map((part, index) => {
+                                                            const isLink =
+                                                                /^https?:\/\/[^\s]+$/.test(part);
+
+                                                            if (isLink) {
+                                                                return (
+                                                                    <a
+                                                                        key={index}
+                                                                        href={part}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="font-medium text-blue-600 underline hover:text-blue-800"
+                                                                        onClick={(event) =>
+                                                                            event.stopPropagation()
+                                                                        }
+                                                                    >
+                                                                        {part}
+                                                                    </a>
+                                                                );
+                                                            }
+
+                                                            return (
+                                                                <span key={index}>
+                                                                    {part}
+                                                                </span>
+                                                            );
+                                                        })}
                                                 </p>
 
                                                 <p className="mt-2 text-xs text-gray-400">
@@ -263,6 +298,13 @@ export default function NotificationBell({
                     </div>
                 </div>
             )}
+
+            <NotificationToast
+                notification={toastNotification}
+                onClose={() =>
+                    setToastNotification(null)
+                }
+            />
         </div>
     );
 }
