@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,14 @@ async def get_existing_preferences(
     return result.scalar_one_or_none()
 
 
+def ensure_user_has_school(current_user: User) -> None:
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not assigned to a school.",
+        )
+
+
 @router.get(
     "/me",
     response_model=NotificationPreferenceResponse,
@@ -35,6 +43,8 @@ async def get_my_preferences(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    ensure_user_has_school(current_user)
+
     preferences = await get_existing_preferences(
         db=db,
         user_id=current_user.id,
@@ -42,7 +52,7 @@ async def get_my_preferences(
 
     if preferences is None:
         preferences = NotificationPreference(
-            school_id=current_user.school_id or 1,
+            school_id=current_user.school_id,
             user_id=current_user.id,
         )
 
@@ -62,6 +72,8 @@ async def update_my_preferences(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    ensure_user_has_school(current_user)
+
     preferences = await get_existing_preferences(
         db=db,
         user_id=current_user.id,
@@ -69,7 +81,7 @@ async def update_my_preferences(
 
     if preferences is None:
         preferences = NotificationPreference(
-            school_id=current_user.school_id or 1,
+            school_id=current_user.school_id,
             user_id=current_user.id,
         )
 

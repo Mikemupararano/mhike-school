@@ -1,15 +1,16 @@
 import {
-    LayoutDashboard,
-    BookOpen,
     Bell,
-    User,
-    Users,
-    School,
-    Megaphone,
+    BookOpen,
     Brush,
     FileText,
     History,
+    LayoutDashboard,
+    Megaphone,
+    MessageSquare,
+    School,
     Settings,
+    User,
+    Users,
     type LucideIcon,
 } from "lucide-react";
 
@@ -34,6 +35,7 @@ export const studentSidebar: SidebarSection[] = [
         items: [
             { label: "Dashboard", href: "/student", icon: LayoutDashboard },
             { label: "Courses", href: "/courses", icon: BookOpen },
+            { label: "Messages", href: "/messages", icon: MessageSquare },
             { label: "Notifications", href: "/notifications", icon: Bell },
             {
                 label: "Notification Settings",
@@ -51,6 +53,7 @@ export const teacherSidebar: SidebarSection[] = [
         items: [
             { label: "Dashboard", href: "/teacher", icon: LayoutDashboard },
             { label: "Courses", href: "/courses", icon: BookOpen },
+            { label: "Messages", href: "/messages", icon: MessageSquare },
             { label: "Notifications", href: "/notifications", icon: Bell },
             {
                 label: "Notification Settings",
@@ -74,6 +77,7 @@ export const schoolAdminSidebar: SidebarSection[] = [
                 href: "/school-admin/announcements",
                 icon: Megaphone,
             },
+            { label: "Messages", href: "/messages", icon: MessageSquare },
             { label: "Branding", href: "/school-admin/branding", icon: Brush },
         ],
     },

@@ -33,3 +33,13 @@ from app.models.timetable_entry import (  # noqa: E402, F401
 from app.models.timetable_period import (  # noqa: E402, F401
     TimetablePeriod,
 )
+
+# =========================================================
+# MESSAGING MODELS
+# =========================================================
+
+from app.models.conversation import (  # noqa: E402, F401
+    Conversation,
+    ConversationParticipant,
+    Message,
+)

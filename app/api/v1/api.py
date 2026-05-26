@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     courses,
     dashboard,
     enrollments,
+    messages,
     notification_preferences,
     notifications,
     parent_attendance,
@@ -27,7 +28,6 @@ from app.api.v1.endpoints import (
     student_attendance,
     teacher_dashboard,
     timetables,
-    notification_preferences,
 )
 
 api_router = APIRouter()
@@ -227,6 +227,16 @@ api_router.include_router(
 )
 
 # =========================================================
+# MESSAGES
+# =========================================================
+
+api_router.include_router(
+    messages.router,
+    prefix="/messages",
+    tags=["messages"],
+)
+
+# =========================================================
 # PLATFORM ADMIN
 # =========================================================
 
@@ -234,9 +244,4 @@ api_router.include_router(
     platform_admin.router,
     prefix="/admin",
     tags=["platform-admin"],
-)
-api_router.include_router(
-    notification_preferences.router,
-    prefix="/notification-preferences",
-    tags=["notification-preferences"],
 )
