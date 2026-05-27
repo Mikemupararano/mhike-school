@@ -34,9 +34,22 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": False},
 )
 
+register_exception_handlers(app)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/socket.io", socket_app)
 
-register_exception_handlers(app)
+app.include_router(api_router, prefix=API_PREFIX)
 
 
 def custom_openapi():
@@ -67,21 +80,6 @@ def custom_openapi():
 
 
 app.openapi = custom_openapi
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-app.include_router(api_router, prefix=API_PREFIX)
 
 
 @app.get("/", tags=["root"])

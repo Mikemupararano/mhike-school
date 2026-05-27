@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,7 +29,9 @@ class MessageService:
                 ConversationParticipant.user_id == user_id,
             )
             .options(
-                selectinload(Conversation.participants),
+                selectinload(Conversation.participants).selectinload(
+                    ConversationParticipant.user,
+                ),
                 selectinload(Conversation.messages),
             )
             .order_by(Conversation.updated_at.desc())
@@ -54,7 +56,9 @@ class MessageService:
                 ConversationParticipant.user_id == user_id,
             )
             .options(
-                selectinload(Conversation.participants),
+                selectinload(Conversation.participants).selectinload(
+                    ConversationParticipant.user,
+                ),
                 selectinload(Conversation.messages),
             )
         )
@@ -71,12 +75,10 @@ class MessageService:
         conversation_type: str,
     ) -> Conversation:
         unique_participant_ids = sorted(
-            set(
-                [
-                    created_by_id,
-                    *participant_ids,
-                ],
-            ),
+            {
+                created_by_id,
+                *participant_ids,
+            },
         )
 
         conversation = Conversation(
@@ -87,7 +89,6 @@ class MessageService:
         )
 
         self.db.add(conversation)
-
         await self.db.flush()
 
         for participant_id in unique_participant_ids:
@@ -128,10 +129,9 @@ class MessageService:
 
         self.db.add(message)
 
-        conversation.updated_at = message.created_at
+        conversation.updated_at = func.now()
 
         await self.db.commit()
-
         await self.db.refresh(message)
 
         return message
@@ -153,8 +153,6 @@ class MessageService:
 
         if participant is None:
             return None
-
-        from sqlalchemy import func
 
         participant.last_read_at = func.now()
 

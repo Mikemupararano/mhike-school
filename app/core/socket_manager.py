@@ -41,10 +41,75 @@ async def connect(
             f"school:{school_id}",
         )
 
+    print(
+        "Socket connected:",
+        sid,
+        {
+            "user_id": user_id,
+            "school_id": school_id,
+        },
+    )
+
 
 @sio.event
 async def disconnect(sid: str) -> None:
-    return None
+    print("Socket disconnected:", sid)
+
+
+@sio.event
+async def join_conversation(
+    sid: str,
+    data: dict,
+) -> None:
+    conversation_id = data.get("conversation_id")
+
+    if conversation_id is None:
+        return
+
+    await sio.enter_room(
+        sid,
+        f"conversation:{conversation_id}",
+    )
+
+    print(
+        "Socket joined conversation:",
+        sid,
+        conversation_id,
+    )
+
+
+@sio.event
+async def leave_conversation(
+    sid: str,
+    data: dict,
+) -> None:
+    conversation_id = data.get("conversation_id")
+
+    if conversation_id is None:
+        return
+
+    await sio.leave_room(
+        sid,
+        f"conversation:{conversation_id}",
+    )
+
+    print(
+        "Socket left conversation:",
+        sid,
+        conversation_id,
+    )
+
+
+async def emit_conversation_message(
+    *,
+    conversation_id: int,
+    payload: dict,
+) -> None:
+    await sio.emit(
+        "message:new",
+        payload,
+        room=f"conversation:{conversation_id}",
+    )
 
 
 async def emit_user_notification(

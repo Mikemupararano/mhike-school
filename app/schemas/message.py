@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ConversationCreate(BaseModel):
@@ -9,13 +9,23 @@ class ConversationCreate(BaseModel):
     conversation_type: str = "direct"
 
 
+class ConversationParticipantUserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    full_name: str
+    email: str
+    role: str
+
+
 class ConversationParticipantOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     user_id: int
     joined_at: datetime
-    last_read_at: datetime | None
+    last_read_at: datetime | None = None
+    user: ConversationParticipantUserOut | None = None
 
 
 class MessageCreate(BaseModel):
@@ -43,5 +53,9 @@ class ConversationOut(BaseModel):
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
-    participants: list[ConversationParticipantOut] = []
-    messages: list[MessageOut] = []
+    participants: list[ConversationParticipantOut] = Field(
+        default_factory=list,
+    )
+    messages: list[MessageOut] = Field(
+        default_factory=list,
+    )
