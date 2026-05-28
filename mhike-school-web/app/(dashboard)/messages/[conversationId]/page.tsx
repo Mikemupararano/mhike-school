@@ -30,11 +30,13 @@ export default function ConversationPage() {
         useState<Message | null>(null);
     const [forwardMessage, setForwardMessage] =
         useState<Message | null>(null);
+    const [typingUsers, setTypingUsers] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const bottomRef = useRef<HTMLDivElement | null>(null);
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     async function loadConversation() {
         try {
@@ -85,8 +87,34 @@ export default function ConversationPage() {
             });
         });
 
+        socket.on("typing:start", (payload) => {
+            if (Number(payload.conversation_id) !== Number(conversationId)) {
+                return;
+            }
+
+            if (!payload.full_name) return;
+
+            setTypingUsers((previous) => {
+                if (previous.includes(payload.full_name)) {
+                    return previous;
+                }
+
+                return [...previous, payload.full_name];
+            });
+        });
+
+        socket.on("typing:stop", (payload) => {
+            if (!payload.full_name) return;
+
+            setTypingUsers((previous) =>
+                previous.filter((name) => name !== payload.full_name),
+            );
+        });
+
         return () => {
             socket.off("new_message");
+            socket.off("typing:start");
+            socket.off("typing:stop");
             disconnectSocket();
         };
     }, [conversationId, user]);
@@ -119,6 +147,12 @@ export default function ConversationPage() {
             });
 
             socket.emit("send_message", message);
+
+            socket.emit("typing_stop", {
+                conversation_id: conversationId,
+                user_id: user?.id,
+                full_name: user?.full_name,
+            });
 
             setMessageBody("");
             setReplyToMessage(null);
@@ -186,8 +220,7 @@ export default function ConversationPage() {
                         conversation.messages.length > 0 ? (
                         conversation.messages.map((message) => {
                             const isOwnMessage =
-                                Number(message.sender_id) ===
-                                Number(user?.id);
+                                Number(message.sender_id) === Number(user?.id);
 
                             return (
                                 <div
@@ -237,13 +270,13 @@ export default function ConversationPage() {
                                             )}
                                         </div>
 
-                                        <div className="mt-2 hidden items-center gap-3 text-xs text-gray-500 group-hover:flex">
+                                        <div className="mt-2 flex h-7 items-center gap-3 text-xs text-gray-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                                             <button
                                                 type="button"
                                                 onClick={() =>
                                                     handleReply(message)
                                                 }
-                                                className="flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1 hover:bg-gray-200"
+                                                className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
                                             >
                                                 <Reply className="h-3 w-3" />
                                                 Reply
@@ -254,7 +287,7 @@ export default function ConversationPage() {
                                                 onClick={() =>
                                                     handleForward(message)
                                                 }
-                                                className="flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1 hover:bg-gray-200"
+                                                className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
                                             >
                                                 <Forward className="h-3 w-3" />
                                                 Forward
@@ -262,7 +295,7 @@ export default function ConversationPage() {
 
                                             <button
                                                 type="button"
-                                                className="rounded-full bg-gray-100 p-1 hover:bg-gray-200"
+                                                className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 transition-colors hover:bg-gray-200"
                                             >
                                                 <MoreHorizontal className="h-4 w-4" />
                                             </button>
@@ -282,6 +315,12 @@ export default function ConversationPage() {
                     <div ref={bottomRef} />
                 </div>
             </div>
+
+            {typingUsers.length > 0 && (
+                <div className="px-2 text-sm text-gray-500">
+                    {typingUsers.join(", ")} typing...
+                </div>
+            )}
 
             <div className="rounded-3xl border border-gray-200 bg-white p-3 shadow-sm">
                 {replyToMessage && (
@@ -349,13 +388,31 @@ export default function ConversationPage() {
                     <input
                         type="text"
                         value={messageBody}
-                        onChange={(event) =>
-                            setMessageBody(event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                                handleSendMessage();
+                        onChange={(event) => {
+                            setMessageBody(event.target.value);
+
+                            const socket = getSocket({
+                                user_id: user?.id,
+                                school_id: user?.school_id,
+                            });
+
+                            socket.emit("typing_start", {
+                                conversation_id: conversationId,
+                                user_id: user?.id,
+                                full_name: user?.full_name,
+                            });
+
+                            if (typingTimeoutRef.current) {
+                                clearTimeout(typingTimeoutRef.current);
                             }
+
+                            typingTimeoutRef.current = setTimeout(() => {
+                                socket.emit("typing_stop", {
+                                    conversation_id: conversationId,
+                                    user_id: user?.id,
+                                    full_name: user?.full_name,
+                                });
+                            }, 1000);
                         }}
                         placeholder="Type a message..."
                         className="flex-1 rounded-full bg-gray-100 px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500"

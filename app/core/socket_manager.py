@@ -100,6 +100,54 @@ async def leave_conversation(
     )
 
 
+@sio.event
+async def typing_start(
+    sid: str,
+    data: dict,
+) -> None:
+    conversation_id = data.get("conversation_id")
+    user_id = data.get("user_id")
+    full_name = data.get("full_name")
+
+    if conversation_id is None or user_id is None:
+        return
+
+    await sio.emit(
+        "typing:start",
+        {
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "full_name": full_name,
+        },
+        room=f"conversation:{conversation_id}",
+        skip_sid=sid,
+    )
+
+
+@sio.event
+async def typing_stop(
+    sid: str,
+    data: dict,
+) -> None:
+    conversation_id = data.get("conversation_id")
+    user_id = data.get("user_id")
+    full_name = data.get("full_name")
+
+    if conversation_id is None or user_id is None:
+        return
+
+    await sio.emit(
+        "typing:stop",
+        {
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "full_name": full_name,
+        },
+        room=f"conversation:{conversation_id}",
+        skip_sid=sid,
+    )
+
+
 async def emit_conversation_message(
     *,
     conversation_id: int,

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
+from app.models.class_group import ClassGroup
 from app.models.course import Course
 from app.models.enrollment import Enrollment
 from app.models.user import User
@@ -16,24 +17,29 @@ class TeacherDashboardService:
         current_user: User,
     ) -> TeacherDashboardOut:
         courses_result = await db.execute(
-            select(func.count(Course.id)).where(Course.teacher_id == current_user.id)
+            select(func.count(Course.id)).where(
+                Course.teacher_id == current_user.id,
+            )
         )
 
         students_result = await db.execute(
             select(func.count(func.distinct(Enrollment.user_id)))
-            .join(Course, Course.id == Enrollment.course_id)
-            .where(Course.teacher_id == current_user.id)
+            .join(ClassGroup, ClassGroup.id == Enrollment.class_id)
+            .where(ClassGroup.teacher_id == current_user.id)
         )
 
         assignments_result = await db.execute(
             select(func.count(Assignment.id)).where(
-                Assignment.created_by == current_user.id
+                Assignment.created_by == current_user.id,
             )
         )
 
         pending_result = await db.execute(
             select(func.count(AssignmentSubmission.id))
-            .join(Assignment, Assignment.id == AssignmentSubmission.assignment_id)
+            .join(
+                Assignment,
+                Assignment.id == AssignmentSubmission.assignment_id,
+            )
             .where(
                 Assignment.created_by == current_user.id,
                 AssignmentSubmission.status == "submitted",
@@ -57,10 +63,15 @@ class TeacherDashboardService:
             select(
                 Course.id,
                 Course.title,
-                func.count(func.distinct(Enrollment.user_id)).label("students"),
-                func.count(func.distinct(Assignment.id)).label("assignments"),
+                func.count(func.distinct(Enrollment.user_id)).label(
+                    "students",
+                ),
+                func.count(func.distinct(Assignment.id)).label(
+                    "assignments",
+                ),
             )
-            .outerjoin(Enrollment, Enrollment.course_id == Course.id)
+            .outerjoin(ClassGroup, ClassGroup.teacher_id == Course.teacher_id)
+            .outerjoin(Enrollment, Enrollment.class_id == ClassGroup.id)
             .outerjoin(Assignment, Assignment.course_id == Course.id)
             .where(Course.teacher_id == current_user.id)
             .group_by(Course.id, Course.title)

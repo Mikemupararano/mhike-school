@@ -1,4 +1,8 @@
-export type ConversationType = "direct" | "group" | "class" | "broadcast";
+export type ConversationType =
+    | "direct"
+    | "group"
+    | "class"
+    | "broadcast";
 
 export type SchoolMessageUser = {
     id: number;
@@ -15,10 +19,18 @@ export type Message = {
     created_at: string;
 };
 
+export type ConversationParticipantUser = {
+    id: number;
+    full_name: string;
+    email: string;
+    role: string;
+};
+
 export type ConversationParticipant = {
     id: number;
     user_id: number;
     conversation_id: number;
+    user?: ConversationParticipantUser;
 };
 
 export type Conversation = {
