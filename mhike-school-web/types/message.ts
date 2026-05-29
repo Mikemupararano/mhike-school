@@ -11,12 +11,22 @@ export type SchoolMessageUser = {
     role: string;
 };
 
+export type MessageReply = {
+    id: number;
+    sender_id: number | null;
+    body: string;
+    created_at: string;
+};
+
 export type Message = {
     id: number;
     conversation_id: number;
-    sender_id: number;
+    sender_id: number | null;
+    reply_to_message_id?: number | null;
+    reply_to?: MessageReply | null;
     body: string;
     created_at: string;
+    updated_at?: string;
 };
 
 export type ConversationParticipantUser = {
@@ -30,16 +40,19 @@ export type ConversationParticipant = {
     id: number;
     user_id: number;
     conversation_id: number;
-    user?: ConversationParticipantUser;
+    joined_at?: string;
+    last_read_at?: string | null;
+    user?: ConversationParticipantUser | null;
 };
 
 export type Conversation = {
     id: number;
-    school_id: number;
-    created_by_id: number;
+    school_id: number | null;
+    created_by_id: number | null;
     title: string | null;
     conversation_type: ConversationType;
     created_at: string;
+    updated_at?: string;
     participants?: ConversationParticipant[];
     messages?: Message[];
 };
@@ -52,4 +65,5 @@ export type ConversationCreatePayload = {
 
 export type MessageCreatePayload = {
     body: string;
+    reply_to_message_id?: number | null;
 };

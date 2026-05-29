@@ -101,6 +101,32 @@ async def leave_conversation(
 
 
 @sio.event
+async def send_message(
+    sid: str,
+    data: dict,
+) -> None:
+    conversation_id = data.get("conversation_id")
+
+    if conversation_id is None:
+        return
+
+    await sio.emit(
+        "message:new",
+        data,
+        room=f"conversation:{conversation_id}",
+    )
+
+    print(
+        "Socket message emitted:",
+        {
+            "sid": sid,
+            "conversation_id": conversation_id,
+            "message_id": data.get("id"),
+        },
+    )
+
+
+@sio.event
 async def typing_start(
     sid: str,
     data: dict,

@@ -6,6 +6,7 @@ import BrandLogo from "@/components/layout/BrandLogo";
 import NotificationDropdown from "@/components/notifications/NotificationDropdown";
 
 import { clearToken } from "@/lib/api";
+import { disconnectSocket } from "@/lib/socket";
 import {
     brandColors,
     brandShadows,
@@ -35,24 +36,37 @@ export default function Navbar({
     const router = useRouter();
 
     function handleLogout() {
+        try {
+            disconnectSocket();
+        } catch {
+            // Ignore socket cleanup errors
+        }
+
+        try {
+            sessionStorage.clear();
+            localStorage.clear();
+        } catch {
+            // Ignore storage cleanup errors
+        }
+
         clearToken();
 
-        router.push("/login");
+        router.replace("/login");
+
+        setTimeout(() => {
+            router.refresh();
+        }, 50);
     }
 
-    const trimmedName =
-        userName.trim() || "Guest";
-
-    const initial =
-        trimmedName.charAt(0).toUpperCase() || "U";
+    const trimmedName = userName.trim() || "Guest";
+    const initial = trimmedName.charAt(0).toUpperCase() || "U";
 
     return (
         <nav
             style={{
                 width: "100%",
                 background: brandColors.navy,
-                borderBottom:
-                    "1px solid rgba(255,255,255,0.08)",
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
                 boxShadow: brandShadows.md,
                 position: "sticky",
                 top: 0,
@@ -98,13 +112,10 @@ export default function Navbar({
                             gap: 12,
                             padding: "8px 14px",
                             borderRadius: 999,
-                            background:
-                                "rgba(255,255,255,0.08)",
-                            border:
-                                "1px solid rgba(255,255,255,0.15)",
+                            background: "rgba(255,255,255,0.08)",
+                            border: "1px solid rgba(255,255,255,0.15)",
                             backdropFilter: "blur(10px)",
-                            WebkitBackdropFilter:
-                                "blur(10px)",
+                            WebkitBackdropFilter: "blur(10px)",
                             minHeight: 46,
                         }}
                     >
@@ -114,8 +125,7 @@ export default function Navbar({
                                 height: 30,
                                 borderRadius: "50%",
                                 background: "#DBEAFE",
-                                color:
-                                    brandColors.blueHover,
+                                color: brandColors.blueHover,
                                 display: "grid",
                                 placeItems: "center",
                                 fontWeight: 900,
@@ -137,8 +147,7 @@ export default function Navbar({
                                 style={{
                                     fontWeight: 800,
                                     fontSize: 14,
-                                    color:
-                                        brandColors.white,
+                                    color: brandColors.white,
                                     whiteSpace: "nowrap",
                                 }}
                             >
@@ -150,10 +159,8 @@ export default function Navbar({
                                     style={{
                                         fontSize: 12,
                                         fontWeight: 600,
-                                        color:
-                                            "rgba(255,255,255,0.84)",
-                                        whiteSpace:
-                                            "nowrap",
+                                        color: "rgba(255,255,255,0.84)",
+                                        whiteSpace: "nowrap",
                                     }}
                                 >
                                     {schoolName}
@@ -169,19 +176,14 @@ export default function Navbar({
                             style={{
                                 padding: "8px 13px",
                                 borderRadius: 10,
-                                border:
-                                    "1px solid rgba(255,255,255,0.16)",
-                                background:
-                                    "rgba(255,255,255,0.10)",
-                                color:
-                                    brandColors.white,
+                                border: "1px solid rgba(255,255,255,0.16)",
+                                background: "rgba(255,255,255,0.10)",
+                                color: brandColors.white,
                                 fontWeight: 800,
                                 fontSize: 13,
                                 cursor: "pointer",
-                                backdropFilter:
-                                    "blur(8px)",
-                                WebkitBackdropFilter:
-                                    "blur(8px)",
+                                backdropFilter: "blur(8px)",
+                                WebkitBackdropFilter: "blur(8px)",
                             }}
                         >
                             {refreshLabel}
@@ -196,8 +198,7 @@ export default function Navbar({
                                 padding: "8px 13px",
                                 borderRadius: 10,
                                 border: "none",
-                                background:
-                                    brandColors.white,
+                                background: brandColors.white,
                                 color: "#0F172A",
                                 fontWeight: 800,
                                 fontSize: 13,

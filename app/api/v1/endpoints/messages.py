@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.socket_manager import emit_conversation_message
 from app.models.user import User
 from app.schemas.message import (
     ConversationCreate,
@@ -142,10 +143,27 @@ async def send_message(
             detail="Conversation not found.",
         )
 
+    if payload.reply_to_message_id is not None:
+        reply_target = next(
+            (
+                message
+                for message in conversation.messages
+                if message.id == payload.reply_to_message_id
+            ),
+            None,
+        )
+
+        if reply_target is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reply target message is not in this conversation.",
+            )
+
     message = await service.send_message(
         conversation_id=conversation_id,
         sender_id=current_user.id,
         body=payload.body,
+        reply_to_message_id=payload.reply_to_message_id,
     )
 
     if message is None:
@@ -154,4 +172,11 @@ async def send_message(
             detail="Unable to send message.",
         )
 
-    return message
+    message_out = MessageOut.model_validate(message)
+
+    await emit_conversation_message(
+        conversation_id=conversation_id,
+        payload=message_out.model_dump(mode="json"),
+    )
+
+    return message_out

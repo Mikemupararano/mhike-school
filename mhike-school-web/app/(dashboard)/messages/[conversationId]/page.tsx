@@ -23,13 +23,10 @@ export default function ConversationPage() {
     const conversationId = params.conversationId;
     const { user } = useAuth();
 
-    const [conversation, setConversation] =
-        useState<Conversation | null>(null);
+    const [conversation, setConversation] = useState<Conversation | null>(null);
     const [messageBody, setMessageBody] = useState("");
-    const [replyToMessage, setReplyToMessage] =
-        useState<Message | null>(null);
-    const [forwardMessage, setForwardMessage] =
-        useState<Message | null>(null);
+    const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
+    const [forwardMessage, setForwardMessage] = useState<Message | null>(null);
     const [typingUsers, setTypingUsers] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
@@ -52,6 +49,23 @@ export default function ConversationPage() {
         }
     }
 
+    function appendMessage(message: Message) {
+        setConversation((previous) => {
+            if (!previous) return previous;
+
+            const exists = previous.messages?.some(
+                (item) => item.id === message.id,
+            );
+
+            if (exists) return previous;
+
+            return {
+                ...previous,
+                messages: [...(previous.messages ?? []), message],
+            };
+        });
+    }
+
     useEffect(() => {
         if (!conversationId || !user) return;
 
@@ -66,25 +80,12 @@ export default function ConversationPage() {
             conversation_id: conversationId,
         });
 
-        socket.on("new_message", (message: Message) => {
+        socket.on("message:new", (message: Message) => {
             if (Number(message.conversation_id) !== Number(conversationId)) {
                 return;
             }
 
-            setConversation((previous) => {
-                if (!previous) return previous;
-
-                const exists = previous.messages?.some(
-                    (item) => item.id === message.id,
-                );
-
-                if (exists) return previous;
-
-                return {
-                    ...previous,
-                    messages: [...(previous.messages ?? []), message],
-                };
-            });
+            appendMessage(message);
         });
 
         socket.on("typing:start", (payload) => {
@@ -112,9 +113,14 @@ export default function ConversationPage() {
         });
 
         return () => {
-            socket.off("new_message");
+            socket.emit("leave_conversation", {
+                conversation_id: conversationId,
+            });
+
+            socket.off("message:new");
             socket.off("typing:start");
             socket.off("typing:stop");
+
             disconnectSocket();
         };
     }, [conversationId, user]);
@@ -130,15 +136,12 @@ export default function ConversationPage() {
 
         if (!body || sending) return;
 
-        const finalBody = replyToMessage
-            ? `Replying to: "${replyToMessage.body}"\n\n${body}`
-            : body;
-
         try {
             setSending(true);
 
             const message = await sendMessage(conversationId, {
-                body: finalBody,
+                body,
+                reply_to_message_id: replyToMessage?.id ?? null,
             });
 
             const socket = getSocket({
@@ -146,13 +149,13 @@ export default function ConversationPage() {
                 school_id: user?.school_id,
             });
 
-            socket.emit("send_message", message);
-
             socket.emit("typing_stop", {
                 conversation_id: conversationId,
                 user_id: user?.id,
                 full_name: user?.full_name,
             });
+
+            appendMessage(message);
 
             setMessageBody("");
             setReplyToMessage(null);
@@ -203,8 +206,8 @@ export default function ConversationPage() {
     }
 
     return (
-        <div className="flex h-full flex-col space-y-6 p-6">
-            <div>
+        <div className="flex h-[calc(100vh-80px)] flex-col bg-gray-50">
+            <div className="border-b border-gray-200 bg-white px-6 py-4 shadow-sm">
                 <h1 className="text-2xl font-bold">
                     {conversation.title || "Conversation"}
                 </h1>
@@ -214,8 +217,8 @@ export default function ConversationPage() {
                 </p>
             </div>
 
-            <div className="flex-1 overflow-y-auto rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-                <div className="space-y-5">
+            <div className="flex-1 overflow-y-auto px-4 py-6">
+                <div className="mx-auto flex max-w-5xl flex-col gap-4">
                     {conversation.messages &&
                         conversation.messages.length > 0 ? (
                         conversation.messages.map((message) => {
@@ -231,81 +234,116 @@ export default function ConversationPage() {
                                         }`}
                                 >
                                     <div
-                                        className={`flex max-w-[75%] flex-col ${isOwnMessage
-                                            ? "items-end"
-                                            : "items-start"
+                                        className={`flex max-w-[75%] items-end gap-3 ${isOwnMessage
+                                            ? "flex-row-reverse"
+                                            : "flex-row"
                                             }`}
                                     >
-                                        <div
-                                            className={`rounded-3xl px-5 py-3 shadow-sm transition-all ${isOwnMessage
-                                                ? "bg-blue-600 text-white"
-                                                : "bg-gray-100 text-gray-900"
-                                                }`}
-                                        >
-                                            <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                                                {message.body}
-                                            </p>
+                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-300 text-sm font-semibold text-white">
+                                            {isOwnMessage
+                                                ? user?.full_name?.charAt(0) ||
+                                                "M"
+                                                : "U"}
                                         </div>
 
                                         <div
-                                            className={`mt-2 flex items-center gap-3 text-xs ${isOwnMessage
-                                                ? "text-gray-400"
-                                                : "text-gray-500"
+                                            className={`flex flex-col ${isOwnMessage
+                                                ? "items-end"
+                                                : "items-start"
                                                 }`}
                                         >
-                                            <span>
-                                                {new Date(
-                                                    message.created_at,
-                                                ).toLocaleTimeString([], {
-                                                    hour: "2-digit",
-                                                    minute: "2-digit",
-                                                })}
-                                            </span>
-
-                                            {isOwnMessage && (
-                                                <div className="flex items-center gap-1">
-                                                    <CheckCheck className="h-4 w-4 text-blue-500" />
-                                                    <span>Read</span>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="mt-2 flex h-7 items-center gap-3 text-xs text-gray-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                                            <button
-                                                type="button"
-                                                onClick={() =>
-                                                    handleReply(message)
-                                                }
-                                                className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
+                                            <div
+                                                className={`rounded-3xl px-5 py-3 shadow-sm transition-all ${isOwnMessage
+                                                    ? "bg-blue-600 text-white"
+                                                    : "bg-white text-gray-900"
+                                                    }`}
                                             >
-                                                <Reply className="h-3 w-3" />
-                                                Reply
-                                            </button>
+                                                {message.reply_to && (
+                                                    <div
+                                                        className={`mb-3 rounded-2xl border px-3 py-2 text-xs ${isOwnMessage
+                                                            ? "border-blue-400 bg-blue-500/20 text-blue-100"
+                                                            : "border-gray-200 bg-gray-50 text-gray-600"
+                                                            }`}
+                                                    >
+                                                        <div className="mb-1 font-semibold">
+                                                            Replying to
+                                                        </div>
 
-                                            <button
-                                                type="button"
-                                                onClick={() =>
-                                                    handleForward(message)
-                                                }
-                                                className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
-                                            >
-                                                <Forward className="h-3 w-3" />
-                                                Forward
-                                            </button>
+                                                        <div className="line-clamp-2">
+                                                            {
+                                                                message
+                                                                    .reply_to
+                                                                    .body
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                )}
 
-                                            <button
-                                                type="button"
-                                                className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 transition-colors hover:bg-gray-200"
+                                                <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                                                    {message.body}
+                                                </p>
+                                            </div>
+
+                                            <div
+                                                className={`mt-1 flex items-center gap-2 text-xs ${isOwnMessage
+                                                    ? "text-gray-400"
+                                                    : "text-gray-500"
+                                                    }`}
                                             >
-                                                <MoreHorizontal className="h-4 w-4" />
-                                            </button>
+                                                <span>
+                                                    {new Date(
+                                                        message.created_at,
+                                                    ).toLocaleTimeString([], {
+                                                        hour: "2-digit",
+                                                        minute: "2-digit",
+                                                    })}
+                                                </span>
+
+                                                {isOwnMessage && (
+                                                    <div className="flex items-center gap-1">
+                                                        <CheckCheck className="h-4 w-4 text-blue-500" />
+                                                        <span>Read</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="mt-2 flex h-7 items-center gap-3 text-xs text-gray-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        handleReply(message)
+                                                    }
+                                                    className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
+                                                >
+                                                    <Reply className="h-3 w-3" />
+                                                    Reply
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        handleForward(message)
+                                                    }
+                                                    className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
+                                                >
+                                                    <Forward className="h-3 w-3" />
+                                                    Forward
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 transition-colors hover:bg-gray-200"
+                                                >
+                                                    <MoreHorizontal className="h-4 w-4" />
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
                             );
                         })
                     ) : (
-                        <div className="flex h-full items-center justify-center">
+                        <div className="flex h-full items-center justify-center py-20">
                             <p className="text-sm text-gray-400">
                                 No messages yet.
                             </p>
@@ -317,116 +355,120 @@ export default function ConversationPage() {
             </div>
 
             {typingUsers.length > 0 && (
-                <div className="px-2 text-sm text-gray-500">
+                <div className="px-6 py-2 text-sm text-gray-500">
                     {typingUsers.join(", ")} typing...
                 </div>
             )}
 
-            <div className="rounded-3xl border border-gray-200 bg-white p-3 shadow-sm">
-                {replyToMessage && (
-                    <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="font-medium">Replying to</p>
-                                <p className="truncate text-xs">
-                                    {replyToMessage.body}
-                                </p>
+            <div className="border-t border-gray-200 bg-white px-4 py-4 shadow-lg">
+                <div className="mx-auto max-w-5xl">
+                    {replyToMessage && (
+                        <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="min-w-0">
+                                    <p className="font-medium">Replying to</p>
+
+                                    <p className="max-w-xl truncate text-xs">
+                                        {replyToMessage.body}
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setReplyToMessage(null)}
+                                    className="shrink-0 text-xs underline"
+                                >
+                                    Cancel
+                                </button>
                             </div>
-
-                            <button
-                                type="button"
-                                onClick={() => setReplyToMessage(null)}
-                                className="text-xs underline"
-                            >
-                                Cancel
-                            </button>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {forwardMessage && (
-                    <div className="mb-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="font-medium">
-                                    Forwarding message
-                                </p>
-                                <p className="truncate text-xs">
-                                    {forwardMessage.body}
-                                </p>
+                    {forwardMessage && (
+                        <div className="mb-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="min-w-0">
+                                    <p className="font-medium">
+                                        Forwarding message
+                                    </p>
+
+                                    <p className="max-w-xl truncate text-xs">
+                                        {forwardMessage.body}
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setForwardMessage(null);
+                                        setMessageBody("");
+                                    }}
+                                    className="shrink-0 text-xs underline"
+                                >
+                                    Cancel
+                                </button>
                             </div>
-
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setForwardMessage(null);
-                                    setMessageBody("");
-                                }}
-                                className="text-xs underline"
-                            >
-                                Cancel
-                            </button>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                <div className="flex items-center gap-3">
-                    <button
-                        type="button"
-                        className="rounded-full p-2 hover:bg-gray-100"
-                    >
-                        <Paperclip className="h-5 w-5 text-gray-500" />
-                    </button>
+                    <div className="flex items-center gap-3 rounded-full border border-gray-200 bg-gray-100 px-4 py-3">
+                        <button
+                            type="button"
+                            className="rounded-full p-2 transition hover:bg-gray-200"
+                        >
+                            <Paperclip className="h-5 w-5 text-gray-500" />
+                        </button>
 
-                    <button
-                        type="button"
-                        className="rounded-full p-2 hover:bg-gray-100"
-                    >
-                        <ImageIcon className="h-5 w-5 text-gray-500" />
-                    </button>
+                        <button
+                            type="button"
+                            className="rounded-full p-2 transition hover:bg-gray-200"
+                        >
+                            <ImageIcon className="h-5 w-5 text-gray-500" />
+                        </button>
 
-                    <input
-                        type="text"
-                        value={messageBody}
-                        onChange={(event) => {
-                            setMessageBody(event.target.value);
+                        <input
+                            type="text"
+                            value={messageBody}
+                            onChange={(event) => {
+                                setMessageBody(event.target.value);
 
-                            const socket = getSocket({
-                                user_id: user?.id,
-                                school_id: user?.school_id,
-                            });
+                                const socket = getSocket({
+                                    user_id: user?.id,
+                                    school_id: user?.school_id,
+                                });
 
-                            socket.emit("typing_start", {
-                                conversation_id: conversationId,
-                                user_id: user?.id,
-                                full_name: user?.full_name,
-                            });
-
-                            if (typingTimeoutRef.current) {
-                                clearTimeout(typingTimeoutRef.current);
-                            }
-
-                            typingTimeoutRef.current = setTimeout(() => {
-                                socket.emit("typing_stop", {
+                                socket.emit("typing_start", {
                                     conversation_id: conversationId,
                                     user_id: user?.id,
                                     full_name: user?.full_name,
                                 });
-                            }, 1000);
-                        }}
-                        placeholder="Type a message..."
-                        className="flex-1 rounded-full bg-gray-100 px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    />
 
-                    <button
-                        type="button"
-                        onClick={handleSendMessage}
-                        disabled={sending}
-                        className="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
-                    >
-                        <Send className="h-4 w-4" />
-                        {sending ? "Sending..." : "Send"}
-                    </button>
+                                if (typingTimeoutRef.current) {
+                                    clearTimeout(typingTimeoutRef.current);
+                                }
+
+                                typingTimeoutRef.current = setTimeout(() => {
+                                    socket.emit("typing_stop", {
+                                        conversation_id: conversationId,
+                                        user_id: user?.id,
+                                        full_name: user?.full_name,
+                                    });
+                                }, 1000);
+                            }}
+                            placeholder="Type a message..."
+                            className="flex-1 bg-transparent text-sm outline-none"
+                        />
+
+                        <button
+                            type="button"
+                            onClick={handleSendMessage}
+                            disabled={sending}
+                            className="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            <Send className="h-4 w-4" />
+                            {sending ? "Sending..." : "Send"}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

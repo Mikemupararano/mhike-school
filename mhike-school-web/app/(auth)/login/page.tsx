@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 
 import { apiPost, saveToken } from "@/lib/api";
 import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
@@ -78,8 +77,6 @@ function getErrorMessage(err: unknown): string {
 }
 
 export default function LoginPage() {
-  const router = useRouter();
-
   const [mode, setMode] = useState<"school_user" | "platform_admin">(
     "school_user",
   );
@@ -142,7 +139,7 @@ export default function LoginPage() {
 
       const user = await getCurrentUser(res.access_token);
 
-      router.push(resolveRedirectPath(user));
+      window.location.replace(resolveRedirectPath(user));
     } catch (err) {
       console.error("Login error:", err);
       setError(getErrorMessage(err));

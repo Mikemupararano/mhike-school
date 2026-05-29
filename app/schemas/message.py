@@ -30,6 +30,26 @@ class ConversationParticipantOut(BaseModel):
 
 class MessageCreate(BaseModel):
     body: str
+    reply_to_message_id: int | None = None
+
+
+class MessageReplyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sender_id: int | None
+    body: str
+    created_at: datetime
+
+
+class MessageDeliveryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    message_id: int
+    user_id: int
+    delivered_at: datetime | None = None
+    read_at: datetime | None = None
 
 
 class MessageOut(BaseModel):
@@ -38,9 +58,12 @@ class MessageOut(BaseModel):
     id: int
     conversation_id: int
     sender_id: int | None
+    reply_to_message_id: int | None = None
+    reply_to: MessageReplyOut | None = None
     body: str
     created_at: datetime
     updated_at: datetime
+    deliveries: list[MessageDeliveryOut] = Field(default_factory=list)
 
 
 class ConversationOut(BaseModel):
