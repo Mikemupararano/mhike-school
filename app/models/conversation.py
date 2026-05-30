@@ -1,7 +1,21 @@
 from __future__ import annotations
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from datetime import datetime
+from typing import ClassVar
+
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import (
+    Mapped,
+    mapped_column,
+    relationship,
+)
 
 from app.db.base import Base
 
@@ -9,10 +23,16 @@ from app.db.base import Base
 class Conversation(Base):
     __tablename__ = "conversations"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
 
     school_id: Mapped[int | None] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey(
+            "schools.id",
+            ondelete="CASCADE",
+        ),
         nullable=True,
         index=True,
     )
@@ -30,93 +50,126 @@ class Conversation(Base):
     )
 
     created_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
 
-    created_at: Mapped[DateTime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
 
-    updated_at: Mapped[DateTime] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
     )
 
-    participants = relationship(
+    participants: Mapped[list["ConversationParticipant"]] = relationship(
         "ConversationParticipant",
         back_populates="conversation",
         cascade="all, delete-orphan",
     )
 
-    messages = relationship(
+    messages: Mapped[list["Message"]] = relationship(
         "Message",
         back_populates="conversation",
         cascade="all, delete-orphan",
         foreign_keys="Message.conversation_id",
+        order_by="Message.created_at",
     )
+
+    # Runtime-only fields populated by MessageService
+
+    unread_count: ClassVar[int]
+    latest_message: ClassVar["Message | None"]
+    last_activity: ClassVar[datetime | None]
 
 
 class ConversationParticipant(Base):
     __tablename__ = "conversation_participants"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
 
     conversation_id: Mapped[int] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"),
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
-    joined_at: Mapped[DateTime] = mapped_column(
+    joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
 
-    last_read_at: Mapped[DateTime | None] = mapped_column(
+    last_read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
-    conversation = relationship(
+    conversation: Mapped["Conversation"] = relationship(
         "Conversation",
         back_populates="participants",
     )
 
-    user = relationship("User")
+    user: Mapped["User"] = relationship(
+        "User",
+    )
 
 
 class Message(Base):
     __tablename__ = "messages"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
 
     conversation_id: Mapped[int] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"),
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     sender_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
 
     reply_to_message_id: Mapped[int | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="SET NULL"),
+        ForeignKey(
+            "messages.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
@@ -126,34 +179,40 @@ class Message(Base):
         nullable=False,
     )
 
-    created_at: Mapped[DateTime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
 
-    updated_at: Mapped[DateTime] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
     )
 
-    conversation = relationship(
+    conversation: Mapped["Conversation"] = relationship(
         "Conversation",
         back_populates="messages",
         foreign_keys=[conversation_id],
     )
 
-    reply_to = relationship(
+    reply_to: Mapped["Message | None"] = relationship(
         "Message",
         remote_side=[id],
         foreign_keys=[reply_to_message_id],
         uselist=False,
     )
 
-    deliveries = relationship(
+    deliveries: Mapped[list["MessageDelivery"]] = relationship(
         "MessageDelivery",
+        back_populates="message",
+        cascade="all, delete-orphan",
+    )
+
+    attachments: Mapped[list["MessageAttachment"]] = relationship(
+        "MessageAttachment",
         back_populates="message",
         cascade="all, delete-orphan",
     )
@@ -170,33 +229,44 @@ class MessageDelivery(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
 
     message_id: Mapped[int] = mapped_column(
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey(
+            "messages.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
-    delivered_at: Mapped[DateTime | None] = mapped_column(
+    delivered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
-    read_at: Mapped[DateTime | None] = mapped_column(
+    read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
-    message = relationship(
+    message: Mapped["Message"] = relationship(
         "Message",
         back_populates="deliveries",
     )
 
-    user = relationship("User")
+    user: Mapped["User"] = relationship(
+        "User",
+    )

@@ -1018,24 +1018,24 @@ mhike-school/
 │   │           └── webhooks.py                   # PLANNED
 
 
-## Updated Project Structure June 26
-Updated Project File Structure
+## Project Structure 30th May 2026
 mhike-school/
-│
+|
 ├── docker-compose.yml
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
 ├── README.md
 ├── Makefile
-│
+|
 ├── alembic/
 │   └── versions/
-│       ├── *_create_notifications_infrastructure.py
-│       ├── *_add_timestamps_to_notification_preferences.py
-│       └── *_add_messaging_system.py
-│
-├── app/                                          # FastAPI backend
+│       ├── *_create_notifications_infrastructure.py        # COMPLETE
+│       ├── *_add_timestamps_to_notification_preferences.py # COMPLETE
+│       ├── *_add_messaging_system.py                       # COMPLETE / EXPANDED
+│       └── future delivery/read receipt migrations          # RECOMMENDED
+|
+├── app/                                                     # FastAPI backend
 │   ├── main.py
 │   │
 │   ├── api/
@@ -1043,52 +1043,65 @@ mhike-school/
 │   │   └── v1/
 │   │       ├── api.py
 │   │       └── endpoints/
-│   │           ├── auth.py
-│   │           ├── dashboard.py
-│   │           ├── schools.py
-│   │           ├── school_users.py
-│   │           ├── school_admin.py
-│   │           ├── platform_admin.py
-│   │           ├── classes.py
-│   │           ├── enrollments.py
-│   │           ├── courses.py
-│   │           ├── assignments.py
-│   │           ├── assignment_submissions.py
+│   │           ├── auth.py                                 # IMPLEMENTED
+│   │           ├── dashboard.py                            # IMPLEMENTED
+│   │           ├── schools.py                              # IMPLEMENTED
+│   │           ├── school_users.py                         # IMPLEMENTED
+│   │           ├── school_admin.py                         # IMPLEMENTED
+│   │           ├── platform_admin.py                       # IMPLEMENTED
+│   │           ├── classes.py                              # IMPLEMENTED
+│   │           ├── enrollments.py                          # IMPLEMENTED
+│   │           ├── courses.py                              # IMPLEMENTED
+│   │           ├── assignments.py                          # IMPLEMENTED
+│   │           ├── assignment_submissions.py               # IMPLEMENTED
 │   │           │
-│   │           ├── notifications.py                       # IMPLEMENTED
-│   │           ├── notification_preferences.py            # IMPLEMENTED
-│   │           ├── messages.py                            # IN PROGRESS
+│   │           ├── notifications.py                        # COMPLETE
+│   │           ├── notification_preferences.py             # COMPLETE
+│   │           ├── messages.py                             # COMPLETE / ACTIVE
+│   │           │   ├── school users
+│   │           │   ├── conversations
+│   │           │   ├── send message
+│   │           │   ├── delivered endpoint
+│   │           │   ├── read endpoint
+│   │           │   └── conversation read endpoint
 │   │           │
-│   │           ├── attendance.py                          # IMPLEMENTED
-│   │           ├── attendance_analytics.py                # IMPLEMENTED
-│   │           ├── attendance_dashboard.py                # IMPLEMENTED
-│   │           ├── attendance_exports.py                  # IMPLEMENTED
-│   │           ├── attendance_pdf_exports.py              # IMPLEMENTED
-│   │           ├── attendance_registers.py                # IMPLEMENTED
-│   │           ├── attendance_trends.py                   # IMPLEMENTED
-│   │           ├── attendance_bulk_actions.py             # IMPLEMENTED
-│   │           ├── student_attendance.py                  # IMPLEMENTED
-│   │           ├── parent_attendance.py                   # IMPLEMENTED
-│   │           ├── parent_students.py                     # IMPLEMENTED
+│   │           ├── attendance.py                           # IMPLEMENTED
+│   │           ├── attendance_analytics.py                 # IMPLEMENTED
+│   │           ├── attendance_dashboard.py                 # IMPLEMENTED
+│   │           ├── attendance_exports.py                   # IMPLEMENTED
+│   │           ├── attendance_pdf_exports.py               # IMPLEMENTED
+│   │           ├── attendance_registers.py                 # IMPLEMENTED
+│   │           ├── attendance_trends.py                    # IMPLEMENTED
+│   │           ├── attendance_bulk_actions.py              # IMPLEMENTED
+│   │           ├── student_attendance.py                   # IMPLEMENTED
+│   │           ├── parent_attendance.py                    # IMPLEMENTED
+│   │           ├── parent_students.py                      # IMPLEMENTED
 │   │           │
-│   │           ├── timetables.py                          # IN PROGRESS
-│   │           ├── parent_portal.py                       # IN PROGRESS
-│   │           ├── absence_requests.py                    # IMPLEMENTED
-│   │           ├── pupil_reports.py                       # PLANNED
-│   │           ├── extracurricular.py                     # PLANNED
-│   │           ├── progress_analytics.py                  # PLANNED
-│   │           ├── demographic_analytics.py               # PLANNED
-│   │           ├── attainment_tracking.py                 # PLANNED
-│   │           ├── billing.py                             # PLANNED
-│   │           └── webhooks.py                            # PLANNED
+│   │           ├── timetables.py                           # IN PROGRESS
+│   │           ├── parent_portal.py                        # IN PROGRESS
+│   │           ├── absence_requests.py                     # IMPLEMENTED
+│   │           ├── pupil_reports.py                        # PLANNED
+│   │           ├── extracurricular.py                      # PLANNED
+│   │           ├── progress_analytics.py                   # PLANNED
+│   │           ├── demographic_analytics.py                # PLANNED
+│   │           ├── attainment_tracking.py                  # PLANNED
+│   │           ├── billing.py                              # PLANNED
+│   │           └── webhooks.py                             # PLANNED
 │   │
 │   ├── core/
 │   │   ├── config.py
 │   │   ├── bootstrap.py
-│   │   └── socket_manager.py                             # IMPLEMENTED
+│   │   └── socket_manager.py                              # COMPLETE / ACTIVE
+│   │       ├── message:new
+│   │       ├── message:delivered
+│   │       ├── message:read
+│   │       ├── typing:start
+│   │       ├── typing:stop
+│   │       ├── notification:new
+│   │       └── user/school/conversation rooms
 │   │
 │   ├── db/
-│   │   ├── base.py                                      # MODEL REGISTRY
+│   │   ├── base.py                                        # MODEL REGISTRY
 │   │   └── session.py
 │   │
 │   ├── models/
@@ -1100,126 +1113,103 @@ mhike-school/
 │   │   ├── attendance_session.py
 │   │   ├── absence_request.py
 │   │   │
-│   │   ├── notification.py                              # IMPLEMENTED
-│   │   ├── notification_delivery.py                     # IMPLEMENTED
-│   │   ├── notification_preference.py                   # IMPLEMENTED
-│   │   ├── conversation.py                              # IN PROGRESS
+│   │   ├── notification.py                                # COMPLETE
+│   │   ├── notification_delivery.py                       # COMPLETE
+│   │   ├── notification_preference.py                     # COMPLETE
+│   │   ├── conversation.py                                # COMPLETE / ACTIVE
 │   │   │   ├── Conversation
 │   │   │   ├── ConversationParticipant
-│   │   │   └── Message
+│   │   │   ├── Message
+│   │   │   └── MessageDelivery
 │   │   │
-│   │   ├── timetable.py                                 # IN PROGRESS
-│   │   ├── timetable_assignment.py                      # IN PROGRESS
-│   │   ├── timetable_entry.py                           # IN PROGRESS
-│   │   └── timetable_period.py                          # IN PROGRESS
+│   │   ├── timetable.py                                   # IN PROGRESS
+│   │   ├── timetable_assignment.py                        # IN PROGRESS
+│   │   ├── timetable_entry.py                             # IN PROGRESS
+│   │   └── timetable_period.py                            # IN PROGRESS
 │   │
 │   ├── schemas/
-│   │   ├── notification.py                              # IMPLEMENTED
-│   │   ├── notification_preference.py                   # IMPLEMENTED
-│   │   ├── message.py                                   # IN PROGRESS
-│   │   ├── attendance*.py                               # IMPLEMENTED
-│   │   ├── timetable*.py                                # IN PROGRESS
+│   │   ├── notification.py                                # COMPLETE
+│   │   ├── notification_preference.py                     # COMPLETE
+│   │   ├── message.py                                     # COMPLETE / ACTIVE
+│   │   │   ├── ConversationCreate
+│   │   │   ├── ConversationOut
+│   │   │   ├── ConversationParticipantOut
+│   │   │   ├── MessageCreate
+│   │   │   ├── MessageReplyOut
+│   │   │   ├── MessageDeliveryOut
+│   │   │   └── MessageOut
+│   │   ├── attendance*.py                                 # IMPLEMENTED
+│   │   ├── timetable*.py                                  # IN PROGRESS
 │   │   └── user/school/class/content schemas
 │   │
 │   ├── services/
-│   │   ├── notification_service.py                      # IMPLEMENTED
-│   │   ├── notification_preferences_service.py          # IMPLEMENTED
-│   │   ├── message_service.py                           # IN PROGRESS
-│   │   ├── attendance services                          # IMPLEMENTED
-│   │   ├── timetable services                           # IN PROGRESS
+│   │   ├── notification_service.py                        # COMPLETE
+│   │   ├── notification_preferences_service.py            # COMPLETE
+│   │   ├── message_service.py                             # COMPLETE / ACTIVE
+│   │   │   ├── get conversations
+│   │   │   ├── create conversations
+│   │   │   ├── send messages
+│   │   │   ├── create delivery rows
+│   │   │   ├── mark delivered
+│   │   │   ├── mark read
+│   │   │   └── mark conversation read
+│   │   ├── attendance services                            # IMPLEMENTED
+│   │   ├── timetable services                             # IN PROGRESS
 │   │   └── school/admin services
 │   │
 │   ├── tasks/
-│   │   ├── celery_app.py                                # IMPLEMENTED
-│   │   └── notifications.py                             # IMPLEMENTED
+│   │   ├── celery_app.py                                  # COMPLETE
+│   │   └── notifications.py                               # COMPLETE
 │   │
 │   └── exceptions/
 │       └── handlers.py
 │
-├── mhike-school-web/                         # Next.js frontend
+├── mhike-school-web/                                      # Next.js frontend
 │   ├── app/
 │   │   ├── (auth)/
-│   │   │   └── login/page.tsx
+│   │   │   └── login/page.tsx                             # UPDATED / SESSION FIX
 │   │   │
 │   │   └── (dashboard)/
 │   │       ├── layout.tsx
 │   │       ├── dashboard/page.tsx
-│   │       ├── profile/page.tsx                         # NOTIFICATION PREFS IMPLEMENTED
+│   │       ├── profile/page.tsx                            # NOTIFICATION PREFS COMPLETE
 │   │       │
-│   │       ├── admin/
-│   │       │   ├── page.tsx
-│   │       │   ├── schools/
-│   │       │   ├── users/
-│   │       │   ├── audit-logs/
-│   │       │   ├── notifications/
-│   │       │   │   ├── page.tsx                         # MONITORING IMPLEMENTED
-│   │       │   │   └── broadcast/
-│   │       │   │       └── page.tsx                     # IMPLEMENTED
-│   │       │   ├── analytics/                           # IN PROGRESS / PLANNED
-│   │       │   └── billing/                             # PLANNED
+│   │       ├── admin/                                      # IMPLEMENTED / EXPANDING
+│   │       ├── school-admin/                               # IMPLEMENTED / EXPANDING
+│   │       ├── teacher/                                    # IMPLEMENTED / EXPANDING
+│   │       ├── student/                                    # IMPLEMENTED / EXPANDING
+│   │       ├── parent/                                     # IN PROGRESS
 │   │       │
-│   │       ├── school-admin/
-│   │       │   ├── dashboard/
-│   │       │   ├── users/page.tsx                       # API-CONNECTED
-│   │       │   ├── users/create/page.tsx
-│   │       │   ├── attendance/                          # IN PROGRESS
-│   │       │   ├── classes/
-│   │       │   ├── teachers/
-│   │       │   ├── students/
-│   │       │   ├── timetables/                          # PLANNED
-│   │       │   └── reports/                             # PLANNED
-│   │       │
-│   │       ├── teacher/
-│   │       │   ├── dashboard/
-│   │       │   ├── attendance/                          # IMPLEMENTED / IN PROGRESS
-│   │       │   ├── assignments/
-│   │       │   ├── classes/
-│   │       │   ├── courses/
-│   │       │   ├── timetable/                           # IN PROGRESS
-│   │       │   └── messages/                            # PLANNED
-│   │       │
-│   │       ├── student/
-│   │       │   ├── dashboard/
-│   │       │   ├── attendance/                          # IN PROGRESS
-│   │       │   ├── assignments/
-│   │       │   ├── timetable/                           # IN PROGRESS
-│   │       │   └── messages/                            # PLANNED
-│   │       │
-│   │       ├── parent/
-│   │       │   ├── dashboard/
-│   │       │   ├── attendance/                          # IN PROGRESS
-│   │       │   ├── timetable/                           # IN PROGRESS
-│   │       │   └── messages/                            # PLANNED
-│   │       │
-│   │       └── messages/                                # NEXT FRONTEND BUILD
-│   │           ├── page.tsx                             # PLANNED
-│   │           └── [conversationId]/page.tsx            # PLANNED
+│   │       └── messages/                                   # COMPLETE / ACTIVE
+│   │           ├── page.tsx                                # INBOX / CONVERSATION LIST
+│   │           └── [conversationId]/page.tsx               # THREAD, REPLIES, LIVE RECEIPTS
 │   │
 │   ├── components/
 │   │   ├── auth/
 │   │   ├── layout/
 │   │   │   ├── DashboardShell.tsx
 │   │   │   ├── DashboardShellWrapper.tsx
-│   │   │   ├── Navbar.tsx
+│   │   │   ├── Navbar.tsx                                  # UPDATED
+│   │   │   ├── ProtectedRoute.tsx                          # UPDATED
 │   │   │   └── Sidebar.tsx
 │   │   │
-│   │   ├── notifications/
-│   │   │   ├── NotificationDropdown.tsx                 # IMPLEMENTED
-│   │   │   ├── NotificationToast.tsx                    # IMPLEMENTED
-│   │   │   └── BroadcastNotificationForm.tsx            # IMPLEMENTED
+│   │   ├── notifications/                                  # COMPLETE
+│   │   │   ├── NotificationDropdown.tsx
+│   │   │   ├── NotificationToast.tsx
+│   │   │   └── BroadcastNotificationForm.tsx
 │   │   │
-│   │   ├── messages/                                    # NEXT FRONTEND BUILD
-│   │   │   ├── ConversationList.tsx                     # PLANNED
-│   │   │   ├── MessageThread.tsx                        # PLANNED
-│   │   │   ├── MessageComposer.tsx                      # PLANNED
-│   │   │   ├── NewConversationModal.tsx                 # PLANNED
-│   │   │   └── RecipientPicker.tsx                      # PLANNED
+│   │   ├── messages/                                       # OPTIONAL REFACTOR TARGET
+│   │   │   ├── ConversationList.tsx                        # PLANNED EXTRACTION
+│   │   │   ├── MessageThread.tsx                           # PLANNED EXTRACTION
+│   │   │   ├── MessageComposer.tsx                         # PLANNED EXTRACTION
+│   │   │   ├── NewConversationModal.tsx                    # PLANNED EXTRACTION
+│   │   │   └── RecipientPicker.tsx                         # PLANNED EXTRACTION
 │   │   │
-│   │   ├── attendance/                                  # CORE IMPLEMENTED
-│   │   ├── timetable/                                   # IN PROGRESS / PLANNED
-│   │   ├── reports/                                     # PLANNED
-│   │   ├── progress/                                    # PLANNED
-│   │   ├── parent/                                      # IN PROGRESS
+│   │   ├── attendance/                                     # CORE IMPLEMENTED
+│   │   ├── timetable/                                      # IN PROGRESS / PLANNED
+│   │   ├── reports/                                        # PLANNED
+│   │   ├── progress/                                       # PLANNED
+│   │   ├── parent/                                         # IN PROGRESS
 │   │   ├── assignments/
 │   │   ├── teacher/
 │   │   ├── student/
@@ -1229,21 +1219,24 @@ mhike-school/
 │   │
 │   ├── lib/
 │   │   ├── api.ts
-│   │   ├── authApi.ts
-│   │   ├── socket.ts                                   # IMPLEMENTED
-│   │   ├── notifications.ts                            # IMPLEMENTED
-│   │   ├── notificationPreferences.ts                  # IMPLEMENTED
-│   │   ├── messages.ts                                 # NEXT BUILD
+│   │   ├── authApi.ts                                      # UPDATED SESSION NORMALIZATION
+│   │   ├── socket.ts                                       # COMPLETE
+│   │   ├── notifications.ts                                # COMPLETE
+│   │   ├── notificationPreferences.ts                      # COMPLETE
+│   │   ├── messages.ts                                     # COMPLETE / ACTIVE
 │   │   ├── navigation/sidebar.ts
 │   │   ├── services/
 │   │   └── utils/
+│   │
+│   ├── providers/
+│   │   └── AuthProvider.tsx                                # ACTIVE AUTH CONTEXT
 │   │
 │   ├── types/
 │   │   ├── user.ts
 │   │   ├── notification.ts
 │   │   ├── attendance.ts
 │   │   ├── timetable.ts
-│   │   ├── message.ts                                  # NEXT BUILD
+│   │   ├── message.ts                                      # COMPLETE / ACTIVE
 │   │   └── other domain types
 │   │
 │   └── package.json
@@ -1252,7 +1245,8 @@ mhike-school/
     ├── conftest.py
     ├── test_notifications.py
     ├── test_notification_preferences.py
-    └── future messaging tests
+    └── future messaging tests                             # NEXT TEST GAP
+ 
 
 
 

@@ -1,7 +1,10 @@
 import {
+    BarChart3,
     Bell,
     BookOpen,
     Brush,
+    CalendarDays,
+    CreditCard,
     FileText,
     History,
     LayoutDashboard,
@@ -37,6 +40,7 @@ export const studentSidebar: SidebarSection[] = [
             { label: "Courses", href: "/courses", icon: BookOpen },
             { label: "Messages", href: "/messages", icon: MessageSquare },
             { label: "Notifications", href: "/notifications", icon: Bell },
+            { label: "Timetable", href: "/timetable", icon: CalendarDays },
             {
                 label: "Notification Settings",
                 href: "/dashboard/settings/notifications",
@@ -53,6 +57,8 @@ export const teacherSidebar: SidebarSection[] = [
         items: [
             { label: "Dashboard", href: "/teacher", icon: LayoutDashboard },
             { label: "Courses", href: "/courses", icon: BookOpen },
+            { label: "Classes", href: "/teacher/classes", icon: Users },
+            { label: "Timetable", href: "/timetable", icon: CalendarDays },
             { label: "Messages", href: "/messages", icon: MessageSquare },
             { label: "Notifications", href: "/notifications", icon: Bell },
             {
@@ -72,6 +78,8 @@ export const schoolAdminSidebar: SidebarSection[] = [
             { label: "Dashboard", href: "/school-admin", icon: LayoutDashboard },
             { label: "Users", href: "/school-admin/users", icon: Users },
             { label: "Classes", href: "/school-admin/classes", icon: School },
+            { label: "Timetables", href: "/school-admin/timetables", icon: CalendarDays },
+            { label: "Parent Portal", href: "/school-admin/parent-portal", icon: Users },
             {
                 label: "Announcements",
                 href: "/school-admin/announcements",
@@ -79,6 +87,14 @@ export const schoolAdminSidebar: SidebarSection[] = [
             },
             { label: "Messages", href: "/messages", icon: MessageSquare },
             { label: "Branding", href: "/school-admin/branding", icon: Brush },
+        ],
+    },
+    {
+        title: "Reports",
+        items: [
+            { label: "Reports", href: "/school-admin/reports", icon: FileText },
+            { label: "Progress Analytics", href: "/school-admin/progress", icon: BarChart3 },
+            { label: "Billing", href: "/school-admin/billing", icon: CreditCard },
         ],
     },
     {
@@ -103,17 +119,33 @@ export const platformAdminSidebar: SidebarSection[] = [
             { label: "Schools", href: "/admin/schools", icon: School },
             { label: "Users", href: "/admin/users", icon: Users },
             { label: "Content", href: "/admin/content", icon: FileText },
-            { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
+            { label: "Messages", href: "/messages", icon: MessageSquare },
             {
                 label: "Notification Monitoring",
                 href: "/admin/notifications",
                 icon: Bell,
             },
+            { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
+        ],
+    },
+    {
+        title: "Commercial",
+        items: [
+            { label: "Billing", href: "/admin/billing", icon: CreditCard },
+            { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
         ],
     },
     {
         title: "Account",
-        items: [{ label: "Profile", href: "/profile", icon: User }],
+        items: [
+            { label: "Notifications", href: "/notifications", icon: Bell },
+            {
+                label: "Notification Settings",
+                href: "/dashboard/settings/notifications",
+                icon: Settings,
+            },
+            { label: "Profile", href: "/profile", icon: User },
+        ],
     },
 ];
 
@@ -128,6 +160,10 @@ function resolvePrimaryRole(roles: UserRole[]): UserRole {
 
     if (roles.includes(UserRole.TEACHER)) {
         return UserRole.TEACHER;
+    }
+
+    if (roles.includes(UserRole.STUDENT)) {
+        return UserRole.STUDENT;
     }
 
     return UserRole.STUDENT;

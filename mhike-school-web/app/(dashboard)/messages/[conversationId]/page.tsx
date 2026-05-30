@@ -12,16 +12,42 @@ import {
     Send,
 } from "lucide-react";
 
-import { getConversation, sendMessage } from "@/lib/messages";
+import {
+    getConversation,
+    markConversationRead,
+    markMessageDelivered,
+    markMessageRead,
+    sendMessage,
+} from "@/lib/messages";
 import { disconnectSocket, getSocket } from "@/lib/socket";
 import { useAuth } from "@/providers/AuthProvider";
 
-import type { Conversation, Message } from "@/types/message";
+import type { Conversation, Message, MessageDelivery } from "@/types/message";
+import { useRef } from "react";
 
+import MessageAttachmentList from "@/components/messages/MessageAttachmentList";
+
+import {
+    attachFileToMessage,
+    uploadMessageFile,
+} from "@/lib/messages";
+
+import type {
+    MessageAttachment,
+    MessageAttachmentUploadResponse,
+} from "@/types/message";
 export default function ConversationPage() {
     const params = useParams<{ conversationId: string }>();
     const conversationId = params.conversationId;
     const { user } = useAuth();
+    const [selectedFile, setSelectedFile] =
+        useState<File | null>(null);
+
+    const [uploadingAttachment, setUploadingAttachment] =
+        useState(false);
+
+    const fileInputRef =
+        useRef<HTMLInputElement | null>(null);
 
     const [conversation, setConversation] = useState<Conversation | null>(null);
     const [messageBody, setMessageBody] = useState("");
@@ -34,12 +60,17 @@ export default function ConversationPage() {
 
     const bottomRef = useRef<HTMLDivElement | null>(null);
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const processedReadsRef = useRef<Set<number>>(new Set());
 
     async function loadConversation() {
         try {
             setLoading(true);
+
             const data = await getConversation(conversationId);
             setConversation(data);
+
+            await markConversationRead(conversationId);
+
             setError(null);
         } catch (err) {
             console.error(err);
@@ -54,7 +85,7 @@ export default function ConversationPage() {
             if (!previous) return previous;
 
             const exists = previous.messages?.some(
-                (item) => item.id === message.id,
+                (item) => Number(item.id) === Number(message.id),
             );
 
             if (exists) return previous;
@@ -64,6 +95,107 @@ export default function ConversationPage() {
                 messages: [...(previous.messages ?? []), message],
             };
         });
+    }
+
+    function applyDeliveryUpdate(delivery: MessageDelivery) {
+        setConversation((previous) => {
+            if (!previous) return previous;
+
+            return {
+                ...previous,
+                messages: previous.messages?.map((message) => {
+                    if (Number(message.id) !== Number(delivery.message_id)) {
+                        return message;
+                    }
+
+                    const existingDeliveries = message.deliveries ?? [];
+
+                    const deliveryExists = existingDeliveries.some(
+                        (item) => Number(item.id) === Number(delivery.id),
+                    );
+
+                    return {
+                        ...message,
+                        deliveries: deliveryExists
+                            ? existingDeliveries.map((item) =>
+                                Number(item.id) === Number(delivery.id)
+                                    ? delivery
+                                    : item,
+                            )
+                            : [...existingDeliveries, delivery],
+                    };
+                }),
+            };
+        });
+    }
+
+    function getMessageStatus(
+        message: Message,
+    ): "Sent" | "Delivered" | "Read" {
+        const deliveries = message.deliveries ?? [];
+
+        if (deliveries.length === 0) {
+            return "Sent";
+        }
+
+        const readCount = deliveries.filter(
+            (delivery) => delivery.read_at !== null,
+        ).length;
+
+        if (readCount > 0) {
+            return "Read";
+        }
+
+        const deliveredCount = deliveries.filter(
+            (delivery) => delivery.delivered_at !== null,
+        ).length;
+
+        if (deliveredCount > 0) {
+            return "Delivered";
+        }
+
+        return "Sent";
+    }
+
+    function getReceiptTooltip(message: Message) {
+        const deliveries = message.deliveries ?? [];
+
+        const readCount = deliveries.filter(
+            (delivery) => delivery.read_at !== null,
+        ).length;
+
+        const deliveredCount = deliveries.filter(
+            (delivery) => delivery.delivered_at !== null,
+        ).length;
+
+        if (readCount > 0) {
+            return `Read by ${readCount} recipient${readCount === 1 ? "" : "s"}`;
+        }
+
+        if (deliveredCount > 0) {
+            return `Delivered to ${deliveredCount} recipient${deliveredCount === 1 ? "" : "s"
+                }`;
+        }
+
+        return "Sent";
+    }
+
+    function shouldMarkMessageRead(message: Message) {
+        if (!user) return false;
+
+        if (Number(message.sender_id) === Number(user.id)) {
+            return false;
+        }
+
+        if (processedReadsRef.current.has(Number(message.id))) {
+            return false;
+        }
+
+        const userDelivery = message.deliveries?.find(
+            (delivery) => Number(delivery.user_id) === Number(user.id),
+        );
+
+        return !userDelivery || userDelivery.read_at === null;
     }
 
     useEffect(() => {
@@ -80,12 +212,37 @@ export default function ConversationPage() {
             conversation_id: conversationId,
         });
 
-        socket.on("message:new", (message: Message) => {
+        socket.on("message:new", async (message: Message) => {
             if (Number(message.conversation_id) !== Number(conversationId)) {
                 return;
             }
 
             appendMessage(message);
+
+            if (Number(message.sender_id) !== Number(user.id)) {
+                try {
+                    processedReadsRef.current.add(Number(message.id));
+
+                    const delivered = await markMessageDelivered(message.id);
+                    applyDeliveryUpdate(delivered);
+
+                    const read = await markMessageRead(message.id);
+                    applyDeliveryUpdate(read);
+
+                    await markConversationRead(conversationId);
+                } catch (err) {
+                    processedReadsRef.current.delete(Number(message.id));
+                    console.error(err);
+                }
+            }
+        });
+
+        socket.on("message:delivered", (delivery: MessageDelivery) => {
+            applyDeliveryUpdate(delivery);
+        });
+
+        socket.on("message:read", (delivery: MessageDelivery) => {
+            applyDeliveryUpdate(delivery);
         });
 
         socket.on("typing:start", (payload) => {
@@ -94,6 +251,10 @@ export default function ConversationPage() {
             }
 
             if (!payload.full_name) return;
+
+            if (Number(payload.user_id) === Number(user.id)) {
+                return;
+            }
 
             setTypingUsers((previous) => {
                 if (previous.includes(payload.full_name)) {
@@ -118,12 +279,57 @@ export default function ConversationPage() {
             });
 
             socket.off("message:new");
+            socket.off("message:delivered");
+            socket.off("message:read");
             socket.off("typing:start");
             socket.off("typing:stop");
+
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
+            }
 
             disconnectSocket();
         };
     }, [conversationId, user]);
+
+    useEffect(() => {
+        if (!conversation?.messages || !user) return;
+
+        async function markVisibleMessages() {
+            let markedAnyMessage = false;
+
+            for (const message of conversation?.messages ?? []) {
+                if (!shouldMarkMessageRead(message)) {
+                    continue;
+                }
+
+                try {
+                    processedReadsRef.current.add(Number(message.id));
+
+                    const delivered = await markMessageDelivered(message.id);
+                    applyDeliveryUpdate(delivered);
+
+                    const read = await markMessageRead(message.id);
+                    applyDeliveryUpdate(read);
+
+                    markedAnyMessage = true;
+                } catch (err) {
+                    processedReadsRef.current.delete(Number(message.id));
+                    console.error(err);
+                }
+            }
+
+            if (markedAnyMessage) {
+                try {
+                    await markConversationRead(conversationId);
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+        }
+
+        markVisibleMessages();
+    }, [conversation?.messages, conversationId, user]);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({
@@ -134,7 +340,7 @@ export default function ConversationPage() {
     async function handleSendMessage() {
         const body = messageBody.trim();
 
-        if (!body || sending) return;
+        if (!body || sending || !user) return;
 
         try {
             setSending(true);
@@ -145,14 +351,14 @@ export default function ConversationPage() {
             });
 
             const socket = getSocket({
-                user_id: user?.id,
-                school_id: user?.school_id,
+                user_id: user.id,
+                school_id: user.school_id,
             });
 
             socket.emit("typing_stop", {
                 conversation_id: conversationId,
-                user_id: user?.id,
-                full_name: user?.full_name,
+                user_id: user.id,
+                full_name: user.full_name,
             });
 
             appendMessage(message);
@@ -166,6 +372,35 @@ export default function ConversationPage() {
         } finally {
             setSending(false);
         }
+    }
+
+    function handleTypingChange(value: string) {
+        setMessageBody(value);
+
+        if (!user) return;
+
+        const socket = getSocket({
+            user_id: user.id,
+            school_id: user.school_id,
+        });
+
+        socket.emit("typing_start", {
+            conversation_id: conversationId,
+            user_id: user.id,
+            full_name: user.full_name,
+        });
+
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+        }
+
+        typingTimeoutRef.current = setTimeout(() => {
+            socket.emit("typing_stop", {
+                conversation_id: conversationId,
+                user_id: user.id,
+                full_name: user.full_name,
+            });
+        }, 1000);
     }
 
     function handleReply(message: Message) {
@@ -225,6 +460,8 @@ export default function ConversationPage() {
                             const isOwnMessage =
                                 Number(message.sender_id) === Number(user?.id);
 
+                            const messageStatus = getMessageStatus(message);
+
                             return (
                                 <div
                                     key={message.id}
@@ -271,8 +508,7 @@ export default function ConversationPage() {
 
                                                         <div className="line-clamp-2">
                                                             {
-                                                                message
-                                                                    .reply_to
+                                                                message.reply_to
                                                                     .body
                                                             }
                                                         </div>
@@ -300,9 +536,23 @@ export default function ConversationPage() {
                                                 </span>
 
                                                 {isOwnMessage && (
-                                                    <div className="flex items-center gap-1">
-                                                        <CheckCheck className="h-4 w-4 text-blue-500" />
-                                                        <span>Read</span>
+                                                    <div
+                                                        className="flex items-center gap-1"
+                                                        title={getReceiptTooltip(
+                                                            message,
+                                                        )}
+                                                    >
+                                                        <CheckCheck
+                                                            className={`h-4 w-4 ${messageStatus ===
+                                                                "Read"
+                                                                ? "text-blue-500"
+                                                                : "text-gray-400"
+                                                                }`}
+                                                        />
+
+                                                        <span>
+                                                            {messageStatus}
+                                                        </span>
                                                     </div>
                                                 )}
                                             </div>
@@ -429,31 +679,14 @@ export default function ConversationPage() {
                         <input
                             type="text"
                             value={messageBody}
-                            onChange={(event) => {
-                                setMessageBody(event.target.value);
-
-                                const socket = getSocket({
-                                    user_id: user?.id,
-                                    school_id: user?.school_id,
-                                });
-
-                                socket.emit("typing_start", {
-                                    conversation_id: conversationId,
-                                    user_id: user?.id,
-                                    full_name: user?.full_name,
-                                });
-
-                                if (typingTimeoutRef.current) {
-                                    clearTimeout(typingTimeoutRef.current);
+                            onChange={(event) =>
+                                handleTypingChange(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter" && !event.shiftKey) {
+                                    event.preventDefault();
+                                    handleSendMessage();
                                 }
-
-                                typingTimeoutRef.current = setTimeout(() => {
-                                    socket.emit("typing_stop", {
-                                        conversation_id: conversationId,
-                                        user_id: user?.id,
-                                        full_name: user?.full_name,
-                                    });
-                                }, 1000);
                             }}
                             placeholder="Type a message..."
                             className="flex-1 bg-transparent text-sm outline-none"
@@ -462,7 +695,7 @@ export default function ConversationPage() {
                         <button
                             type="button"
                             onClick={handleSendMessage}
-                            disabled={sending}
+                            disabled={sending || !messageBody.trim()}
                             className="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
                         >
                             <Send className="h-4 w-4" />

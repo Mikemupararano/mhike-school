@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageCircle, Plus } from "lucide-react";
 
 import {
@@ -10,104 +10,171 @@ import {
     getConversations,
     getSchoolMessageUsers,
 } from "@/lib/messages";
+import { getSocket, SocketEvents } from "@/lib/socket";
 
-import type {
-    Conversation,
-    SchoolMessageUser,
-} from "@/types/message";
+import type { Conversation, SchoolMessageUser } from "@/types/message";
+
+function formatLastActivity(dateString?: string | null) {
+    if (!dateString) return "";
+
+    const date = new Date(dateString);
+
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    const now = new Date();
+
+    const diffMinutes = Math.floor(
+        (now.getTime() - date.getTime()) / 60000,
+    );
+
+    if (diffMinutes < 1) return "Now";
+    if (diffMinutes < 60) return `${diffMinutes}m`;
+
+    const diffHours = Math.floor(diffMinutes / 60);
+
+    if (diffHours < 24) return `${diffHours}h`;
+
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffDays < 7) return `${diffDays}d`;
+
+    return date.toLocaleDateString();
+}
+
+function getConversationActivityDate(conversation: Conversation) {
+    return (
+        conversation.last_activity ||
+        conversation.latest_message?.created_at ||
+        conversation.updated_at ||
+        conversation.created_at ||
+        conversation.messages?.[conversation.messages.length - 1]?.created_at ||
+        null
+    );
+}
+
+function getLatestMessage(conversation: Conversation) {
+    if (conversation.latest_message) {
+        return conversation.latest_message;
+    }
+
+    if (!conversation.messages || conversation.messages.length === 0) {
+        return null;
+    }
+
+    return conversation.messages[conversation.messages.length - 1];
+}
+
+function getUnreadCount(conversation: Conversation) {
+    return conversation.unread_count ?? 0;
+}
+
+function getConversationTitle(conversation: Conversation) {
+    const participantNames = conversation.participants
+        ?.map((participant) => participant.user?.full_name)
+        .filter(Boolean)
+        .join(", ");
+
+    return conversation.title || participantNames || "Untitled conversation";
+}
 
 export default function MessagesPage() {
     const router = useRouter();
 
-    const [conversations, setConversations] =
-        useState<Conversation[]>([]);
+    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [users, setUsers] = useState<SchoolMessageUser[]>([]);
+    const [selectedUserId, setSelectedUserId] = useState("");
+    const [conversationTitle, setConversationTitle] = useState("");
+    const [loading, setLoading] = useState(true);
+    const [creating, setCreating] = useState(false);
+    const [showModal, setShowModal] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    const [users, setUsers] =
-        useState<SchoolMessageUser[]>([]);
+    const loadingRef = useRef(false);
 
-    const [selectedUserId, setSelectedUserId] =
-        useState("");
+    const loadData = useCallback(async () => {
+        if (loadingRef.current) return;
 
-    const [conversationTitle, setConversationTitle] =
-        useState("");
-
-    const [loading, setLoading] =
-        useState(true);
-
-    const [creating, setCreating] =
-        useState(false);
-
-    const [showModal, setShowModal] =
-        useState(false);
-
-    const [error, setError] =
-        useState<string | null>(null);
-
-    async function loadData() {
         try {
+            loadingRef.current = true;
             setLoading(true);
 
-            const [
-                conversationData,
-                userData,
-            ] = await Promise.all([
+            const [conversationData, userData] = await Promise.all([
                 getConversations(),
                 getSchoolMessageUsers(),
             ]);
 
             setConversations(conversationData);
             setUsers(userData);
-
             setError(null);
         } catch (err) {
             console.error(err);
-
-            setError(
-                "Unable to load messages.",
-            );
+            setError("Unable to load messages.");
         } finally {
+            loadingRef.current = false;
             setLoading(false);
         }
-    }
-
-    useEffect(() => {
-        loadData();
     }, []);
 
+    useEffect(() => {
+        void loadData();
+    }, [loadData]);
+
+    useEffect(() => {
+        const handleFocus = () => {
+            void loadData();
+        };
+
+        window.addEventListener("focus", handleFocus);
+
+        return () => {
+            window.removeEventListener("focus", handleFocus);
+        };
+    }, [loadData]);
+
+    useEffect(() => {
+        const socket = getSocket();
+
+        const refreshConversations = () => {
+            void loadData();
+        };
+
+        socket.on(SocketEvents.MESSAGES_REFRESH, refreshConversations);
+        socket.on(SocketEvents.MESSAGE_NEW, refreshConversations);
+        socket.on(SocketEvents.MESSAGE_DELIVERED, refreshConversations);
+        socket.on(SocketEvents.MESSAGE_READ, refreshConversations);
+
+        return () => {
+            socket.off(SocketEvents.MESSAGES_REFRESH, refreshConversations);
+            socket.off(SocketEvents.MESSAGE_NEW, refreshConversations);
+            socket.off(SocketEvents.MESSAGE_DELIVERED, refreshConversations);
+            socket.off(SocketEvents.MESSAGE_READ, refreshConversations);
+        };
+    }, [loadData]);
+
     async function handleCreateConversation() {
-        if (!selectedUserId) {
-            return;
-        }
+        if (!selectedUserId || creating) return;
 
         try {
             setCreating(true);
 
-            const conversation =
-                await createConversation({
-                    participant_ids: [
-                        Number(selectedUserId),
-                    ],
-                    title:
-                        conversationTitle.trim() ||
-                        null,
-                    conversation_type:
-                        "direct",
-                });
+            const conversation = await createConversation({
+                participant_ids: [Number(selectedUserId)],
+                title: conversationTitle.trim() || null,
+                conversation_type: "direct",
+            });
+
+            await loadData();
 
             setShowModal(false);
-
             setConversationTitle("");
             setSelectedUserId("");
 
-            router.push(
-                `/messages/${conversation.id}`,
-            );
+            router.push(`/messages/${conversation.id}`);
         } catch (err) {
             console.error(err);
-
-            alert(
-                "Failed to create conversation.",
-            );
+            alert("Failed to create conversation.");
         } finally {
             setCreating(false);
         }
@@ -115,24 +182,22 @@ export default function MessagesPage() {
 
     const sortedConversations = useMemo(
         () =>
-            [...conversations].sort(
-                (a, b) =>
-                    new Date(
-                        b.updated_at ||
-                        b.created_at,
-                    ).getTime() -
-                    new Date(
-                        a.updated_at ||
-                        a.created_at,
-                    ).getTime(),
-            ),
+            [...conversations].sort((a, b) => {
+                const dateA = getConversationActivityDate(a);
+                const dateB = getConversationActivityDate(b);
+
+                return (
+                    new Date(dateB || 0).getTime() -
+                    new Date(dateA || 0).getTime()
+                );
+            }),
         [conversations],
     );
 
     return (
         <div className="min-h-screen bg-gray-50 p-6">
             <div className="mx-auto max-w-5xl">
-                <div className="mb-8 flex items-center justify-between">
+                <div className="mb-8 flex items-center justify-between gap-4">
                     <div>
                         <h1 className="text-3xl font-bold text-gray-900">
                             Messages
@@ -145,9 +210,7 @@ export default function MessagesPage() {
 
                     <button
                         type="button"
-                        onClick={() =>
-                            setShowModal(true)
-                        }
+                        onClick={() => setShowModal(true)}
                         className="flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
                     >
                         <Plus className="h-4 w-4" />
@@ -167,108 +230,106 @@ export default function MessagesPage() {
                     </div>
                 )}
 
-                {!loading &&
-                    !error &&
-                    sortedConversations.length ===
-                    0 && (
-                        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-gray-300 bg-white py-20 text-center shadow-sm">
-                            <MessageCircle className="mb-4 h-12 w-12 text-gray-300" />
+                {!loading && !error && sortedConversations.length === 0 && (
+                    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-gray-300 bg-white py-20 text-center shadow-sm">
+                        <MessageCircle className="mb-4 h-12 w-12 text-gray-300" />
 
-                            <h2 className="text-lg font-semibold text-gray-700">
-                                No conversations yet
-                            </h2>
+                        <h2 className="text-lg font-semibold text-gray-700">
+                            No conversations yet
+                        </h2>
 
-                            <p className="mt-1 text-sm text-gray-500">
-                                Start a new
-                                conversation with a
-                                staff member.
-                            </p>
-                        </div>
-                    )}
+                        <p className="mt-1 text-sm text-gray-500">
+                            Start a new conversation with a staff member.
+                        </p>
+                    </div>
+                )}
 
-                <div className="space-y-4">
-                    {sortedConversations.map(
-                        (conversation) => {
-                            const participantNames =
-                                conversation.participants
-                                    ?.map(
-                                        (
-                                            participant,
-                                        ) =>
-                                            participant
-                                                .user
-                                                ?.full_name,
-                                    )
-                                    .filter(
-                                        Boolean,
-                                    )
-                                    .join(", ");
-
-                            const title =
-                                conversation.title ||
-                                participantNames ||
-                                "Untitled conversation";
-
-                            const latestMessage =
-                                conversation.messages?.[
-                                conversation
-                                    .messages
-                                    .length - 1
-                                ];
+                {!error && sortedConversations.length > 0 && (
+                    <div className="space-y-4">
+                        {sortedConversations.map((conversation) => {
+                            const title = getConversationTitle(conversation);
+                            const latestMessage = getLatestMessage(conversation);
+                            const unreadCount = getUnreadCount(conversation);
+                            const activityDate =
+                                getConversationActivityDate(conversation);
 
                             return (
                                 <Link
-                                    key={
-                                        conversation.id
-                                    }
+                                    key={conversation.id}
                                     href={`/messages/${conversation.id}`}
-                                    className="group block rounded-3xl border border-gray-200 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+                                    className={`group block rounded-3xl border p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${unreadCount > 0
+                                        ? "border-blue-300 bg-blue-50/40 hover:border-blue-400"
+                                        : "border-gray-200 bg-white hover:border-blue-200"
+                                        }`}
                                 >
                                     <div className="flex items-start gap-4">
-                                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-blue-600 text-lg font-semibold text-white">
-                                            {title
-                                                .charAt(
-                                                    0,
-                                                )
-                                                .toUpperCase()}
+                                        <div
+                                            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-semibold text-white ${unreadCount > 0
+                                                ? "bg-blue-700"
+                                                : "bg-blue-600"
+                                                }`}
+                                        >
+                                            {title.charAt(0).toUpperCase()}
                                         </div>
 
                                         <div className="min-w-0 flex-1">
                                             <div className="flex items-start justify-between gap-4">
-                                                <div>
-                                                    <h2 className="truncate text-lg font-semibold text-gray-900">
-                                                        {
-                                                            title
-                                                        }
+                                                <div className="min-w-0">
+                                                    <h2
+                                                        className={`truncate text-lg ${unreadCount > 0
+                                                            ? "font-bold text-gray-950"
+                                                            : "font-semibold text-gray-900"
+                                                            }`}
+                                                    >
+                                                        {title}
                                                     </h2>
 
-                                                    <p className="mt-1 text-sm text-gray-500">
+                                                    <p className="mt-1 text-sm capitalize text-gray-500">
                                                         {
                                                             conversation.conversation_type
                                                         }
                                                     </p>
                                                 </div>
 
-                                                <span className="shrink-0 text-xs text-gray-400">
-                                                    {new Date(
-                                                        conversation.updated_at ||
-                                                        conversation.created_at,
-                                                    ).toLocaleDateString()}
-                                                </span>
+                                                <div className="flex shrink-0 flex-col items-end gap-2">
+                                                    <span className="text-xs text-gray-400">
+                                                        {formatLastActivity(
+                                                            activityDate,
+                                                        )}
+                                                    </span>
+
+                                                    {unreadCount > 0 && (
+                                                        <span className="flex h-6 min-w-[24px] items-center justify-center rounded-full bg-blue-600 px-2 text-xs font-semibold text-white">
+                                                            {unreadCount > 99
+                                                                ? "99+"
+                                                                : unreadCount}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
 
                                             <div className="mt-4">
                                                 {latestMessage ? (
-                                                    <p className="truncate text-sm text-gray-600">
-                                                        {
-                                                            latestMessage.body
-                                                        }
+                                                    <p
+                                                        className={`truncate text-sm ${unreadCount > 0
+                                                            ? "font-medium text-gray-800"
+                                                            : "text-gray-600"
+                                                            }`}
+                                                    >
+                                                        {latestMessage.body}
                                                     </p>
                                                 ) : (
                                                     <p className="text-sm italic text-gray-400">
-                                                        No
-                                                        messages
-                                                        yet
+                                                        No messages yet
+                                                    </p>
+                                                )}
+
+                                                {activityDate && (
+                                                    <p className="mt-1 text-xs text-gray-400">
+                                                        Last activity{" "}
+                                                        {formatLastActivity(
+                                                            activityDate,
+                                                        )}
                                                     </p>
                                                 )}
                                             </div>
@@ -276,41 +337,37 @@ export default function MessagesPage() {
                                     </div>
                                 </Link>
                             );
-                        },
-                    )}
-                </div>
+                        })}
+                    </div>
+                )}
             </div>
 
             {showModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
                     <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
                         <h2 className="text-2xl font-bold text-gray-900">
                             New Conversation
                         </h2>
 
                         <p className="mt-1 text-sm text-gray-500">
-                            Start a private staff
-                            conversation.
+                            Start a private staff conversation.
                         </p>
 
                         <div className="mt-6 space-y-5">
                             <div>
-                                <label className="mb-2 block text-sm font-medium text-gray-700">
+                                <label
+                                    htmlFor="conversation-title"
+                                    className="mb-2 block text-sm font-medium text-gray-700"
+                                >
                                     Title
                                 </label>
 
                                 <input
+                                    id="conversation-title"
                                     type="text"
-                                    value={
-                                        conversationTitle
-                                    }
-                                    onChange={(
-                                        event,
-                                    ) =>
-                                        setConversationTitle(
-                                            event.target
-                                                .value,
-                                        )
+                                    value={conversationTitle}
+                                    onChange={(event) =>
+                                        setConversationTitle(event.target.value)
                                     }
                                     placeholder="Optional title"
                                     className="w-full rounded-2xl border border-gray-200 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
@@ -318,60 +375,43 @@ export default function MessagesPage() {
                             </div>
 
                             <div>
-                                <label className="mb-2 block text-sm font-medium text-gray-700">
+                                <label
+                                    htmlFor="conversation-recipient"
+                                    className="mb-2 block text-sm font-medium text-gray-700"
+                                >
                                     Recipient
                                 </label>
 
                                 <select
-                                    value={
-                                        selectedUserId
-                                    }
-                                    onChange={(
-                                        event,
-                                    ) =>
-                                        setSelectedUserId(
-                                            event.target
-                                                .value,
-                                        )
+                                    id="conversation-recipient"
+                                    value={selectedUserId}
+                                    onChange={(event) =>
+                                        setSelectedUserId(event.target.value)
                                     }
                                     className="w-full rounded-2xl border border-gray-200 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
                                 >
-                                    <option value="">
-                                        Select a user
-                                    </option>
+                                    <option value="">Select a user</option>
 
-                                    {users.map(
-                                        (user) => (
-                                            <option
-                                                key={
-                                                    user.id
-                                                }
-                                                value={
-                                                    user.id
-                                                }
-                                            >
-                                                {
-                                                    user.full_name
-                                                }{" "}
-                                                (
-                                                {
-                                                    user.role
-                                                }
-                                                )
-                                            </option>
-                                        ),
-                                    )}
+                                    {users.map((schoolUser) => (
+                                        <option
+                                            key={schoolUser.id}
+                                            value={schoolUser.id}
+                                        >
+                                            {schoolUser.full_name} (
+                                            {schoolUser.role})
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
 
                             <div className="flex justify-end gap-3 pt-2">
                                 <button
                                     type="button"
-                                    onClick={() =>
-                                        setShowModal(
-                                            false,
-                                        )
-                                    }
+                                    onClick={() => {
+                                        setShowModal(false);
+                                        setConversationTitle("");
+                                        setSelectedUserId("");
+                                    }}
                                     className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
                                 >
                                     Cancel
@@ -379,17 +419,11 @@ export default function MessagesPage() {
 
                                 <button
                                     type="button"
-                                    onClick={
-                                        handleCreateConversation
-                                    }
-                                    disabled={
-                                        creating
-                                    }
+                                    onClick={handleCreateConversation}
+                                    disabled={creating || !selectedUserId}
                                     className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
                                 >
-                                    {creating
-                                        ? "Creating..."
-                                        : "Create"}
+                                    {creating ? "Creating..." : "Create"}
                                 </button>
                             </div>
                         </div>

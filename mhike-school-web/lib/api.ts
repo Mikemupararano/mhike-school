@@ -62,6 +62,22 @@ function buildHeaders(
     };
 }
 
+function buildFormHeaders(
+    token?: string,
+): HeadersInit {
+    const authToken = token ?? getToken();
+
+    return {
+        Accept: "application/json",
+
+        ...(authToken
+            ? {
+                Authorization: `Bearer ${authToken}`,
+            }
+            : {}),
+    };
+}
+
 async function handle<T>(
     res: Response,
 ): Promise<T> {
@@ -154,12 +170,25 @@ export async function apiPost<T>(
                 token,
                 body !== undefined,
             ),
-
             body:
                 body !== undefined
                     ? JSON.stringify(body)
                     : undefined,
+            cache: "no-store",
+        }),
+    );
+}
 
+export async function apiPostForm<T>(
+    path: string,
+    formData: FormData,
+    token?: string,
+): Promise<T> {
+    return handle<T>(
+        await fetch(buildUrl(path), {
+            method: "POST",
+            headers: buildFormHeaders(token),
+            body: formData,
             cache: "no-store",
         }),
     );
@@ -174,9 +203,7 @@ export async function apiPut<T>(
         await fetch(buildUrl(path), {
             method: "PUT",
             headers: buildHeaders(token, true),
-
             body: JSON.stringify(body),
-
             cache: "no-store",
         }),
     );
@@ -190,17 +217,14 @@ export async function apiPatch<T>(
     return handle<T>(
         await fetch(buildUrl(path), {
             method: "PATCH",
-
             headers: buildHeaders(
                 token,
                 body !== undefined,
             ),
-
             body:
                 body !== undefined
                     ? JSON.stringify(body)
                     : undefined,
-
             cache: "no-store",
         }),
     );
@@ -214,17 +238,14 @@ export async function apiDelete<T>(
     return handle<T>(
         await fetch(buildUrl(path), {
             method: "DELETE",
-
             headers: buildHeaders(
                 token,
                 body !== undefined,
             ),
-
             body:
                 body !== undefined
                     ? JSON.stringify(body)
                     : undefined,
-
             cache: "no-store",
         }),
     );

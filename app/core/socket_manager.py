@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import os
+from typing import Any
+
 import socketio
+
+ALLOWED_SOCKET_ORIGINS = os.getenv(
+    "SOCKET_CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+).split(",")
+
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    cors_allowed_origins=ALLOWED_SOCKET_ORIGINS,
 )
 
 socket_app = socketio.ASGIApp(
@@ -16,11 +22,23 @@ socket_app = socketio.ASGIApp(
 )
 
 
+def _room_user(user_id: int | str) -> str:
+    return f"user:{user_id}"
+
+
+def _room_school(school_id: int | str) -> str:
+    return f"school:{school_id}"
+
+
+def _room_conversation(conversation_id: int | str) -> str:
+    return f"conversation:{conversation_id}"
+
+
 @sio.event
 async def connect(
     sid: str,
-    environ,
-    auth,
+    environ: dict[str, Any],
+    auth: dict[str, Any] | None,
 ) -> None:
     user_id = None
     school_id = None
@@ -32,13 +50,13 @@ async def connect(
     if user_id is not None:
         await sio.enter_room(
             sid,
-            f"user:{user_id}",
+            _room_user(user_id),
         )
 
     if school_id is not None:
         await sio.enter_room(
             sid,
-            f"school:{school_id}",
+            _room_school(school_id),
         )
 
     print(
@@ -59,7 +77,7 @@ async def disconnect(sid: str) -> None:
 @sio.event
 async def join_conversation(
     sid: str,
-    data: dict,
+    data: dict[str, Any],
 ) -> None:
     conversation_id = data.get("conversation_id")
 
@@ -68,7 +86,7 @@ async def join_conversation(
 
     await sio.enter_room(
         sid,
-        f"conversation:{conversation_id}",
+        _room_conversation(conversation_id),
     )
 
     print(
@@ -81,7 +99,7 @@ async def join_conversation(
 @sio.event
 async def leave_conversation(
     sid: str,
-    data: dict,
+    data: dict[str, Any],
 ) -> None:
     conversation_id = data.get("conversation_id")
 
@@ -90,7 +108,7 @@ async def leave_conversation(
 
     await sio.leave_room(
         sid,
-        f"conversation:{conversation_id}",
+        _room_conversation(conversation_id),
     )
 
     print(
@@ -103,7 +121,7 @@ async def leave_conversation(
 @sio.event
 async def send_message(
     sid: str,
-    data: dict,
+    data: dict[str, Any],
 ) -> None:
     conversation_id = data.get("conversation_id")
 
@@ -113,7 +131,16 @@ async def send_message(
     await sio.emit(
         "message:new",
         data,
-        room=f"conversation:{conversation_id}",
+        room=_room_conversation(conversation_id),
+    )
+
+    await sio.emit(
+        "messages:refresh",
+        {
+            "conversation_id": conversation_id,
+            "message_id": data.get("id"),
+        },
+        room=_room_conversation(conversation_id),
     )
 
     print(
@@ -129,7 +156,7 @@ async def send_message(
 @sio.event
 async def typing_start(
     sid: str,
-    data: dict,
+    data: dict[str, Any],
 ) -> None:
     conversation_id = data.get("conversation_id")
     user_id = data.get("user_id")
@@ -145,7 +172,7 @@ async def typing_start(
             "user_id": user_id,
             "full_name": full_name,
         },
-        room=f"conversation:{conversation_id}",
+        room=_room_conversation(conversation_id),
         skip_sid=sid,
     )
 
@@ -153,7 +180,7 @@ async def typing_start(
 @sio.event
 async def typing_stop(
     sid: str,
-    data: dict,
+    data: dict[str, Any],
 ) -> None:
     conversation_id = data.get("conversation_id")
     user_id = data.get("user_id")
@@ -169,7 +196,7 @@ async def typing_stop(
             "user_id": user_id,
             "full_name": full_name,
         },
-        room=f"conversation:{conversation_id}",
+        room=_room_conversation(conversation_id),
         skip_sid=sid,
     )
 
@@ -177,34 +204,109 @@ async def typing_stop(
 async def emit_conversation_message(
     *,
     conversation_id: int,
-    payload: dict,
+    payload: dict[str, Any],
 ) -> None:
     await sio.emit(
         "message:new",
         payload,
-        room=f"conversation:{conversation_id}",
+        room=_room_conversation(conversation_id),
+    )
+
+    await sio.emit(
+        "messages:refresh",
+        {
+            "conversation_id": conversation_id,
+            "message_id": payload.get("id"),
+        },
+        room=_room_conversation(conversation_id),
+    )
+
+
+async def emit_message_delivered(
+    *,
+    conversation_id: int,
+    payload: dict[str, Any],
+) -> None:
+    await sio.emit(
+        "message:delivered",
+        payload,
+        room=_room_conversation(conversation_id),
+    )
+
+    await sio.emit(
+        "messages:refresh",
+        {
+            "conversation_id": conversation_id,
+            "message_id": payload.get("message_id"),
+        },
+        room=_room_conversation(conversation_id),
+    )
+
+
+async def emit_message_read(
+    *,
+    conversation_id: int,
+    payload: dict[str, Any],
+) -> None:
+    await sio.emit(
+        "message:read",
+        payload,
+        room=_room_conversation(conversation_id),
+    )
+
+    await sio.emit(
+        "messages:refresh",
+        {
+            "conversation_id": conversation_id,
+            "message_id": payload.get("message_id"),
+        },
+        room=_room_conversation(conversation_id),
+    )
+
+
+async def emit_user_messages_refresh(
+    *,
+    user_id: int,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    await sio.emit(
+        "messages:refresh",
+        payload or {},
+        room=_room_user(user_id),
+    )
+
+
+async def emit_school_messages_refresh(
+    *,
+    school_id: int,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    await sio.emit(
+        "messages:refresh",
+        payload or {},
+        room=_room_school(school_id),
     )
 
 
 async def emit_user_notification(
     *,
     user_id: int,
-    payload: dict,
+    payload: dict[str, Any],
 ) -> None:
     await sio.emit(
         "notification:new",
         payload,
-        room=f"user:{user_id}",
+        room=_room_user(user_id),
     )
 
 
 async def emit_school_notification(
     *,
     school_id: int,
-    payload: dict,
+    payload: dict[str, Any],
 ) -> None:
     await sio.emit(
         "notification:new",
         payload,
-        room=f"school:{school_id}",
+        room=_room_school(school_id),
     )
