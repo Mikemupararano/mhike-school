@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import {
+    useCallback,
+    useEffect,
+    useState,
+} from "react";
 
 import BrandLogo from "@/components/layout/BrandLogo";
 
@@ -76,42 +80,44 @@ export default function Sidebar({
     collapsed = false,
     className = "",
 }: SidebarProps) {
-    const pathname =
-        usePathname();
+    const pathname = usePathname();
 
-    const { user } =
-        useAuth();
+    const { user } = useAuth();
 
     const [unreadCount, setUnreadCount] =
         useState(0);
 
-    async function loadUnreadCount() {
+    const loadUnreadCount = useCallback(
+        async () => {
+            if (!user) {
+                setUnreadCount(0);
+                return;
+            }
+
+            try {
+                const result =
+                    await getUnreadMessageCount();
+
+                setUnreadCount(
+                    result.unread_count ?? 0,
+                );
+            } catch (error) {
+                console.error(
+                    "Failed to load unread count",
+                    error,
+                );
+            }
+        },
+        [user],
+    );
+
+    useEffect(() => {
         if (!user) {
             setUnreadCount(0);
             return;
         }
 
-        try {
-            const result =
-                await getUnreadMessageCount();
-
-            setUnreadCount(
-                result.unread_count ?? 0,
-            );
-        } catch (error) {
-            console.error(
-                "Failed to load unread count",
-                error,
-            );
-        }
-    }
-
-    useEffect(() => {
-        if (!user) {
-            return;
-        }
-
-        loadUnreadCount();
+        void loadUnreadCount();
 
         const socket = getSocket({
             user_id: user.id,
@@ -120,7 +126,7 @@ export default function Sidebar({
         });
 
         const refresh = () => {
-            loadUnreadCount();
+            void loadUnreadCount();
         };
 
         socket.on(
@@ -164,7 +170,10 @@ export default function Sidebar({
                 refresh,
             );
         };
-    }, [user]);
+    }, [
+        user,
+        loadUnreadCount,
+    ]);
 
     const resolvedRole: SidebarRole =
         role ??
