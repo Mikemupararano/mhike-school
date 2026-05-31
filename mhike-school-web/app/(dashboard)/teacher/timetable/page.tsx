@@ -1,7 +1,6 @@
 "use client";
 
 import {
-    useCallback,
     useEffect,
     useMemo,
     useState,
@@ -15,7 +14,7 @@ import TimetableLessonCard, {
 } from "@/components/timetable/TimetableLessonCard";
 import TimetableState from "@/components/timetable/TimetableState";
 
-import { apiGet } from "@/lib/api";
+import { getMyTeacherTimetable } from "@/lib/timetables";
 
 type TimetableEntry = TimetableLesson & {
     teacher_id: number | null;
@@ -34,18 +33,14 @@ export default function TeacherTimetablePage() {
     const [selectedDay, setSelectedDay] =
         useState<TimetableDay>("monday");
 
-    const fetchTimetable = useCallback(
-        async () => {
+    useEffect(() => {
+        async function fetchTimetable() {
             try {
                 setLoading(true);
                 setError(null);
 
                 const data =
-                    await apiGet<
-                        TimetableEntry[]
-                    >(
-                        "/timetables/teacher/me",
-                    );
+                    await getMyTeacherTimetable();
 
                 setEntries(data);
             } catch (err) {
@@ -59,13 +54,10 @@ export default function TeacherTimetablePage() {
             } finally {
                 setLoading(false);
             }
-        },
-        [],
-    );
+        }
 
-    useEffect(() => {
         void fetchTimetable();
-    }, [fetchTimetable]);
+    }, []);
 
     const filteredEntries =
         useMemo(() => {
@@ -98,48 +90,33 @@ export default function TeacherTimetablePage() {
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    View your weekly
-                    teaching schedule.
+                    View your weekly teaching schedule.
                 </p>
             </div>
 
             <TimetableDayTabs
                 selectedDay={selectedDay}
-                onSelectDay={
-                    setSelectedDay
-                }
+                onSelectDay={setSelectedDay}
             />
 
             <TimetableState
                 loading={loading}
                 error={error}
-                isEmpty={
-                    filteredEntries.length ===
-                    0
-                }
-                selectedDay={
-                    selectedDay
-                }
+                isEmpty={filteredEntries.length === 0}
+                selectedDay={selectedDay}
             />
 
             {!loading &&
                 !error &&
-                filteredEntries.length >
-                0 && (
+                filteredEntries.length > 0 && (
                     <section className="grid gap-4">
-                        {filteredEntries.map(
-                            (entry) => (
-                                <TimetableLessonCard
-                                    key={
-                                        entry.id
-                                    }
-                                    entry={
-                                        entry
-                                    }
-                                    accent="blue"
-                                />
-                            ),
-                        )}
+                        {filteredEntries.map((entry) => (
+                            <TimetableLessonCard
+                                key={entry.id}
+                                entry={entry}
+                                accent="blue"
+                            />
+                        ))}
                     </section>
                 )}
         </main>

@@ -14,7 +14,7 @@ import TimetableLessonCard, {
 } from "@/components/timetable/TimetableLessonCard";
 import TimetableState from "@/components/timetable/TimetableState";
 
-import { apiGet } from "@/lib/api";
+import { getMyStudentTimetable } from "@/lib/timetables";
 
 type TimetableEntry = TimetableLesson & {
     class_group_id: number | null;
@@ -40,11 +40,7 @@ export default function StudentTimetablePage() {
                 setError(null);
 
                 const data =
-                    await apiGet<
-                        TimetableEntry[]
-                    >(
-                        "/timetables/student/me",
-                    );
+                    await getMyStudentTimetable();
 
                 setEntries(data);
             } catch (err) {
@@ -92,49 +88,33 @@ export default function StudentTimetablePage() {
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    View your lessons
-                    for the school
-                    week.
+                    View your lessons for the school week.
                 </p>
             </div>
 
             <TimetableDayTabs
                 selectedDay={selectedDay}
-                onSelectDay={
-                    setSelectedDay
-                }
+                onSelectDay={setSelectedDay}
             />
 
             <TimetableState
                 loading={isLoading}
                 error={error}
-                isEmpty={
-                    filteredEntries.length ===
-                    0
-                }
-                selectedDay={
-                    selectedDay
-                }
+                isEmpty={filteredEntries.length === 0}
+                selectedDay={selectedDay}
             />
 
             {!isLoading &&
                 !error &&
-                filteredEntries.length >
-                0 && (
+                filteredEntries.length > 0 && (
                     <section className="grid gap-4">
-                        {filteredEntries.map(
-                            (entry) => (
-                                <TimetableLessonCard
-                                    key={
-                                        entry.id
-                                    }
-                                    entry={
-                                        entry
-                                    }
-                                    accent="blue"
-                                />
-                            ),
-                        )}
+                        {filteredEntries.map((entry) => (
+                            <TimetableLessonCard
+                                key={entry.id}
+                                entry={entry}
+                                accent="blue"
+                            />
+                        ))}
                     </section>
                 )}
         </main>
