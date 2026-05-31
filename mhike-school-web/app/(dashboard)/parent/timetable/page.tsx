@@ -6,6 +6,8 @@ import {
     useState,
 } from "react";
 
+import ChildSelector from "@/components/parent/ChildSelector";
+
 import TimetableDayTabs, {
     type TimetableDay,
 } from "@/components/timetable/TimetableDayTabs";
@@ -14,6 +16,8 @@ import TimetableLessonCard, {
 } from "@/components/timetable/TimetableLessonCard";
 import TimetableState from "@/components/timetable/TimetableState";
 
+import { useParentChildren } from "@/hooks/useParentChildren";
+
 import { getChildTimetable } from "@/lib/timetables";
 
 type TimetableEntry = TimetableLesson & {
@@ -21,44 +25,40 @@ type TimetableEntry = TimetableLesson & {
 };
 
 export default function ParentTimetablePage() {
+    const {
+        profiles,
+        selectedStudentId,
+        setSelectedStudentId,
+        loading: childrenLoading,
+        error: childrenError,
+    } = useParentChildren();
+
     const [entries, setEntries] =
         useState<TimetableEntry[]>([]);
 
     const [selectedDay, setSelectedDay] =
         useState<TimetableDay>("monday");
 
-    /**
-     * TODO:
-     * Replace with real child selection once
-     * parent/student linking UI is implemented.
-     */
-    const [selectedChildId] =
-        useState(1);
-
-    /**
-     * TODO:
-     * Replace with real class group selection once
-     * parent child-selector data is wired in.
-     */
-    const [selectedClassGroupId] =
-        useState(1);
-
     const [loading, setLoading] =
-        useState(true);
+        useState(false);
 
     const [error, setError] =
         useState<string | null>(null);
 
     useEffect(() => {
         async function loadTimetable() {
+            if (!selectedStudentId) {
+                setEntries([]);
+                return;
+            }
+
             try {
                 setLoading(true);
                 setError(null);
 
                 const data =
                     await getChildTimetable(
-                        selectedChildId,
-                        selectedClassGroupId,
+                        selectedStudentId,
                     );
 
                 setEntries(data);
@@ -74,18 +74,13 @@ export default function ParentTimetablePage() {
         }
 
         void loadTimetable();
-    }, [
-        selectedChildId,
-        selectedClassGroupId,
-    ]);
+    }, [selectedStudentId]);
 
     const filteredEntries =
         useMemo(() => {
             return entries
                 .filter(
-                    (
-                        entry,
-                    ) =>
+                    (entry) =>
                         entry.day_of_week ===
                         selectedDay,
                 )
@@ -102,6 +97,12 @@ export default function ParentTimetablePage() {
             selectedDay,
         ]);
 
+    const isLoading =
+        childrenLoading || loading;
+
+    const pageError =
+        childrenError || error;
+
     return (
         <main className="space-y-6 p-8">
             <div>
@@ -114,20 +115,40 @@ export default function ParentTimetablePage() {
                 </p>
             </div>
 
+            {!childrenLoading &&
+                !childrenError &&
+                profiles.length > 0 && (
+                    <ChildSelector
+                        profiles={profiles}
+                        selectedStudentId={
+                            selectedStudentId
+                        }
+                        onSelectStudent={
+                            setSelectedStudentId
+                        }
+                        title="Linked Students"
+                        description="Select a child to view their timetable."
+                    />
+                )}
+
             <TimetableDayTabs
                 selectedDay={selectedDay}
                 onSelectDay={setSelectedDay}
             />
 
             <TimetableState
-                loading={loading}
-                error={error}
-                isEmpty={filteredEntries.length === 0}
+                loading={isLoading}
+                error={pageError}
+                isEmpty={
+                    !selectedStudentId ||
+                    filteredEntries.length === 0
+                }
                 selectedDay={selectedDay}
             />
 
-            {!loading &&
-                !error &&
+            {!isLoading &&
+                !pageError &&
+                selectedStudentId &&
                 filteredEntries.length > 0 && (
                     <section className="grid gap-4">
                         {filteredEntries.map((entry) => (
