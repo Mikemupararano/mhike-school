@@ -46,7 +46,10 @@ def error_response(
     if details is not None:
         payload["error"]["details"] = _json_safe(details)
 
-    return JSONResponse(status_code=status_code, content=payload)
+    return JSONResponse(
+        status_code=status_code,
+        content=payload,
+    )
 
 
 async def http_exception_handler(
@@ -65,7 +68,7 @@ async def validation_exception_handler(
     exc: RequestValidationError,
 ) -> JSONResponse:
     return error_response(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         message="Validation failed.",
         error_code="VALIDATION_ERROR",
         details=exc.errors(),
@@ -77,7 +80,7 @@ async def pydantic_validation_exception_handler(
     exc: ValidationError,
 ) -> JSONResponse:
     return error_response(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         message="Validation failed.",
         error_code="VALIDATION_ERROR",
         details=exc.errors(),
@@ -107,8 +110,27 @@ async def unhandled_exception_handler(
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    app.add_exception_handler(HTTPException, http_exception_handler)
-    app.add_exception_handler(RequestValidationError, validation_exception_handler)
-    app.add_exception_handler(ValidationError, pydantic_validation_exception_handler)
-    app.add_exception_handler(IntegrityError, integrity_error_handler)
-    app.add_exception_handler(Exception, unhandled_exception_handler)
+    app.add_exception_handler(
+        HTTPException,
+        http_exception_handler,
+    )
+
+    app.add_exception_handler(
+        RequestValidationError,
+        validation_exception_handler,
+    )
+
+    app.add_exception_handler(
+        ValidationError,
+        pydantic_validation_exception_handler,
+    )
+
+    app.add_exception_handler(
+        IntegrityError,
+        integrity_error_handler,
+    )
+
+    app.add_exception_handler(
+        Exception,
+        unhandled_exception_handler,
+    )
