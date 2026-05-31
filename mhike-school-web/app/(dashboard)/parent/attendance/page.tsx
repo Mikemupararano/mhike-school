@@ -1,8 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo } from "react";
-
 import AttendanceHistoryTable from "@/components/parent/AttendanceHistoryTable";
 import AttendanceSummaryCards from "@/components/parent/AttendanceSummaryCards";
 import ChildSelector from "@/components/parent/ChildSelector";
@@ -10,7 +7,7 @@ import ParentPageState from "@/components/parent/ParentPageState";
 
 import { useParentChildren } from "@/hooks/useParentChildren";
 
-export default function ParentDashboardPage() {
+export default function ParentAttendancePage() {
     const {
         profiles,
         selectedStudentId,
@@ -20,20 +17,16 @@ export default function ParentDashboardPage() {
         error,
     } = useParentChildren();
 
-    const recentHistory = useMemo(() => {
-        return selectedProfile?.history.slice(0, 10) ?? [];
-    }, [selectedProfile]);
-
     return (
         <main className="space-y-6 p-8">
             <div>
                 <h1 className="text-3xl font-extrabold text-slate-950">
-                    Parent Dashboard
+                    Child Attendance
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    View your child&apos;s attendance summary, recent records,
-                    and attendance health.
+                    Review attendance records, attendance percentages, and
+                    absence history for your child.
                 </p>
             </div>
 
@@ -41,7 +34,7 @@ export default function ParentDashboardPage() {
                 loading={loading}
                 error={error}
                 isEmpty={profiles.length === 0 || !selectedProfile}
-                loadingMessage="Loading parent dashboard..."
+                loadingMessage="Loading attendance data..."
             >
                 {selectedProfile && (
                     <>
@@ -50,33 +43,27 @@ export default function ParentDashboardPage() {
                             selectedStudentId={selectedStudentId}
                             onSelectStudent={setSelectedStudentId}
                             title="Linked Students"
-                            description="Select a child to view their attendance profile."
+                            description="Select a child to view their attendance history."
                         />
 
                         <AttendanceSummaryCards profile={selectedProfile} />
 
                         <section className="rounded-2xl border bg-white p-6">
-                            <div className="flex items-center justify-between gap-4">
-                                <div>
-                                    <h2 className="text-xl font-bold text-slate-950">
-                                        Recent Attendance
-                                    </h2>
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-950">
+                                    Full Attendance History
+                                </h2>
 
-                                    <p className="mt-1 text-sm text-slate-500">
-                                        Latest attendance records for the
-                                        selected student.
-                                    </p>
-                                </div>
-
-                                <Link
-                                    href={`/parent/attendance/students/${selectedProfile.student_id}`}
-                                    className="shrink-0 font-semibold text-blue-600 hover:text-blue-700"
-                                >
-                                    View full history
-                                </Link>
+                                <p className="mt-1 text-sm text-slate-500">
+                                    Complete attendance record for the selected
+                                    student.
+                                </p>
                             </div>
 
-                            <AttendanceHistoryTable records={recentHistory} />
+                            <AttendanceHistoryTable
+                                records={selectedProfile.history}
+                                emptyMessage="No attendance history found for this student."
+                            />
                         </section>
                     </>
                 )}

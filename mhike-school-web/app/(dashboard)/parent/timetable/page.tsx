@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import ChildSelector from "@/components/parent/ChildSelector";
+import ParentPageState from "@/components/parent/ParentPageState";
 
 import TimetableDayTabs, {
     type TimetableDay,
@@ -115,51 +116,50 @@ export default function ParentTimetablePage() {
                 </p>
             </div>
 
-            {!childrenLoading &&
-                !childrenError &&
-                profiles.length > 0 && (
-                    <ChildSelector
-                        profiles={profiles}
-                        selectedStudentId={
-                            selectedStudentId
-                        }
-                        onSelectStudent={
-                            setSelectedStudentId
-                        }
-                        title="Linked Students"
-                        description="Select a child to view their timetable."
-                    />
-                )}
+            <ParentPageState
+                loading={childrenLoading}
+                error={childrenError}
+                isEmpty={profiles.length === 0}
+                loadingMessage="Loading linked students..."
+            >
+                <ChildSelector
+                    profiles={profiles}
+                    selectedStudentId={selectedStudentId}
+                    onSelectStudent={setSelectedStudentId}
+                    title="Linked Students"
+                    description="Select a child to view their timetable."
+                />
 
-            <TimetableDayTabs
-                selectedDay={selectedDay}
-                onSelectDay={setSelectedDay}
-            />
+                <TimetableDayTabs
+                    selectedDay={selectedDay}
+                    onSelectDay={setSelectedDay}
+                />
 
-            <TimetableState
-                loading={isLoading}
-                error={pageError}
-                isEmpty={
-                    !selectedStudentId ||
-                    filteredEntries.length === 0
-                }
-                selectedDay={selectedDay}
-            />
+                <TimetableState
+                    loading={isLoading}
+                    error={pageError}
+                    isEmpty={
+                        !selectedStudentId ||
+                        filteredEntries.length === 0
+                    }
+                    selectedDay={selectedDay}
+                />
 
-            {!isLoading &&
-                !pageError &&
-                selectedStudentId &&
-                filteredEntries.length > 0 && (
-                    <section className="grid gap-4">
-                        {filteredEntries.map((entry) => (
-                            <TimetableLessonCard
-                                key={entry.id}
-                                entry={entry}
-                                accent="indigo"
-                            />
-                        ))}
-                    </section>
-                )}
+                {!isLoading &&
+                    !pageError &&
+                    selectedStudentId &&
+                    filteredEntries.length > 0 && (
+                        <section className="grid gap-4">
+                            {filteredEntries.map((entry) => (
+                                <TimetableLessonCard
+                                    key={entry.id}
+                                    entry={entry}
+                                    accent="indigo"
+                                />
+                            ))}
+                        </section>
+                    )}
+            </ParentPageState>
         </main>
     );
 }
