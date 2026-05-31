@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,7 +60,10 @@ class AttendanceRepository:
         submitted_by_id: int,
     ) -> AttendanceSession:
         session.is_submitted = True
-        session.submitted_at = datetime.utcnow()
+
+        # Python 3.14+ compatible timezone-aware UTC timestamp
+        session.submitted_at = datetime.now(UTC)
+
         session.submitted_by_id = submitted_by_id
 
         self.db.add(session)
@@ -74,7 +77,9 @@ class AttendanceRepository:
         session_id: int,
     ) -> AttendanceSession | None:
         result = await self.db.execute(
-            select(AttendanceSession).where(AttendanceSession.id == session_id)
+            select(AttendanceSession).where(
+                AttendanceSession.id == session_id,
+            )
         )
 
         return result.scalar_one_or_none()
@@ -89,30 +94,40 @@ class AttendanceRepository:
         )
 
         if filters.school_id is not None:
-            query = query.where(AttendanceSession.school_id == filters.school_id)
+            query = query.where(
+                AttendanceSession.school_id == filters.school_id,
+            )
 
         if filters.class_group_id is not None:
             query = query.where(
-                AttendanceSession.class_group_id == filters.class_group_id
+                AttendanceSession.class_group_id == filters.class_group_id,
             )
 
         if filters.session_date is not None:
-            query = query.where(AttendanceSession.session_date == filters.session_date)
+            query = query.where(
+                AttendanceSession.session_date == filters.session_date,
+            )
 
         if filters.session_type is not None:
-            query = query.where(AttendanceSession.session_type == filters.session_type)
+            query = query.where(
+                AttendanceSession.session_type == filters.session_type,
+            )
 
         if filters.timetable_entry_id is not None:
             query = query.where(
-                AttendanceSession.timetable_entry_id == filters.timetable_entry_id
+                AttendanceSession.timetable_entry_id == filters.timetable_entry_id,
             )
 
         if filters.timetable_period_id is not None:
             query = query.where(
-                AttendanceSession.timetable_period_id == filters.timetable_period_id
+                AttendanceSession.timetable_period_id == filters.timetable_period_id,
             )
 
-        query = query.offset(filters.offset).limit(filters.limit)
+        query = query.offset(
+            filters.offset,
+        ).limit(
+            filters.limit,
+        )
 
         result = await self.db.execute(query)
 
@@ -135,7 +150,9 @@ class AttendanceRepository:
         record_id: int,
     ) -> AttendanceRecord | None:
         result = await self.db.execute(
-            select(AttendanceRecord).where(AttendanceRecord.id == record_id)
+            select(AttendanceRecord).where(
+                AttendanceRecord.id == record_id,
+            )
         )
 
         return result.scalar_one_or_none()
@@ -164,40 +181,56 @@ class AttendanceRepository:
                 AttendanceSession,
                 AttendanceRecord.attendance_session_id == AttendanceSession.id,
             )
-            .order_by(AttendanceRecord.id.desc())
+            .order_by(
+                AttendanceRecord.id.desc(),
+            )
         )
 
         if filters.school_id is not None:
-            query = query.where(AttendanceSession.school_id == filters.school_id)
+            query = query.where(
+                AttendanceSession.school_id == filters.school_id,
+            )
 
         if filters.class_group_id is not None:
             query = query.where(
-                AttendanceSession.class_group_id == filters.class_group_id
+                AttendanceSession.class_group_id == filters.class_group_id,
             )
 
         if filters.student_id is not None:
-            query = query.where(AttendanceRecord.student_id == filters.student_id)
+            query = query.where(
+                AttendanceRecord.student_id == filters.student_id,
+            )
 
         if filters.session_date is not None:
-            query = query.where(AttendanceSession.session_date == filters.session_date)
+            query = query.where(
+                AttendanceSession.session_date == filters.session_date,
+            )
 
         if filters.session_type is not None:
-            query = query.where(AttendanceSession.session_type == filters.session_type)
+            query = query.where(
+                AttendanceSession.session_type == filters.session_type,
+            )
 
         if filters.status is not None:
-            query = query.where(AttendanceRecord.status == filters.status)
+            query = query.where(
+                AttendanceRecord.status == filters.status,
+            )
 
         if filters.timetable_entry_id is not None:
             query = query.where(
-                AttendanceSession.timetable_entry_id == filters.timetable_entry_id
+                AttendanceSession.timetable_entry_id == filters.timetable_entry_id,
             )
 
         if filters.timetable_period_id is not None:
             query = query.where(
-                AttendanceSession.timetable_period_id == filters.timetable_period_id
+                AttendanceSession.timetable_period_id == filters.timetable_period_id,
             )
 
-        query = query.offset(filters.offset).limit(filters.limit)
+        query = query.offset(
+            filters.offset,
+        ).limit(
+            filters.limit,
+        )
 
         result = await self.db.execute(query)
 
@@ -208,7 +241,9 @@ class AttendanceRepository:
         record: AttendanceRecord,
         data: AttendanceRecordUpdate,
     ) -> AttendanceRecord:
-        update_data = data.model_dump(exclude_unset=True)
+        update_data = data.model_dump(
+            exclude_unset=True,
+        )
 
         for field, value in update_data.items():
             setattr(record, field, value)
@@ -223,30 +258,48 @@ class AttendanceRepository:
         self,
         filters: AbsenceRequestFilter,
     ) -> list[AbsenceRequest]:
-        query = select(AbsenceRequest).order_by(
+        query = select(
+            AbsenceRequest,
+        ).order_by(
             AbsenceRequest.created_at.desc(),
             AbsenceRequest.id.desc(),
         )
 
         if filters.school_id is not None:
-            query = query.where(AbsenceRequest.school_id == filters.school_id)
+            query = query.where(
+                AbsenceRequest.school_id == filters.school_id,
+            )
 
         if filters.student_id is not None:
-            query = query.where(AbsenceRequest.student_id == filters.student_id)
+            query = query.where(
+                AbsenceRequest.student_id == filters.student_id,
+            )
 
         if filters.absence_type is not None:
-            query = query.where(AbsenceRequest.absence_type == filters.absence_type)
+            query = query.where(
+                AbsenceRequest.absence_type == filters.absence_type,
+            )
 
         if filters.status is not None:
-            query = query.where(AbsenceRequest.status == filters.status)
+            query = query.where(
+                AbsenceRequest.status == filters.status,
+            )
 
         if filters.start_date_from is not None:
-            query = query.where(AbsenceRequest.start_date >= filters.start_date_from)
+            query = query.where(
+                AbsenceRequest.start_date >= filters.start_date_from,
+            )
 
         if filters.start_date_to is not None:
-            query = query.where(AbsenceRequest.start_date <= filters.start_date_to)
+            query = query.where(
+                AbsenceRequest.start_date <= filters.start_date_to,
+            )
 
-        query = query.offset(filters.offset).limit(filters.limit)
+        query = query.offset(
+            filters.offset,
+        ).limit(
+            filters.limit,
+        )
 
         result = await self.db.execute(query)
 

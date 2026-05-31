@@ -1,12 +1,23 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class AttendanceStatus(StrEnum):
@@ -27,16 +38,26 @@ class AttendanceRecord(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
     attendance_session_id: Mapped[int] = mapped_column(
-        ForeignKey("attendance_sessions.id", ondelete="CASCADE"),
+        ForeignKey(
+            "attendance_sessions.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     student_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
@@ -52,7 +73,10 @@ class AttendanceRecord(Base):
     )
 
     marked_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
@@ -64,14 +88,14 @@ class AttendanceRecord(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=utc_now,
         nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 

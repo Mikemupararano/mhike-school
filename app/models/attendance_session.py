@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -15,6 +15,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class AttendanceSessionType(StrEnum):
@@ -35,7 +39,11 @@ class AttendanceSession(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
     school_id: Mapped[int] = mapped_column(
         ForeignKey("schools.id", ondelete="CASCADE"),
@@ -102,14 +110,14 @@ class AttendanceSession(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=utc_now,
         nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -119,6 +127,15 @@ class AttendanceSession(Base):
         cascade="all, delete-orphan",
     )
 
-    timetable_entry = relationship("TimetableEntry")
-    timetable_period = relationship("TimetablePeriod")
-    submitted_by = relationship("User", foreign_keys=[submitted_by_id])
+    timetable_entry = relationship(
+        "TimetableEntry",
+    )
+
+    timetable_period = relationship(
+        "TimetablePeriod",
+    )
+
+    submitted_by = relationship(
+        "User",
+        foreign_keys=[submitted_by_id],
+    )

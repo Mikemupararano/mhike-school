@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum as SqlEnum,
+    ForeignKey,
+    Integer,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class TimetableAssignmentType(str, Enum):
@@ -66,17 +76,25 @@ class TimetableAssignment(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=utc_now,
         nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
-    timetable = relationship("Timetable")
-    user = relationship("User")
-    class_group = relationship("ClassGroup")
+    timetable = relationship(
+        "Timetable",
+    )
+
+    user = relationship(
+        "User",
+    )
+
+    class_group = relationship(
+        "ClassGroup",
+    )
