@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -9,16 +9,16 @@ import BrandLogo from "@/components/layout/BrandLogo";
 import NotificationDropdown from "@/components/notifications/NotificationDropdown";
 
 import { clearToken } from "@/lib/api";
+import {
+    brandColors,
+    brandShadows,
+} from "@/lib/brand";
 import { getUnreadMessageCount } from "@/lib/messages";
 import {
     disconnectSocket,
     getSocket,
     SocketEvents,
 } from "@/lib/socket";
-import {
-    brandColors,
-    brandShadows,
-} from "@/lib/brand";
 
 type NavbarProps = {
     userId?: number | null;
@@ -46,33 +46,37 @@ export default function Navbar({
     const [unreadCount, setUnreadCount] =
         useState(0);
 
-    async function loadUnreadCount() {
+    const loadUnreadCount = useCallback(
+        async () => {
+            if (!userId) {
+                setUnreadCount(0);
+                return;
+            }
+
+            try {
+                const response =
+                    await getUnreadMessageCount();
+
+                setUnreadCount(
+                    response.unread_count ?? 0,
+                );
+            } catch (error) {
+                console.error(
+                    "Failed to load unread message count",
+                    error,
+                );
+            }
+        },
+        [userId],
+    );
+
+    useEffect(() => {
         if (!userId) {
             setUnreadCount(0);
             return;
         }
 
-        try {
-            const response =
-                await getUnreadMessageCount();
-
-            setUnreadCount(
-                response.unread_count ?? 0,
-            );
-        } catch (error) {
-            console.error(
-                "Failed to load unread message count",
-                error,
-            );
-        }
-    }
-
-    useEffect(() => {
-        if (!userId) {
-            return;
-        }
-
-        loadUnreadCount();
+        void loadUnreadCount();
 
         const socket = getSocket({
             user_id: userId,
@@ -80,7 +84,7 @@ export default function Navbar({
         });
 
         const handleRefresh = () => {
-            loadUnreadCount();
+            void loadUnreadCount();
         };
 
         socket.on(
@@ -124,7 +128,11 @@ export default function Navbar({
                 handleRefresh,
             );
         };
-    }, [userId, schoolId]);
+    }, [
+        userId,
+        schoolId,
+        loadUnreadCount,
+    ]);
 
     function handleLogout() {
         try {
@@ -237,43 +245,39 @@ export default function Navbar({
                             Messages
                         </span>
 
-                        {unreadCount >
-                            0 && (
-                                <span
-                                    style={{
-                                        minWidth: 22,
-                                        height: 22,
-                                        borderRadius:
-                                            999,
-                                        background:
-                                            "#DC2626",
-                                        color:
-                                            "#FFFFFF",
-                                        fontSize: 11,
-                                        fontWeight: 800,
-                                        display:
-                                            "flex",
-                                        alignItems:
-                                            "center",
-                                        justifyContent:
-                                            "center",
-                                        padding:
-                                            "0 6px",
-                                    }}
-                                >
-                                    {unreadCount >
-                                        99
-                                        ? "99+"
-                                        : unreadCount}
-                                </span>
-                            )}
+                        {unreadCount > 0 && (
+                            <span
+                                style={{
+                                    minWidth: 22,
+                                    height: 22,
+                                    borderRadius:
+                                        999,
+                                    background:
+                                        "#DC2626",
+                                    color:
+                                        "#FFFFFF",
+                                    fontSize: 11,
+                                    fontWeight: 800,
+                                    display:
+                                        "flex",
+                                    alignItems:
+                                        "center",
+                                    justifyContent:
+                                        "center",
+                                    padding:
+                                        "0 6px",
+                                }}
+                            >
+                                {unreadCount > 99
+                                    ? "99+"
+                                    : unreadCount}
+                            </span>
+                        )}
                     </Link>
 
                     <NotificationDropdown
                         userId={userId}
-                        schoolId={
-                            schoolId
-                        }
+                        schoolId={schoolId}
                     />
 
                     <div
