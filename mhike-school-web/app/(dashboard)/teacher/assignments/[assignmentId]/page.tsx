@@ -2,10 +2,14 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import {
+    useCallback,
+    useEffect,
+    useState,
+} from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
-import { UserRole } from "@/types/user";
+
 import {
     getAssignment,
     gradeSubmission,
@@ -13,6 +17,8 @@ import {
     type AssignmentOut,
     type AssignmentSubmissionOut,
 } from "@/lib/assignmentApi";
+
+import { UserRole } from "@/types/user";
 
 export default function TeacherAssignmentDetailPage() {
     return (
@@ -32,13 +38,22 @@ function TeacherAssignmentDetailContent() {
     const params = useParams<{ assignmentId: string }>();
     const assignmentId = Number(params.assignmentId);
 
-    const [assignment, setAssignment] = useState<AssignmentOut | null>(null);
-    const [submissions, setSubmissions] = useState<AssignmentSubmissionOut[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [busyId, setBusyId] = useState<number | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [assignment, setAssignment] =
+        useState<AssignmentOut | null>(null);
 
-    async function loadData() {
+    const [submissions, setSubmissions] =
+        useState<AssignmentSubmissionOut[]>([]);
+
+    const [isLoading, setIsLoading] =
+        useState(true);
+
+    const [busyId, setBusyId] =
+        useState<number | null>(null);
+
+    const [error, setError] =
+        useState<string | null>(null);
+
+    const loadData = useCallback(async () => {
         if (!assignmentId || Number.isNaN(assignmentId)) {
             setError("Invalid assignment ID.");
             setIsLoading(false);
@@ -49,69 +64,83 @@ function TeacherAssignmentDetailContent() {
             setError(null);
             setIsLoading(true);
 
-            const [assignmentData, submissionsData] = await Promise.all([
-                getAssignment(assignmentId),
-                listAssignmentSubmissions(assignmentId),
-            ]);
+            const [assignmentData, submissionsData] =
+                await Promise.all([
+                    getAssignment(assignmentId),
+                    listAssignmentSubmissions(assignmentId),
+                ]);
 
             setAssignment(assignmentData);
             setSubmissions(submissionsData);
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to load assignment.");
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load assignment.",
+            );
         } finally {
             setIsLoading(false);
         }
-    }
+    }, [assignmentId]);
 
     useEffect(() => {
         void loadData();
-    }, [assignmentId]);
+    }, [loadData]);
 
-    async function handleGrade(submission: AssignmentSubmissionOut) {
-        if (!assignment) return;
+    const handleGrade = useCallback(
+        async (submission: AssignmentSubmissionOut) => {
+            if (!assignment) return;
 
-        const scoreInput = window.prompt(
-            `Enter score 0-${assignment.max_score}`,
-            String(submission.score ?? 0),
-        );
+            const scoreInput = window.prompt(
+                `Enter score 0-${assignment.max_score}`,
+                String(submission.score ?? 0),
+            );
 
-        if (scoreInput === null) return;
+            if (scoreInput === null) return;
 
-        const parsedScore = Number(scoreInput);
+            const parsedScore = Number(scoreInput);
 
-        if (
-            Number.isNaN(parsedScore) ||
-            parsedScore < 0 ||
-            parsedScore > assignment.max_score
-        ) {
-            setError(`Score must be between 0 and ${assignment.max_score}.`);
-            return;
-        }
+            if (
+                Number.isNaN(parsedScore) ||
+                parsedScore < 0 ||
+                parsedScore > assignment.max_score
+            ) {
+                setError(
+                    `Score must be between 0 and ${assignment.max_score}.`,
+                );
+                return;
+            }
 
-        const feedbackInput = window.prompt(
-            "Enter feedback",
-            submission.feedback ?? "",
-        );
+            const feedbackInput = window.prompt(
+                "Enter feedback",
+                submission.feedback ?? "",
+            );
 
-        if (feedbackInput === null) return;
+            if (feedbackInput === null) return;
 
-        try {
-            setBusyId(submission.id);
-            setError(null);
+            try {
+                setBusyId(submission.id);
+                setError(null);
 
-            await gradeSubmission(submission.id, {
-                score: parsedScore,
-                feedback: feedbackInput,
-                status: "graded",
-            });
+                await gradeSubmission(submission.id, {
+                    score: parsedScore,
+                    feedback: feedbackInput,
+                    status: "graded",
+                });
 
-            await loadData();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to grade submission.");
-        } finally {
-            setBusyId(null);
-        }
-    }
+                await loadData();
+            } catch (err) {
+                setError(
+                    err instanceof Error
+                        ? err.message
+                        : "Failed to grade submission.",
+                );
+            } finally {
+                setBusyId(null);
+            }
+        },
+        [assignment, loadData],
+    );
 
     return (
         <div className="p-6 sm:p-8">
@@ -123,7 +152,9 @@ function TeacherAssignmentDetailContent() {
             </Link>
 
             {isLoading && (
-                <p className="mt-6 text-sm text-slate-600">Loading assignment...</p>
+                <p className="mt-6 text-sm text-slate-600">
+                    Loading assignment...
+                </p>
             )}
 
             {error && (
@@ -146,7 +177,9 @@ function TeacherAssignmentDetailContent() {
                         <div className="mt-4 text-sm text-slate-500">
                             Due:{" "}
                             {assignment.due_date
-                                ? new Date(assignment.due_date).toLocaleString()
+                                ? new Date(
+                                    assignment.due_date,
+                                ).toLocaleString()
                                 : "No due date"}
                         </div>
 
@@ -161,7 +194,9 @@ function TeacherAssignmentDetailContent() {
                         </h2>
 
                         {submissions.length === 0 ? (
-                            <p className="mt-4 text-slate-500">No submissions yet.</p>
+                            <p className="mt-4 text-slate-500">
+                                No submissions yet.
+                            </p>
                         ) : (
                             <div className="mt-4 space-y-4">
                                 {submissions.map((submission) => (
@@ -170,16 +205,20 @@ function TeacherAssignmentDetailContent() {
                                         className="rounded-xl border border-slate-200 bg-slate-50 p-4"
                                     >
                                         <div className="font-bold text-slate-900">
-                                            Student ID: {submission.student_id}
+                                            Student ID:{" "}
+                                            {submission.student_id}
                                         </div>
 
                                         <p className="mt-2 text-slate-600">
-                                            {submission.submission_text || "No text submission."}
+                                            {submission.submission_text ||
+                                                "No text submission."}
                                         </p>
 
                                         {submission.attachment_url && (
                                             <a
-                                                href={submission.attachment_url}
+                                                href={
+                                                    submission.attachment_url
+                                                }
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className="mt-2 inline-block text-sm font-semibold text-blue-600 hover:underline"
@@ -193,19 +232,26 @@ function TeacherAssignmentDetailContent() {
                                         </div>
 
                                         <div className="text-sm text-slate-500">
-                                            Score: {submission.score ?? "Not graded"}
+                                            Score:{" "}
+                                            {submission.score ??
+                                                "Not graded"}
                                         </div>
 
                                         {submission.feedback && (
                                             <p className="mt-2 text-sm text-slate-700">
-                                                Feedback: {submission.feedback}
+                                                Feedback:{" "}
+                                                {submission.feedback}
                                             </p>
                                         )}
 
                                         <button
                                             type="button"
-                                            onClick={() => void handleGrade(submission)}
-                                            disabled={busyId === submission.id}
+                                            onClick={() =>
+                                                void handleGrade(submission)
+                                            }
+                                            disabled={
+                                                busyId === submission.id
+                                            }
                                             className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                                         >
                                             {busyId === submission.id

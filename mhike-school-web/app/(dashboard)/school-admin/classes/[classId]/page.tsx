@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useParams } from "next/navigation";
 
 import RoleGate from "@/components/auth/RoleGate";
 import AssignTeacherPanel from "@/components/school-admin/components/AssignTeacherPanel";
 import ClassEnrollmentPanel from "@/components/school-admin/components/ClassEnrollmentPanel";
-import { UserRole, type User } from "@/types/user";
-import type { ClassGroup } from "@/types/class";
 
 import {
   assignTeacher,
@@ -16,34 +19,51 @@ import {
   getClassStudents,
   removeStudent,
 } from "@/lib/services/classes";
-
 import { listSchoolUsers } from "@/lib/services/school-admin";
+
+import type { ClassGroup } from "@/types/class";
+import { UserRole, type User } from "@/types/user";
 
 export default function ClassPage() {
   return (
-    <RoleGate allowedRoles={[UserRole.SCHOOL_ADMIN, UserRole.PLATFORM_ADMIN]}>
+    <RoleGate
+      allowedRoles={[
+        UserRole.SCHOOL_ADMIN,
+        UserRole.PLATFORM_ADMIN,
+      ]}
+    >
       <ClassContent />
     </RoleGate>
   );
 }
 
 function ClassContent() {
-  const params = useParams();
+  const params = useParams<{ classId: string }>();
   const classId = Number(params.classId);
 
-  const [classGroup, setClassGroup] = useState<ClassGroup | null>(null);
-  const [students, setStudents] = useState<User[]>([]);
-  const [schoolUsers, setSchoolUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [classGroup, setClassGroup] =
+    useState<ClassGroup | null>(null);
+
+  const [students, setStudents] =
+    useState<User[]>([]);
+
+  const [schoolUsers, setSchoolUsers] =
+    useState<User[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState<string | null>(null);
 
   const teachers = useMemo(() => {
     return schoolUsers.filter((user) => {
-      const roles = user.roles?.length
-        ? user.roles
-        : user.role
-          ? [user.role]
-          : [];
+      const roles =
+        user.roles?.length
+          ? user.roles
+          : user.role
+            ? [user.role]
+            : [];
 
       return roles.includes(UserRole.TEACHER);
     });
@@ -51,30 +71,40 @@ function ClassContent() {
 
   const allStudents = useMemo(() => {
     return schoolUsers.filter((user) => {
-      const roles = user.roles?.length
-        ? user.roles
-        : user.role
-          ? [user.role]
-          : [];
+      const roles =
+        user.roles?.length
+          ? user.roles
+          : user.role
+            ? [user.role]
+            : [];
 
       return roles.includes(UserRole.STUDENT);
     });
   }, [schoolUsers]);
 
-  const currentTeacher = teachers.find(
-    (teacher) => teacher.id === classGroup?.teacher_id,
-  );
+  const currentTeacher = useMemo(() => {
+    return teachers.find(
+      (teacher) => teacher.id === classGroup?.teacher_id,
+    );
+  }, [teachers, classGroup?.teacher_id]);
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
+    if (!Number.isFinite(classId)) {
+      setError("Invalid class ID.");
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
-      const [classData, studentsData, usersData] = await Promise.all([
-        getClass(classId),
-        getClassStudents(classId),
-        listSchoolUsers(),
-      ]);
+      const [classData, studentsData, usersData] =
+        await Promise.all([
+          getClass(classId),
+          getClassStudents(classId),
+          listSchoolUsers(),
+        ]);
 
       setClassGroup(classData);
       setStudents(studentsData);
@@ -83,33 +113,42 @@ function ClassContent() {
       console.error(err);
 
       setError(
-        err instanceof Error ? err.message : "Failed to load class data",
+        err instanceof Error
+          ? err.message
+          : "Failed to load class data",
       );
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    if (Number.isFinite(classId)) {
-      void loadData();
-    }
   }, [classId]);
 
-  async function handleAssignTeacher(teacherId: number) {
-    await assignTeacher(classId, teacherId);
-    await loadData();
-  }
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
-  async function handleEnrollStudent(studentId: number) {
-    await enrollStudent(classId, studentId);
-    await loadData();
-  }
+  const handleAssignTeacher = useCallback(
+    async (teacherId: number) => {
+      await assignTeacher(classId, teacherId);
+      await loadData();
+    },
+    [classId, loadData],
+  );
 
-  async function handleRemoveStudent(studentId: number) {
-    await removeStudent(classId, studentId);
-    await loadData();
-  }
+  const handleEnrollStudent = useCallback(
+    async (studentId: number) => {
+      await enrollStudent(classId, studentId);
+      await loadData();
+    },
+    [classId, loadData],
+  );
+
+  const handleRemoveStudent = useCallback(
+    async (studentId: number) => {
+      await removeStudent(classId, studentId);
+      await loadData();
+    },
+    [classId, loadData],
+  );
 
   if (loading && !classGroup) {
     return (
@@ -127,7 +166,8 @@ function ClassContent() {
         </h1>
 
         <p className="mt-2 text-gray-500">
-          Manage teacher assignment and student enrolment for this class.
+          Manage teacher assignment and student enrolment for this
+          class.
         </p>
 
         {currentTeacher ? (

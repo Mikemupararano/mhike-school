@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+    useCallback,
+    useEffect,
+    useState,
+} from "react";
 import { useParams } from "next/navigation";
 
 import { apiGet, apiPost } from "@/lib/api";
@@ -17,118 +21,216 @@ type Course = {
 
 export default function AdminCourseDetailPage() {
     const params = useParams();
-    const courseId = params.id;
 
-    const [course, setCourse] = useState<Course | null>(null);
+    const courseId =
+        typeof params.id === "string"
+            ? params.id
+            : Array.isArray(params.id)
+                ? params.id[0]
+                : "";
 
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
+    const [course, setCourse] =
+        useState<Course | null>(null);
 
-    const [error, setError] = useState("");
-    const [success, setSuccess] = useState("");
+    const [loading, setLoading] =
+        useState(true);
 
-    async function loadCourse() {
-        try {
-            setLoading(true);
+    const [saving, setSaving] =
+        useState(false);
 
-            const data = await apiGet<{ items: Course[] }>("/admin/courses");
+    const [error, setError] =
+        useState("");
 
-            const found = data.items.find(
-                (c) => String(c.id) === String(courseId),
-            );
+    const [success, setSuccess] =
+        useState("");
 
-            if (!found) {
-                setError("Course not found");
-                return;
+    const loadCourse = useCallback(
+        async () => {
+            try {
+                setLoading(true);
+                setError("");
+
+                const data =
+                    await apiGet<{
+                        items: Course[];
+                    }>(
+                        "/admin/courses",
+                    );
+
+                const found =
+                    data.items.find(
+                        (course) =>
+                            String(
+                                course.id,
+                            ) ===
+                            String(
+                                courseId,
+                            ),
+                    );
+
+                if (!found) {
+                    setError(
+                        "Course not found",
+                    );
+                    setCourse(
+                        null,
+                    );
+
+                    return;
+                }
+
+                setCourse(
+                    found,
+                );
+            } catch (err) {
+                console.error(
+                    err,
+                );
+
+                setError(
+                    "Failed to load course",
+                );
+            } finally {
+                setLoading(
+                    false,
+                );
             }
-
-            setCourse(found);
-        } catch (err) {
-            console.error(err);
-            setError("Failed to load course");
-        } finally {
-            setLoading(false);
-        }
-    }
+        },
+        [courseId],
+    );
 
     useEffect(() => {
-        loadCourse();
-    }, [courseId]);
+        void loadCourse();
+    }, [loadCourse]);
 
-    async function handlePublishToggle() {
-        if (!course) return;
+    const handlePublishToggle =
+        useCallback(
+            async () => {
+                if (!course) {
+                    return;
+                }
 
-        setError("");
-        setSuccess("");
+                setError("");
+                setSuccess("");
 
-        try {
-            setSaving(true);
+                try {
+                    setSaving(
+                        true,
+                    );
 
-            const updated = await apiPost<Course>(
-                `/admin/courses/${course.id}/publish`,
-                {
-                    published: !course.published,
-                },
-            );
+                    const updated =
+                        await apiPost<Course>(
+                            `/admin/courses/${course.id}/publish`,
+                            {
+                                published:
+                                    !course.published,
+                            },
+                        );
 
-            setCourse(updated);
+                    setCourse(
+                        updated,
+                    );
 
-            setSuccess(
-                updated.published
-                    ? "Course published"
-                    : "Course unpublished",
-            );
-        } catch (err) {
-            console.error(err);
+                    setSuccess(
+                        updated.published
+                            ? "Course published"
+                            : "Course unpublished",
+                    );
+                } catch (err) {
+                    console.error(
+                        err,
+                    );
 
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError("Failed to update course");
-            }
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    async function handleDelete() {
-        if (!course) return;
-
-        const confirmed = confirm(
-            `Delete "${course.title}"?`,
+                    if (
+                        err instanceof
+                        Error
+                    ) {
+                        setError(
+                            err.message,
+                        );
+                    } else {
+                        setError(
+                            "Failed to update course",
+                        );
+                    }
+                } finally {
+                    setSaving(
+                        false,
+                    );
+                }
+            },
+            [course],
         );
 
-        if (!confirmed) return;
+    const handleDelete =
+        useCallback(
+            async () => {
+                if (!course) {
+                    return;
+                }
 
-        try {
-            setSaving(true);
+                const confirmed =
+                    window.confirm(
+                        `Delete "${course.title}"?`,
+                    );
 
-            await apiPost(
-                `/admin/courses/${course.id}/delete`,
-            );
+                if (
+                    !confirmed
+                ) {
+                    return;
+                }
 
-            setSuccess("Course deleted");
+                try {
+                    setSaving(
+                        true,
+                    );
 
-            setTimeout(() => {
-                window.location.href = "/admin/courses";
-            }, 1200);
-        } catch (err) {
-            console.error(err);
+                    await apiPost(
+                        `/admin/courses/${course.id}/delete`,
+                    );
 
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError("Failed to delete course");
-            }
-        } finally {
-            setSaving(false);
-        }
-    }
+                    setSuccess(
+                        "Course deleted",
+                    );
+
+                    setTimeout(
+                        () => {
+                            window.location.href =
+                                "/admin/courses";
+                        },
+                        1200,
+                    );
+                } catch (err) {
+                    console.error(
+                        err,
+                    );
+
+                    if (
+                        err instanceof
+                        Error
+                    ) {
+                        setError(
+                            err.message,
+                        );
+                    } else {
+                        setError(
+                            "Failed to delete course",
+                        );
+                    }
+                } finally {
+                    setSaving(
+                        false,
+                    );
+                }
+            },
+            [course],
+        );
 
     if (loading) {
         return (
             <div className="p-8">
-                Loading course...
+                Loading
+                course...
             </div>
         );
     }
@@ -136,31 +238,40 @@ export default function AdminCourseDetailPage() {
     if (!course) {
         return (
             <div className="p-8 text-red-600">
-                Course not found.
+                Course not
+                found.
             </div>
         );
     }
 
     return (
-        <div className="p-8 space-y-6">
+        <div className="space-y-6 p-8">
             <div>
                 <h1 className="text-3xl font-extrabold">
-                    {course.title}
+                    {
+                        course.title
+                    }
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    Platform admin course management.
+                    Platform
+                    admin
+                    course
+                    management.
                 </p>
             </div>
 
-            <div className="bg-white border rounded-2xl p-6 space-y-4">
+            <div className="space-y-4 rounded-2xl border bg-white p-6">
                 <div>
                     <div className="text-sm text-slate-500">
-                        Course ID
+                        Course
+                        ID
                     </div>
 
                     <div className="font-semibold">
-                        {course.id}
+                        {
+                            course.id
+                        }
                     </div>
                 </div>
 
@@ -170,7 +281,8 @@ export default function AdminCourseDetailPage() {
                     </div>
 
                     <div>
-                        {course.description || "No description"}
+                        {course.description ??
+                            "No description"}
                     </div>
                 </div>
 
@@ -180,7 +292,8 @@ export default function AdminCourseDetailPage() {
                     </div>
 
                     <div>
-                        {course.teacher_name || "Not assigned"}
+                        {course.teacher_name ??
+                            "Not assigned"}
                     </div>
                 </div>
 
@@ -192,32 +305,39 @@ export default function AdminCourseDetailPage() {
                     <div
                         className={
                             course.published
-                                ? "text-green-600 font-semibold"
+                                ? "font-semibold text-green-600"
                                 : "text-slate-500"
                         }
                     >
-                        {course.published ? "Yes" : "No"}
+                        {course.published
+                            ? "Yes"
+                            : "No"}
                     </div>
                 </div>
             </div>
 
             {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3">
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
                     {error}
                 </div>
             )}
 
             {success && (
-                <div className="bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3">
+                <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-700">
                     {success}
                 </div>
             )}
 
             <div className="flex gap-4">
                 <button
-                    onClick={handlePublishToggle}
-                    disabled={saving}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold"
+                    type="button"
+                    onClick={
+                        handlePublishToggle
+                    }
+                    disabled={
+                        saving
+                    }
+                    className="rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {saving
                         ? "Saving..."
@@ -227,11 +347,17 @@ export default function AdminCourseDetailPage() {
                 </button>
 
                 <button
-                    onClick={handleDelete}
-                    disabled={saving}
-                    className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl font-semibold"
+                    type="button"
+                    onClick={
+                        handleDelete
+                    }
+                    disabled={
+                        saving
+                    }
+                    className="rounded-xl bg-red-600 px-6 py-3 font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                    Delete Course
+                    Delete
+                    Course
                 </button>
             </div>
         </div>

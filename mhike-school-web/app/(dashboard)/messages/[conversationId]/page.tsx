@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
 import { useParams } from "next/navigation";
 
 import MessageBubble from "@/components/messages/MessageBubble";
@@ -40,11 +45,12 @@ export default function ConversationPage() {
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const processedReadsRef = useRef<Set<number>>(new Set());
 
-    async function loadConversation() {
+    const loadConversation = useCallback(async () => {
         try {
             setLoading(true);
 
             const data = await getConversation(conversationId);
+
             setConversation(data);
 
             await markConversationRead(conversationId);
@@ -56,7 +62,7 @@ export default function ConversationPage() {
         } finally {
             setLoading(false);
         }
-    }
+    }, [conversationId]);
 
     function appendMessage(message: Message) {
         setConversation((previous) => {
@@ -107,23 +113,26 @@ export default function ConversationPage() {
         });
     }
 
-    function shouldMarkMessageRead(message: Message) {
-        if (!user) return false;
+    const shouldMarkMessageRead = useCallback(
+        (message: Message) => {
+            if (!user) return false;
 
-        if (Number(message.sender_id) === Number(user.id)) {
-            return false;
-        }
+            if (Number(message.sender_id) === Number(user.id)) {
+                return false;
+            }
 
-        if (processedReadsRef.current.has(Number(message.id))) {
-            return false;
-        }
+            if (processedReadsRef.current.has(Number(message.id))) {
+                return false;
+            }
 
-        const userDelivery = message.deliveries?.find(
-            (delivery) => Number(delivery.user_id) === Number(user.id),
-        );
+            const userDelivery = message.deliveries?.find(
+                (delivery) => Number(delivery.user_id) === Number(user.id),
+            );
 
-        return !userDelivery || userDelivery.read_at === null;
-    }
+            return !userDelivery || userDelivery.read_at === null;
+        },
+        [user],
+    );
 
     async function uploadAttachmentForMessage(messageId: number) {
         if (!selectedFile) return;
@@ -235,7 +244,7 @@ export default function ConversationPage() {
 
             disconnectSocket();
         };
-    }, [conversationId, user]);
+    }, [conversationId, user, loadConversation]);
 
     useEffect(() => {
         if (!conversation?.messages || !user) return;
@@ -243,7 +252,7 @@ export default function ConversationPage() {
         async function markVisibleMessages() {
             let markedAnyMessage = false;
 
-            for (const message of conversation?.messages ?? []) {
+            for (const message of conversation.messages ?? []) {
                 if (!shouldMarkMessageRead(message)) {
                     continue;
                 }
@@ -274,7 +283,7 @@ export default function ConversationPage() {
         }
 
         void markVisibleMessages();
-    }, [conversation?.messages, conversationId, user]);
+    }, [conversation?.messages, conversationId, user, shouldMarkMessageRead]);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({
