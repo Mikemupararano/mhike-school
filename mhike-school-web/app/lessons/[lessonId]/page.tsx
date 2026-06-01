@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { apiGet, apiPost, getToken } from "@/lib/api";
+import LessonProgressPill from "@/components/lessons/LessonProgressPill";
 
 type LessonOut = {
     id: number;
@@ -44,30 +45,7 @@ type QuizSubmitOut = {
     passed: boolean;
 };
 
-function ProgressPill({
-    text,
-    background,
-    color,
-}: {
-    text: string;
-    background: string;
-    color: string;
-}) {
-    return (
-        <span
-            style={{
-                fontSize: 12,
-                fontWeight: 800,
-                color,
-                background,
-                padding: "6px 10px",
-                borderRadius: 999,
-            }}
-        >
-            {text}
-        </span>
-    );
-}
+
 
 export default function LessonPage() {
     const router = useRouter();
@@ -89,7 +67,7 @@ export default function LessonPage() {
     const [message, setMessage] = useState("");
     const [error, setError] = useState("");
 
-    async function loadLesson() {
+    const loadLesson = useCallback(async () => {
         const token = getToken();
         if (!token) {
             router.replace("/login");
@@ -148,12 +126,15 @@ export default function LessonPage() {
             setLoading(false);
             setLoadingQuiz(false);
         }
-    }
+    }, [lessonId, router]);
 
     useEffect(() => {
-        if (!lessonId || Number.isNaN(lessonId)) return;
+        if (!lessonId || Number.isNaN(lessonId)) {
+            return;
+        }
+
         void loadLesson();
-    }, [lessonId]);
+    }, [lessonId, loadLesson]);
 
     const currentIndex = useMemo(
         () => lessons.findIndex((l) => l.id === lesson?.id),
@@ -442,7 +423,7 @@ export default function LessonPage() {
                                 </span>
 
                                 {currentLessonCompleted && (
-                                    <ProgressPill
+                                    <LessonProgressPill
                                         text="Completed"
                                         background="#DCFCE7"
                                         color="#166534"
@@ -450,7 +431,7 @@ export default function LessonPage() {
                                 )}
 
                                 {!currentLessonCompleted && quizExists && (
-                                    <ProgressPill
+                                    <LessonProgressPill
                                         text={quizResult?.passed ? "Quiz passed" : "Quiz required"}
                                         background={quizResult?.passed ? "#DBEAFE" : "#FEF3C7"}
                                         color={quizResult?.passed ? "#1D4ED8" : "#92400E"}
@@ -529,7 +510,7 @@ export default function LessonPage() {
                                     </div>
 
                                     {quizExists && quizResult && (
-                                        <ProgressPill
+                                        <LessonProgressPill
                                             text={`${quizResult.score}/${quizResult.total} • ${quizResult.passed ? "Passed" : "Not passed"
                                                 }`}
                                             background={quizResult.passed ? "#DCFCE7" : "#FEE2E2"}
@@ -758,3 +739,4 @@ export default function LessonPage() {
         </main>
     );
 }
+

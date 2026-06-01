@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import React, { useEffect, useMemo, useState } from "react";
 import DashboardShell from "@/components/layout/DashboardShell";
 import StudentSubmissionModal from "@/components/assignments/StudentSubmissionModal";
@@ -172,10 +173,13 @@ export default function StudentAssignmentsPage() {
                             placeItems: "center",
                         }}
                     >
-                        <img
+                        <Image
                             src="/branding/logo-dark.png"
                             alt="Mhike School"
+                            width={140}
+                            height={140}
                             style={{ width: 140, height: "auto", objectFit: "contain" }}
+                            priority
                         />
                     </div>
                 </section>
