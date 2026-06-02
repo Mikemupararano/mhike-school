@@ -247,12 +247,16 @@ export default function ConversationPage() {
     }, [conversationId, user, loadConversation]);
 
     useEffect(() => {
-        if (!conversation?.messages || !user) return;
+        if (!conversation?.messages || !user) {
+            return;
+        }
+
+        const messages = conversation.messages;
 
         async function markVisibleMessages() {
             let markedAnyMessage = false;
 
-            for (const message of conversation.messages ?? []) {
+            for (const message of messages) {
                 if (!shouldMarkMessageRead(message)) {
                     continue;
                 }
@@ -420,8 +424,7 @@ export default function ConversationPage() {
 
             <div className="flex-1 overflow-y-auto px-4 py-6">
                 <div className="mx-auto flex max-w-5xl flex-col gap-4">
-                    {conversation.messages &&
-                        conversation.messages.length > 0 ? (
+                    {conversation.messages && conversation.messages.length > 0 ? (
                         conversation.messages.map((message) => (
                             <MessageBubble
                                 key={message.id}

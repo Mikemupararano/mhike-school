@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+    useEffect,
+    useState,
+} from "react";
 
 import NotificationPreferencesForm from "@/components/settings/NotificationPreferencesForm";
-
-import { getToken } from "@/lib/api";
 
 import {
     getNotificationPreferences,
@@ -17,28 +18,27 @@ export default function NotificationPreferencesPage() {
     const [preferences, setPreferences] =
         useState<NotificationPreferences | null>(null);
 
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] =
+        useState(true);
 
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] =
+        useState<string | null>(null);
 
     async function loadPreferences() {
         try {
             setLoading(true);
             setError(null);
 
-            const token = getToken();
-
-            if (!token) {
-                throw new Error("Authentication token not found.");
-            }
-
-            const data = await getNotificationPreferences(token);
+            const data =
+                await getNotificationPreferences();
 
             setPreferences(data);
         } catch (err) {
             console.error(err);
 
-            setError("Failed to load notification preferences.");
+            setError(
+                "Failed to load notification preferences.",
+            );
         } finally {
             setLoading(false);
         }
@@ -48,16 +48,10 @@ export default function NotificationPreferencesPage() {
         payload: UpdateNotificationPreferencesPayload,
     ) {
         try {
-            const token = getToken();
-
-            if (!token) {
-                throw new Error("Authentication token not found.");
-            }
-
-            const updated = await updateNotificationPreferences(
-                token,
-                payload,
-            );
+            const updated =
+                await updateNotificationPreferences(
+                    payload,
+                );
 
             setPreferences(updated);
 
@@ -70,7 +64,7 @@ export default function NotificationPreferencesPage() {
     }
 
     useEffect(() => {
-        loadPreferences();
+        void loadPreferences();
     }, []);
 
     if (loading) {

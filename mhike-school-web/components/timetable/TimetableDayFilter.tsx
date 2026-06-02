@@ -1,89 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
+const DAYS = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+] as const;
 
-import TimetableDayFilter from "@/components/timetable/TimetableDayFilter";
-import TimetableTable from "@/components/timetable/TimetableTable";
+export type TimetableFilterDay = (typeof DAYS)[number];
 
-import {
-    getTeacherTimetable,
-    TimetableEntry,
-} from "@/lib/services/timetable";
+type TimetableDayFilterProps = {
+    selectedDay: string;
+    onChange: (day: string) => void;
+};
 
-export default function TeacherTimetablePage() {
-    const [entries, setEntries] = useState<TimetableEntry[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [selectedDay, setSelectedDay] =
-        useState<string>("monday");
+function formatDay(day: string): string {
+    return day.charAt(0).toUpperCase() + day.slice(1);
+}
 
-    useEffect(() => {
-        async function loadTimetable() {
-            try {
-                setLoading(true);
-                setError(null);
-
-                const data = await getTeacherTimetable(
-                    selectedDay
-                );
-
-                setEntries(data);
-            } catch (err) {
-                console.error(err);
-
-                setError("Failed to load timetable.");
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        loadTimetable();
-    }, [selectedDay]);
-
+export default function TimetableDayFilter({
+    selectedDay,
+    onChange,
+}: TimetableDayFilterProps) {
     return (
-        <div className="min-h-screen bg-gray-50 p-6">
-            <div className="mx-auto max-w-7xl">
-                <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h1 className="text-3xl font-bold text-gray-900">
-                            Teacher Timetable
-                        </h1>
-
-                        <p className="mt-2 text-sm text-gray-600">
-                            View your assigned timetable schedule.
-                        </p>
-                    </div>
-
-                    <TimetableDayFilter
-                        selectedDay={selectedDay}
-                        onChange={setSelectedDay}
-                    />
-                </div>
-
-                {loading && (
-                    <div className="rounded-2xl bg-white p-8 shadow-sm">
-                        <p className="text-sm text-gray-500">
-                            Loading timetable...
-                        </p>
-                    </div>
-                )}
-
-                {error && (
-                    <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
-                        <p className="text-sm font-medium text-red-700">
-                            {error}
-                        </p>
-                    </div>
-                )}
-
-                {!loading && !error && (
-                    <TimetableTable
-                        entries={entries}
-                        emptyTitle="No timetable entries found"
-                        emptyMessage="No timetable entries are available for this day."
-                    />
-                )}
-            </div>
+        <div className="flex flex-wrap gap-2">
+            {DAYS.map((day) => (
+                <button
+                    key={day}
+                    type="button"
+                    onClick={() => onChange(day)}
+                    className={`rounded-xl border px-4 py-2 text-sm font-medium transition ${selectedDay === day
+                        ? "bg-slate-900 text-white border-slate-900"
+                        : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                        }`}
+                >
+                    {formatDay(day)}
+                </button>
+            ))}
         </div>
     );
 }

@@ -2,6 +2,7 @@ export enum UserRole {
     PLATFORM_ADMIN = "platform_admin",
     SCHOOL_ADMIN = "school_admin",
     TEACHER = "teacher",
+    PARENT = "parent",
     STUDENT = "student",
 }
 
@@ -85,6 +86,10 @@ export type UpdateUserInput = {
 export const SCHOOL_STAFF_ROLES: UserRole[] = [
     UserRole.SCHOOL_ADMIN,
     UserRole.TEACHER,
+];
+
+export const PARENT_ROLES: UserRole[] = [
+    UserRole.PARENT,
 ];
 
 export const TEACHING_ROLES: UserRole[] = [

@@ -1,4 +1,4 @@
-import apiClient from "@/lib/api/client";
+import { apiGet, apiPost } from "@/lib/api";
 
 export interface TimetablePeriod {
     id: number;
@@ -69,142 +69,153 @@ export interface TimetableAssignmentFilters {
     offset?: number;
 }
 
-const TIMETABLE_BASE = "/api/v1/timetables";
+const TIMETABLE_BASE = "/timetables";
+
+function withQuery<T extends object>(
+    path: string,
+    params?: T,
+): string {
+    if (!params) {
+        return path;
+    }
+
+    const searchParams = new URLSearchParams();
+
+    Object.entries(params).forEach(([key, value]) => {
+        if (
+            value !== undefined &&
+            value !== null &&
+            value !== ""
+        ) {
+            searchParams.set(
+                key,
+                String(value),
+            );
+        }
+    });
+
+    const query = searchParams.toString();
+
+    return query
+        ? `${path}?${query}`
+        : path;
+}
 
 export async function listTimetablePeriods(): Promise<TimetablePeriod[]> {
-    const response = await apiClient.get<TimetablePeriod[]>(
-        `${TIMETABLE_BASE}/periods`
+    return apiGet<TimetablePeriod[]>(
+        `${TIMETABLE_BASE}/periods`,
     );
-
-    return response.data;
 }
 
 export async function createTimetablePeriod(
-    payload: Partial<TimetablePeriod>
+    payload: Partial<TimetablePeriod>,
 ): Promise<TimetablePeriod> {
-    const response = await apiClient.post<TimetablePeriod>(
+    return apiPost<TimetablePeriod>(
         `${TIMETABLE_BASE}/periods`,
-        payload
+        payload,
     );
-
-    return response.data;
 }
 
 export async function listTimetables(
-    filters?: TimetableFilters
+    filters?: TimetableFilters,
 ): Promise<Timetable[]> {
-    const response = await apiClient.get<Timetable[]>(TIMETABLE_BASE, {
-        params: filters,
-    });
-
-    return response.data;
+    return apiGet<Timetable[]>(
+        withQuery(
+            TIMETABLE_BASE,
+            filters,
+        ),
+    );
 }
 
 export async function createTimetable(
-    payload: Partial<Timetable>
+    payload: Partial<Timetable>,
 ): Promise<Timetable> {
-    const response = await apiClient.post<Timetable>(
+    return apiPost<Timetable>(
         TIMETABLE_BASE,
-        payload
+        payload,
     );
-
-    return response.data;
 }
 
 export async function listTimetableEntries(
-    filters?: TimetableEntryFilters
+    filters?: TimetableEntryFilters,
 ): Promise<TimetableEntry[]> {
-    const response = await apiClient.get<TimetableEntry[]>(
-        `${TIMETABLE_BASE}/entries`,
-        {
-            params: filters,
-        }
+    return apiGet<TimetableEntry[]>(
+        withQuery(
+            `${TIMETABLE_BASE}/entries`,
+            filters,
+        ),
     );
-
-    return response.data;
 }
 
 export async function createTimetableEntry(
-    payload: Partial<TimetableEntry>
+    payload: Partial<TimetableEntry>,
 ): Promise<TimetableEntry> {
-    const response = await apiClient.post<TimetableEntry>(
+    return apiPost<TimetableEntry>(
         `${TIMETABLE_BASE}/entries`,
-        payload
+        payload,
     );
-
-    return response.data;
 }
 
 export async function getTeacherTimetable(
-    day_of_week?: string
+    day_of_week?: string,
 ): Promise<TimetableEntry[]> {
-    const response = await apiClient.get<TimetableEntry[]>(
-        `${TIMETABLE_BASE}/teacher/me`,
-        {
-            params: {
+    return apiGet<TimetableEntry[]>(
+        withQuery(
+            `${TIMETABLE_BASE}/teacher/me`,
+            {
                 day_of_week,
             },
-        }
+        ),
     );
-
-    return response.data;
 }
 
 export async function getStudentTimetable(
     class_group_id?: number,
-    day_of_week?: string
+    day_of_week?: string,
 ): Promise<TimetableEntry[]> {
-    const response = await apiClient.get<TimetableEntry[]>(
-        `${TIMETABLE_BASE}/student/me`,
-        {
-            params: {
+    return apiGet<TimetableEntry[]>(
+        withQuery(
+            `${TIMETABLE_BASE}/student/me`,
+            {
                 class_group_id,
                 day_of_week,
             },
-        }
+        ),
     );
-
-    return response.data;
 }
 
 export async function getParentChildTimetable(
     studentId: number,
     class_group_id?: number,
-    day_of_week?: string
+    day_of_week?: string,
 ): Promise<TimetableEntry[]> {
-    const response = await apiClient.get<TimetableEntry[]>(
-        `${TIMETABLE_BASE}/parent/child/${studentId}`,
-        {
-            params: {
+    return apiGet<TimetableEntry[]>(
+        withQuery(
+            `${TIMETABLE_BASE}/parent/child/${studentId}`,
+            {
                 class_group_id,
                 day_of_week,
             },
-        }
+        ),
     );
-
-    return response.data;
 }
 
 export async function listTimetableAssignments(
-    filters?: TimetableAssignmentFilters
+    filters?: TimetableAssignmentFilters,
 ): Promise<TimetableAssignment[]> {
-    const response = await apiClient.get<TimetableAssignment[]>(
-        `${TIMETABLE_BASE}/assignments`,
-        {
-            params: filters,
-        }
+    return apiGet<TimetableAssignment[]>(
+        withQuery(
+            `${TIMETABLE_BASE}/assignments`,
+            filters,
+        ),
     );
-
-    return response.data;
 }
 
 export async function createTimetableAssignment(
-    payload: Partial<TimetableAssignment>
+    payload: Partial<TimetableAssignment>,
 ): Promise<TimetableAssignment> {
-    const response = await apiClient.post<TimetableAssignment>(
+    return apiPost<TimetableAssignment>(
         `${TIMETABLE_BASE}/assignments`,
-        payload
+        payload,
     );
-
-    return response.data;
 }

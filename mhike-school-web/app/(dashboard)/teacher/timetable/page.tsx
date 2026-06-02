@@ -17,7 +17,7 @@ import TimetableState from "@/components/timetable/TimetableState";
 import { getMyTeacherTimetable } from "@/lib/timetables";
 
 type TimetableEntry = TimetableLesson & {
-    teacher_id: number | null;
+    teacher_id?: number | null;
 };
 
 export default function TeacherTimetablePage() {
@@ -63,9 +63,7 @@ export default function TeacherTimetablePage() {
         useMemo(() => {
             return entries
                 .filter(
-                    (
-                        entry,
-                    ) =>
+                    (entry) =>
                         entry.day_of_week ===
                         selectedDay,
                 )

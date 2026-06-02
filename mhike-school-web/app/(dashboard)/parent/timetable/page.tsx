@@ -22,7 +22,7 @@ import { useParentChildren } from "@/hooks/useParentChildren";
 import { getChildTimetable } from "@/lib/timetables";
 
 type TimetableEntry = TimetableLesson & {
-    class_group_id: number | null;
+    class_group_id?: number | null;
 };
 
 export default function ParentTimetablePage() {

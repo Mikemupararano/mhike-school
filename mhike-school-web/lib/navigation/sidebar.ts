@@ -71,6 +71,31 @@ export const teacherSidebar: SidebarSection[] = [
     },
 ];
 
+export const parentSidebar: SidebarSection[] = [
+    {
+        title: "Parent Portal",
+        items: [
+            { label: "Dashboard", href: "/parent", icon: LayoutDashboard },
+            { label: "Attendance", href: "/parent/attendance", icon: CalendarDays },
+            { label: "Timetable", href: "/parent/timetable", icon: CalendarDays },
+            { label: "Reports", href: "/parent/reports", icon: FileText },
+            { label: "Messages", href: "/messages", icon: MessageSquare },
+        ],
+    },
+    {
+        title: "Account",
+        items: [
+            { label: "Notifications", href: "/notifications", icon: Bell },
+            {
+                label: "Notification Settings",
+                href: "/dashboard/settings/notifications",
+                icon: Settings,
+            },
+            { label: "Profile", href: "/profile", icon: User },
+        ],
+    },
+];
+
 export const schoolAdminSidebar: SidebarSection[] = [
     {
         title: "Management",
@@ -78,8 +103,16 @@ export const schoolAdminSidebar: SidebarSection[] = [
             { label: "Dashboard", href: "/school-admin", icon: LayoutDashboard },
             { label: "Users", href: "/school-admin/users", icon: Users },
             { label: "Classes", href: "/school-admin/classes", icon: School },
-            { label: "Timetables", href: "/school-admin/timetables", icon: CalendarDays },
-            { label: "Parent Portal", href: "/school-admin/parent-portal", icon: Users },
+            {
+                label: "Timetables",
+                href: "/school-admin/timetables",
+                icon: CalendarDays,
+            },
+            {
+                label: "Parent Portal",
+                href: "/school-admin/parent-portal",
+                icon: Users,
+            },
             {
                 label: "Announcements",
                 href: "/school-admin/announcements",
@@ -93,7 +126,11 @@ export const schoolAdminSidebar: SidebarSection[] = [
         title: "Reports",
         items: [
             { label: "Reports", href: "/school-admin/reports", icon: FileText },
-            { label: "Progress Analytics", href: "/school-admin/progress", icon: BarChart3 },
+            {
+                label: "Progress Analytics",
+                href: "/school-admin/progress",
+                icon: BarChart3,
+            },
             { label: "Billing", href: "/school-admin/billing", icon: CreditCard },
         ],
     },
@@ -158,6 +195,10 @@ function resolvePrimaryRole(roles: UserRole[]): UserRole {
         return UserRole.SCHOOL_ADMIN;
     }
 
+    if (roles.includes(UserRole.PARENT)) {
+        return UserRole.PARENT;
+    }
+
     if (roles.includes(UserRole.TEACHER)) {
         return UserRole.TEACHER;
     }
@@ -185,6 +226,9 @@ export function getSidebarSections(
         case UserRole.SCHOOL_ADMIN:
             return schoolAdminSidebar;
 
+        case UserRole.PARENT:
+            return parentSidebar;
+
         case UserRole.TEACHER:
             return teacherSidebar;
 
@@ -198,7 +242,5 @@ export function getSidebarItems(
     role?: SidebarRole | null,
     roles?: UserRole[],
 ): SidebarItem[] {
-    return getSidebarSections(role, roles).flatMap(
-        (section) => section.items,
-    );
+    return getSidebarSections(role, roles).flatMap((section) => section.items);
 }
