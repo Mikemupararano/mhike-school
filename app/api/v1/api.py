@@ -26,6 +26,7 @@ from app.api.v1.endpoints import (
     school_users,
     schools,
     student_attendance,
+    student_reports,
     teacher_dashboard,
     timetables,
 )
@@ -198,6 +199,12 @@ api_router.include_router(
     parent_students.router,
     prefix="/parent-students",
     tags=["parent-students"],
+)
+
+api_router.include_router(
+    student_reports.router,
+    prefix="/student-reports",
+    tags=["student-reports"],
 )
 
 # =========================================================

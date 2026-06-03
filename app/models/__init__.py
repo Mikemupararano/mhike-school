@@ -9,8 +9,9 @@ from app.models.module import Module
 from app.models.notification import Notification
 from app.models.notification_delivery import NotificationDelivery
 from app.models.progress import Progress
-from app.models.quiz import QuizQuestion, QuizOption
+from app.models.quiz import QuizOption, QuizQuestion
 from app.models.school import School
+from app.models.student_report import StudentReport
 from app.models.user import User, UserRole, UserStatus
 from app.models.user_role import UserRoleAssignment
 
@@ -26,9 +27,10 @@ __all__ = [
     "Notification",
     "NotificationDelivery",
     "Progress",
-    "QuizQuestion",
     "QuizOption",
+    "QuizQuestion",
     "School",
+    "StudentReport",
     "User",
     "UserRole",
     "UserStatus",

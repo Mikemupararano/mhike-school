@@ -1,9 +1,28 @@
 "use client";
 
+import {
+    useEffect,
+    useMemo,
+    useState,
+} from "react";
+
 import ChildSelector from "@/components/parent/ChildSelector";
 import ParentPageState from "@/components/parent/ParentPageState";
 
 import { useParentChildren } from "@/hooks/useParentChildren";
+
+import {
+    getParentReports,
+    type StudentReport,
+} from "@/lib/services/parentReports";
+
+function formatDate(value: string): string {
+    return new Date(value).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    });
+}
 
 export default function ParentReportsPage() {
     const {
@@ -11,9 +30,61 @@ export default function ParentReportsPage() {
         selectedStudentId,
         selectedProfile,
         setSelectedStudentId,
-        loading,
-        error,
+        loading: childrenLoading,
+        error: childrenError,
     } = useParentChildren();
+
+    const [reports, setReports] =
+        useState<StudentReport[]>([]);
+
+    const [reportsLoading, setReportsLoading] =
+        useState(true);
+
+    const [reportsError, setReportsError] =
+        useState<string | null>(null);
+
+    useEffect(() => {
+        async function loadReports() {
+            try {
+                setReportsLoading(true);
+                setReportsError(null);
+
+                const data = await getParentReports();
+
+                setReports(data);
+            } catch (err) {
+                setReportsError(
+                    err instanceof Error
+                        ? err.message
+                        : "Failed to load reports.",
+                );
+            } finally {
+                setReportsLoading(false);
+            }
+        }
+
+        void loadReports();
+    }, []);
+
+    const selectedReports = useMemo(() => {
+        if (!selectedStudentId) {
+            return [];
+        }
+
+        return reports.filter(
+            (report) =>
+                report.student_id === selectedStudentId,
+        );
+    }, [
+        reports,
+        selectedStudentId,
+    ]);
+
+    const isLoading =
+        childrenLoading || reportsLoading;
+
+    const pageError =
+        childrenError || reportsError;
 
     return (
         <main className="space-y-6 p-8">
@@ -29,8 +100,8 @@ export default function ParentReportsPage() {
             </div>
 
             <ParentPageState
-                loading={loading}
-                error={error}
+                loading={isLoading}
+                error={pageError}
                 isEmpty={profiles.length === 0 || !selectedProfile}
                 loadingMessage="Loading reports..."
             >
@@ -45,22 +116,64 @@ export default function ParentReportsPage() {
                         />
 
                         <section className="rounded-2xl border bg-white p-6">
-                            <h2 className="text-xl font-bold text-slate-950">
-                                Reports
-                            </h2>
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-950">
+                                    Reports
+                                </h2>
 
-                            <p className="mt-2 text-slate-500">
-                                Reports for{" "}
-                                <span className="font-semibold text-slate-900">
-                                    {selectedProfile.student_name ??
-                                        `Student ${selectedProfile.student_id}`}
-                                </span>{" "}
-                                will appear here once report data is available.
-                            </p>
-
-                            <div className="mt-6 rounded-2xl border border-dashed bg-slate-50 p-6 text-slate-500">
-                                No reports have been published yet.
+                                <p className="mt-2 text-slate-500">
+                                    Reports for{" "}
+                                    <span className="font-semibold text-slate-900">
+                                        {selectedProfile.student_name ??
+                                            `Student ${selectedProfile.student_id}`}
+                                    </span>
+                                    .
+                                </p>
                             </div>
+
+                            {selectedReports.length === 0 ? (
+                                <div className="mt-6 rounded-2xl border border-dashed bg-slate-50 p-6 text-slate-500">
+                                    No reports have been published yet.
+                                </div>
+                            ) : (
+                                <div className="mt-6 grid gap-4">
+                                    {selectedReports.map((report) => (
+                                        <article
+                                            key={report.id}
+                                            className="rounded-2xl border bg-slate-50 p-5"
+                                        >
+                                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                <div>
+                                                    <h3 className="text-lg font-bold text-slate-950">
+                                                        {report.title}
+                                                    </h3>
+
+                                                    <p className="mt-1 text-sm text-slate-500">
+                                                        {report.academic_year}
+                                                        {report.term
+                                                            ? ` · ${report.term}`
+                                                            : ""}
+                                                    </p>
+                                                </div>
+
+                                                {report.grade && (
+                                                    <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
+                                                        {report.grade}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <p className="mt-4 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                                {report.report_text}
+                                            </p>
+
+                                            <p className="mt-4 text-xs font-medium text-slate-400">
+                                                Published {formatDate(report.created_at)}
+                                            </p>
+                                        </article>
+                                    ))}
+                                </div>
+                            )}
                         </section>
                     </>
                 )}
