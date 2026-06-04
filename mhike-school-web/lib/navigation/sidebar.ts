@@ -1,4 +1,5 @@
 import {
+    Award,
     BarChart3,
     Bell,
     BookOpen,
@@ -79,6 +80,7 @@ export const parentSidebar: SidebarSection[] = [
             { label: "Attendance", href: "/parent/attendance", icon: CalendarDays },
             { label: "Timetable", href: "/parent/timetable", icon: CalendarDays },
             { label: "Reports", href: "/parent/reports", icon: FileText },
+            { label: "Grades", href: "/parent/grades", icon: Award },
             { label: "Messages", href: "/messages", icon: MessageSquare },
         ],
     },
