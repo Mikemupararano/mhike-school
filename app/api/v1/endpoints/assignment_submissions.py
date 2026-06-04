@@ -7,12 +7,14 @@ from app.core.permissions import PermissionService
 from app.db.session import get_db
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
+from app.models.parent_student import ParentStudent
 from app.models.user import User, UserRole
 from app.schemas.assignment_submission import (
     AssignmentSubmissionGrade,
     AssignmentSubmissionOut,
     AssignmentSubmissionSubmit,
 )
+from app.schemas.parent_grades import ParentGradeOut
 from app.services.assignment_submission_service import (
     grade_submission,
     submit_assignment,
@@ -42,6 +44,48 @@ async def submit_assignment_endpoint(
         submission_text=payload.submission_text,
         attachment_url=payload.attachment_url,
     )
+
+
+@router.get(
+    "/parent/grades",
+    response_model=list[ParentGradeOut],
+)
+async def list_parent_grades_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    PermissionService.ensure_active_user(current_user)
+    PermissionService.ensure_has_role(current_user, UserRole.PARENT)
+
+    result = await db.execute(
+        select(
+            AssignmentSubmission.id.label("submission_id"),
+            AssignmentSubmission.assignment_id,
+            AssignmentSubmission.student_id,
+            Assignment.title.label("assignment_title"),
+            Assignment.max_score,
+            AssignmentSubmission.score,
+            AssignmentSubmission.feedback,
+            AssignmentSubmission.status,
+            AssignmentSubmission.submitted_at,
+            AssignmentSubmission.graded_at,
+        )
+        .join(
+            Assignment,
+            Assignment.id == AssignmentSubmission.assignment_id,
+        )
+        .join(
+            ParentStudent,
+            ParentStudent.student_id == AssignmentSubmission.student_id,
+        )
+        .where(
+            ParentStudent.parent_id == current_user.id,
+            AssignmentSubmission.school_id == current_user.school_id,
+        )
+        .order_by(AssignmentSubmission.submitted_at.desc())
+    )
+
+    return list(result.mappings().all())
 
 
 @router.get("/{assignment_id}/me", response_model=AssignmentSubmissionOut)
