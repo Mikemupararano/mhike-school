@@ -5,6 +5,7 @@ from app.models.class_group import ClassGroup
 from app.models.course import Course
 from app.models.enrollment import Enrollment
 from app.models.lesson import Lesson
+from app.models.message_attachment import MessageAttachment
 from app.models.module import Module
 from app.models.notification import Notification
 from app.models.notification_delivery import NotificationDelivery
@@ -23,6 +24,7 @@ __all__ = [
     "Course",
     "Enrollment",
     "Lesson",
+    "MessageAttachment",
     "Module",
     "Notification",
     "NotificationDelivery",
