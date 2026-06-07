@@ -66,3 +66,10 @@ export async function deleteStudentReport(
 ): Promise<void> {
     return apiDelete<void>(`/student-reports/${reportId}`);
 }
+export async function getStudentReport(
+    reportId: number,
+): Promise<StudentReport> {
+    return apiGet<StudentReport>(
+        `/student-reports/${reportId}`,
+    );
+}

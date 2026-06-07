@@ -113,6 +113,32 @@ async def list_parent_reports_endpoint(
     return reports
 
 
+@router.get(
+    "/{report_id}",
+    response_model=StudentReportRead,
+)
+async def get_report_endpoint(
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StudentReportRead:
+    school_id = _require_school_id(current_user)
+
+    report = await get_student_report(
+        db,
+        report_id=report_id,
+        school_id=school_id,
+    )
+
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student report not found.",
+        )
+
+    return report
+
+
 @router.patch(
     "/{report_id}",
     response_model=StudentReportRead,
