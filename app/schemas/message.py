@@ -39,6 +39,7 @@ class MessageReplyOut(BaseModel):
 
     id: int
     sender_id: int | None
+    sender_name: str | None = None
     body: str
     created_at: datetime
 
@@ -73,13 +74,25 @@ class MessageOut(BaseModel):
     id: int
     conversation_id: int
     sender_id: int | None
+
+    # NEW
+    sender_name: str | None = None
+
     reply_to_message_id: int | None = None
     reply_to: MessageReplyOut | None = None
+
     body: str
+
     created_at: datetime
     updated_at: datetime | None = None
-    deliveries: list[MessageDeliveryOut] = Field(default_factory=list)
-    attachments: list[MessageAttachmentOut] = Field(default_factory=list)
+
+    deliveries: list[MessageDeliveryOut] = Field(
+        default_factory=list,
+    )
+
+    attachments: list[MessageAttachmentOut] = Field(
+        default_factory=list,
+    )
 
 
 class ConversationLatestMessageOut(BaseModel):
@@ -88,6 +101,10 @@ class ConversationLatestMessageOut(BaseModel):
     id: int
     body: str
     sender_id: int | None = None
+
+    # NEW
+    sender_name: str | None = None
+
     created_at: datetime
 
 
@@ -98,7 +115,9 @@ class ConversationOut(BaseModel):
     school_id: int | None
     title: str | None
     conversation_type: str
+
     created_by_id: int | None
+
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -111,7 +130,9 @@ class ConversationOut(BaseModel):
     )
 
     unread_count: int = 0
+
     latest_message: ConversationLatestMessageOut | None = None
+
     last_activity: datetime | None = None
 
 

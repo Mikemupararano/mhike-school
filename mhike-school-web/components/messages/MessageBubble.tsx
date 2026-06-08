@@ -47,7 +47,7 @@ function getMessageStatus(
     return "Sent";
 }
 
-function getReceiptTooltip(message: Message) {
+function getReceiptTooltip(message: Message): string {
     const deliveries = message.deliveries ?? [];
 
     const readCount = deliveries.filter(
@@ -59,7 +59,8 @@ function getReceiptTooltip(message: Message) {
     ).length;
 
     if (readCount > 0) {
-        return `Read by ${readCount} recipient${readCount === 1 ? "" : "s"}`;
+        return `Read by ${readCount} recipient${readCount === 1 ? "" : "s"
+            }`;
     }
 
     if (deliveredCount > 0) {
@@ -70,11 +71,49 @@ function getReceiptTooltip(message: Message) {
     return "Sent";
 }
 
-function formatMessageTime(dateString: string) {
-    return new Date(dateString).toLocaleTimeString([], {
+function formatMessageDateTime(dateString: string): string {
+    return new Date(dateString).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
     });
+}
+
+function getSenderName(
+    message: Message,
+    isOwnMessage: boolean,
+    currentUserName?: string | null,
+): string {
+    if (isOwnMessage) {
+        return currentUserName || "You";
+    }
+
+    return (
+        message.sender_name ||
+        message.sender?.full_name ||
+        message.sender?.name ||
+        message.sender?.email ||
+        "Unknown sender"
+    );
+}
+
+function getInitials(name: string): string {
+    const parts = name
+        .trim()
+        .split(" ")
+        .filter(Boolean);
+
+    if (parts.length === 0) {
+        return "U";
+    }
+
+    if (parts.length === 1) {
+        return parts[0].charAt(0).toUpperCase();
+    }
+
+    return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase();
 }
 
 export default function MessageBubble({
@@ -89,6 +128,14 @@ export default function MessageBubble({
 
     const messageStatus = getMessageStatus(message);
 
+    const senderName = getSenderName(
+        message,
+        isOwnMessage,
+        currentUserName,
+    );
+
+    const sentAt = formatMessageDateTime(message.created_at);
+
     return (
         <div
             className={`group flex ${isOwnMessage ? "justify-end" : "justify-start"
@@ -99,15 +146,28 @@ export default function MessageBubble({
                     }`}
             >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-300 text-sm font-semibold text-white">
-                    {isOwnMessage
-                        ? currentUserName?.charAt(0) || "M"
-                        : "U"}
+                    {getInitials(senderName)}
                 </div>
 
                 <div
                     className={`flex flex-col ${isOwnMessage ? "items-end" : "items-start"
                         }`}
                 >
+                    <div
+                        className={`mb-1 flex flex-wrap items-center gap-2 text-xs ${isOwnMessage
+                            ? "justify-end text-gray-400"
+                            : "justify-start text-gray-500"
+                            }`}
+                    >
+                        <span className="font-semibold text-gray-700">
+                            {senderName}
+                        </span>
+
+                        <span aria-hidden="true">·</span>
+
+                        <time dateTime={message.created_at}>{sentAt}</time>
+                    </div>
+
                     <div
                         className={`rounded-3xl px-5 py-3 shadow-sm transition-all ${isOwnMessage
                             ? "bg-blue-600 text-white"
@@ -137,15 +197,15 @@ export default function MessageBubble({
                             </p>
                         ) : null}
 
-                        <MessageAttachmentList attachments={message.attachments} />
+                        <MessageAttachmentList
+                            attachments={message.attachments}
+                        />
                     </div>
 
                     <div
                         className={`mt-1 flex items-center gap-2 text-xs ${isOwnMessage ? "text-gray-400" : "text-gray-500"
                             }`}
                     >
-                        <span>{formatMessageTime(message.created_at)}</span>
-
                         {isOwnMessage && (
                             <div
                                 className="flex items-center gap-1"

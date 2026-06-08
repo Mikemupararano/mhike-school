@@ -19,6 +19,42 @@ class MessageService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    def hydrate_message_sender_name(self, message: Message | None) -> None:
+        if message is None:
+            return
+
+        sender = getattr(message, "sender", None)
+
+        message.sender_name = (
+            getattr(sender, "full_name", None)
+            or getattr(sender, "email", None)
+            or "Unknown sender"
+        )
+
+        if message.reply_to:
+            reply_sender = getattr(message.reply_to, "sender", None)
+
+            message.reply_to.sender_name = (
+                getattr(reply_sender, "full_name", None)
+                or getattr(reply_sender, "email", None)
+                or "Unknown sender"
+            )
+
+    def hydrate_conversation_sender_names(
+        self,
+        conversation: Conversation | None,
+    ) -> None:
+        if conversation is None:
+            return
+
+        for message in conversation.messages:
+            self.hydrate_message_sender_name(message)
+
+        latest_message = self.get_latest_message(conversation)
+
+        if latest_message:
+            self.hydrate_message_sender_name(latest_message)
+
     async def get_user_conversations(
         self,
         *,
@@ -42,7 +78,16 @@ class MessageService:
                 selectinload(
                     Conversation.messages,
                 ).selectinload(
+                    Message.sender,
+                ),
+                selectinload(
+                    Conversation.messages,
+                )
+                .selectinload(
                     Message.reply_to,
+                )
+                .selectinload(
+                    Message.sender,
                 ),
                 selectinload(
                     Conversation.messages,
@@ -60,11 +105,11 @@ class MessageService:
             )
         )
 
-        conversations = list(
-            result.scalars().unique().all(),
-        )
+        conversations = list(result.scalars().unique().all())
 
         for conversation in conversations:
+            self.hydrate_conversation_sender_names(conversation)
+
             conversation.unread_count = await self.get_conversation_unread_count(
                 conversation_id=conversation.id,
                 user_id=user_id,
@@ -105,7 +150,16 @@ class MessageService:
                 selectinload(
                     Conversation.messages,
                 ).selectinload(
+                    Message.sender,
+                ),
+                selectinload(
+                    Conversation.messages,
+                )
+                .selectinload(
                     Message.reply_to,
+                )
+                .selectinload(
+                    Message.sender,
                 ),
                 selectinload(
                     Conversation.messages,
@@ -123,6 +177,8 @@ class MessageService:
         conversation = result.scalars().unique().first()
 
         if conversation:
+            self.hydrate_conversation_sender_names(conversation)
+
             conversation.unread_count = await self.get_conversation_unread_count(
                 conversation_id=conversation.id,
                 user_id=user_id,
@@ -229,7 +285,12 @@ class MessageService:
             )
             .options(
                 selectinload(
+                    Message.sender,
+                ),
+                selectinload(
                     Message.reply_to,
+                ).selectinload(
+                    Message.sender,
                 ),
                 selectinload(
                     Message.deliveries,
@@ -240,7 +301,10 @@ class MessageService:
             )
         )
 
-        return result.scalar_one()
+        saved_message = result.scalar_one()
+        self.hydrate_message_sender_name(saved_message)
+
+        return saved_message
 
     async def get_message(
         self,
@@ -254,7 +318,12 @@ class MessageService:
             )
             .options(
                 selectinload(
+                    Message.sender,
+                ),
+                selectinload(
                     Message.reply_to,
+                ).selectinload(
+                    Message.sender,
                 ),
                 selectinload(
                     Message.deliveries,
@@ -265,7 +334,10 @@ class MessageService:
             )
         )
 
-        return result.scalar_one_or_none()
+        message = result.scalar_one_or_none()
+        self.hydrate_message_sender_name(message)
+
+        return message
 
     async def attach_file_to_message(
         self,
@@ -315,9 +387,7 @@ class MessageService:
         user_id: int,
     ) -> ConversationParticipant | None:
         result = await self.db.execute(
-            select(
-                ConversationParticipant,
-            ).where(
+            select(ConversationParticipant).where(
                 ConversationParticipant.conversation_id == conversation_id,
                 ConversationParticipant.user_id == user_id,
             )
@@ -369,9 +439,7 @@ class MessageService:
                 MessageDelivery.user_id == user_id,
             )
             .options(
-                selectinload(
-                    MessageDelivery.message,
-                ),
+                selectinload(MessageDelivery.message),
             )
         )
 
@@ -406,9 +474,7 @@ class MessageService:
                 MessageDelivery.user_id == user_id,
             )
             .options(
-                selectinload(
-                    MessageDelivery.message,
-                ),
+                selectinload(MessageDelivery.message),
             )
         )
 
@@ -461,11 +527,7 @@ class MessageService:
         user_id: int,
     ) -> int:
         result = await self.db.execute(
-            select(
-                func.count(
-                    MessageDelivery.id,
-                )
-            ).where(
+            select(func.count(MessageDelivery.id)).where(
                 MessageDelivery.user_id == user_id,
                 MessageDelivery.read_at.is_(None),
             )
@@ -482,16 +544,14 @@ class MessageService:
 
         return max(
             conversation.messages,
-            key=lambda m: m.created_at,
+            key=lambda message: message.created_at,
         )
 
     def get_last_activity(
         self,
         conversation: Conversation,
     ) -> datetime | None:
-        latest_message = self.get_latest_message(
-            conversation,
-        )
+        latest_message = self.get_latest_message(conversation)
 
         if latest_message:
             return latest_message.created_at
@@ -513,18 +573,14 @@ class MessageService:
             )
         )
 
-        return list(
-            result.scalars().all(),
-        )
+        return list(result.scalars().all())
 
     def get_message_upload_path(
         self,
         *,
         school_id: int,
     ) -> Path:
-        path = Path(
-            f"uploads/messages/{school_id}",
-        )
+        path = Path(f"uploads/messages/{school_id}")
 
         path.mkdir(
             parents=True,

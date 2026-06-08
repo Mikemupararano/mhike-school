@@ -11,9 +11,17 @@ export type SchoolMessageUser = {
     role: string;
 };
 
+export type MessageSender = {
+    id: number;
+    full_name?: string | null;
+    name?: string | null;
+    email?: string | null;
+};
+
 export type MessageReply = {
     id: number;
     sender_id: number | null;
+    sender_name?: string | null;
     body: string;
     created_at: string;
 };
@@ -68,6 +76,8 @@ export type Message = {
     id: number;
     conversation_id: number;
     sender_id: number | null;
+    sender_name?: string | null;
+    sender?: MessageSender | null;
     body: string;
     reply_to_message_id?: number | null;
     reply_to?: MessageReply | null;
@@ -97,6 +107,7 @@ export type ConversationLatestMessage = {
     id: number;
     body: string;
     sender_id?: number | null;
+    sender_name?: string | null;
     created_at: string;
 };
 
