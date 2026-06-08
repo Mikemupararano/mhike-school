@@ -91,7 +91,10 @@ export async function uploadMessageFile(
 ): Promise<MessageAttachmentUploadResponse> {
     const formData = new FormData();
 
-    formData.append("file", file);
+    formData.append(
+        "file",
+        file,
+    );
 
     return apiPostForm<MessageAttachmentUploadResponse>(
         "/messages/messages/upload",
@@ -113,7 +116,7 @@ export async function getMessageAttachments(
     messageId: number | string,
 ): Promise<MessageAttachment[]> {
     return apiGet<MessageAttachment[]>(
-        `/message-attachments/messages/${messageId}/attachments`,
+        `/messages/attachments/messages/${messageId}`,
     );
 }
 
@@ -121,16 +124,19 @@ export async function getAttachment(
     attachmentId: number | string,
 ): Promise<MessageAttachmentDownload> {
     return apiGet<MessageAttachmentDownload>(
-        `/message-attachments/${attachmentId}`,
+        `/messages/attachments/${attachmentId}`,
     );
 }
 
 export function getAttachmentDownloadUrl(
     attachmentId: number | string,
 ): string {
-    const base = API_BASE_URL.replace(/\/+$/, "");
+    const base = API_BASE_URL.replace(
+        /\/+$/,
+        "",
+    );
 
-    return `${base}/message-attachments/${attachmentId}/download`;
+    return `${base}/messages/attachments/${attachmentId}/download`;
 }
 
 export async function downloadAttachment(
@@ -139,7 +145,9 @@ export async function downloadAttachment(
     const token = getToken();
 
     const response = await fetch(
-        getAttachmentDownloadUrl(attachment.id),
+        getAttachmentDownloadUrl(
+            attachment.id,
+        ),
         {
             method: "GET",
             headers: {
@@ -153,23 +161,33 @@ export async function downloadAttachment(
     );
 
     if (!response.ok) {
-        throw new Error("Failed to download attachment.");
+        throw new Error(
+            "Failed to download attachment.",
+        );
     }
 
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(
+        blob,
+    );
 
-    const link = document.createElement("a");
+    const link =
+        document.createElement("a");
 
     link.href = url;
+
     link.download =
         attachment.original_filename ||
         attachment.filename;
 
-    document.body.appendChild(link);
+    document.body.appendChild(
+        link,
+    );
 
     link.click();
     link.remove();
 
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(
+        url,
+    );
 }

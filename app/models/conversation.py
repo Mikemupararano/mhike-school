@@ -86,7 +86,6 @@ class Conversation(Base):
     )
 
     # Runtime-only fields populated by MessageService
-
     unread_count: ClassVar[int]
     latest_message: ClassVar["Message | None"]
     last_activity: ClassVar[datetime | None]
@@ -196,6 +195,11 @@ class Message(Base):
         "Conversation",
         back_populates="messages",
         foreign_keys=[conversation_id],
+    )
+
+    sender: Mapped["User | None"] = relationship(
+        "User",
+        foreign_keys=[sender_id],
     )
 
     reply_to: Mapped["Message | None"] = relationship(

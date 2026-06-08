@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -230,10 +231,10 @@ async def upload_message_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> MessageAttachmentOut:
     if current_user.school_id is None:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="User is not assigned to a school.",
         )
 
@@ -266,7 +267,7 @@ async def upload_message_file(
         mime_type=file.content_type or "application/octet-stream",
         file_size=len(contents),
         storage_path=str(destination),
-        created_at=None,
+        created_at=datetime.now(UTC),
     )
 
 
@@ -288,7 +289,7 @@ async def attach_file_to_message(
 
     if message is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Message not found.",
         )
 
@@ -318,7 +319,7 @@ async def get_attachment(
     attachment_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> MessageAttachmentDownloadOut:
     service = MessageService(db)
 
     attachment = await service.get_attachment(
@@ -327,7 +328,7 @@ async def get_attachment(
 
     if attachment is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Attachment not found.",
         )
 
@@ -348,7 +349,7 @@ async def download_attachment(
     attachment_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> FileResponse:
     service = MessageService(db)
 
     attachment = await service.get_attachment(
@@ -357,7 +358,7 @@ async def download_attachment(
 
     if attachment is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Attachment not found.",
         )
 
