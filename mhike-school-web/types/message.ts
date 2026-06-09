@@ -44,11 +44,13 @@ export type MessageAttachment = {
     file_size: number;
     storage_path: string;
     created_at: string;
+    is_image?: boolean;
+    download_url?: string;
 };
 
 export type MessageAttachmentUploadResponse = {
     id: number;
-    message_id: number;
+    message_id?: number | null;
     uploaded_by_id?: number | null;
     filename: string;
     original_filename: string;
@@ -56,6 +58,8 @@ export type MessageAttachmentUploadResponse = {
     file_size: number;
     storage_path: string;
     created_at?: string | null;
+    is_image?: boolean;
+    download_url?: string;
 };
 
 export type MessageAttachmentCreateResponse = {
@@ -70,6 +74,8 @@ export type MessageAttachmentDownload = {
     mime_type: string;
     file_size: number;
     storage_path: string;
+    is_image?: boolean;
+    download_url?: string;
 };
 
 export type Message = {
@@ -97,7 +103,7 @@ export type ConversationParticipantUser = {
 export type ConversationParticipant = {
     id: number;
     user_id: number;
-    conversation_id: number;
+    conversation_id?: number | null;
     joined_at?: string;
     last_read_at?: string | null;
     user?: ConversationParticipantUser | null;

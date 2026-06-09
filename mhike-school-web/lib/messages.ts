@@ -116,7 +116,7 @@ export async function getMessageAttachments(
     messageId: number | string,
 ): Promise<MessageAttachment[]> {
     return apiGet<MessageAttachment[]>(
-        `/messages/attachments/messages/${messageId}`,
+        `/message-attachments/messages/${messageId}/attachments`,
     );
 }
 
@@ -124,7 +124,7 @@ export async function getAttachment(
     attachmentId: number | string,
 ): Promise<MessageAttachmentDownload> {
     return apiGet<MessageAttachmentDownload>(
-        `/messages/attachments/${attachmentId}`,
+        `/message-attachments/${attachmentId}`,
     );
 }
 
@@ -136,7 +136,21 @@ export function getAttachmentDownloadUrl(
         "",
     );
 
-    return `${base}/messages/attachments/${attachmentId}/download`;
+    return `${base}/message-attachments/${attachmentId}/download`;
+}
+
+export function getAttachmentPreviewUrl(
+    attachment: MessageAttachment,
+): string {
+    return getAttachmentDownloadUrl(
+        attachment.id,
+    );
+}
+
+export function isImageAttachment(
+    attachment: Pick<MessageAttachment, "mime_type">,
+): boolean {
+    return attachment.mime_type.startsWith("image/");
 }
 
 export async function downloadAttachment(
@@ -171,8 +185,7 @@ export async function downloadAttachment(
         blob,
     );
 
-    const link =
-        document.createElement("a");
+    const link = document.createElement("a");
 
     link.href = url;
 

@@ -56,9 +56,12 @@ export default function ConversationPage() {
             await markConversationRead(conversationId);
 
             setError(null);
+
+            return data;
         } catch (err) {
             console.error(err);
             setError("Unable to load conversation.");
+            return null;
         } finally {
             setLoading(false);
         }
@@ -143,10 +146,6 @@ export default function ConversationPage() {
             const upload = await uploadMessageFile(selectedFile);
 
             await attachFileToMessage(messageId, upload);
-
-            await loadConversation();
-
-            setSelectedFile(null);
         } finally {
             setUploadingAttachment(false);
         }
@@ -191,6 +190,17 @@ export default function ConversationPage() {
             }
         });
 
+        socket.on("messages:refresh", async (payload) => {
+            if (
+                payload?.conversation_id &&
+                Number(payload.conversation_id) !== Number(conversationId)
+            ) {
+                return;
+            }
+
+            await loadConversation();
+        });
+
         socket.on("message:delivered", (delivery: MessageDelivery) => {
             applyDeliveryUpdate(delivery);
         });
@@ -233,6 +243,7 @@ export default function ConversationPage() {
             });
 
             socket.off("message:new");
+            socket.off("messages:refresh");
             socket.off("message:delivered");
             socket.off("message:read");
             socket.off("typing:start");
@@ -315,6 +326,13 @@ export default function ConversationPage() {
                 reply_to_message_id: replyToMessage?.id ?? null,
             });
 
+            if (selectedFile) {
+                await uploadAttachmentForMessage(message.id);
+                await loadConversation();
+            } else {
+                appendMessage(message);
+            }
+
             const socket = getSocket({
                 user_id: user.id,
                 school_id: user.school_id,
@@ -326,11 +344,10 @@ export default function ConversationPage() {
                 full_name: user.full_name,
             });
 
-            appendMessage(message);
-
-            if (selectedFile) {
-                await uploadAttachmentForMessage(message.id);
-            }
+            socket.emit("send_message", {
+                ...message,
+                conversation_id: conversationId,
+            });
 
             setMessageBody("");
             setReplyToMessage(null);

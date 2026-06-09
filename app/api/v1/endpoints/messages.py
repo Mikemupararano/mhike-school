@@ -2,14 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    HTTPException,
-    UploadFile,
-    status,
-)
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,10 +42,7 @@ async def get_school_users(
         )
 
     service = MessageService(db)
-
-    users = await service.get_school_users(
-        school_id=current_user.school_id,
-    )
+    users = await service.get_school_users(school_id=current_user.school_id)
 
     return [
         {
@@ -65,38 +55,25 @@ async def get_school_users(
     ]
 
 
-@router.get(
-    "/unread-count",
-    response_model=UnreadMessageCountOut,
-)
+@router.get("/unread-count", response_model=UnreadMessageCountOut)
 async def get_unread_count(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> UnreadMessageCountOut:
     service = MessageService(db)
+    unread_count = await service.get_unread_count(user_id=current_user.id)
 
-    unread_count = await service.get_unread_count(
-        user_id=current_user.id,
-    )
-
-    return UnreadMessageCountOut(
-        unread_count=unread_count,
-    )
+    return UnreadMessageCountOut(unread_count=unread_count)
 
 
-@router.get(
-    "/conversations",
-    response_model=list[ConversationOut],
-)
+@router.get("/conversations", response_model=list[ConversationOut])
 async def get_my_conversations(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[ConversationOut]:
     service = MessageService(db)
 
-    return await service.get_user_conversations(
-        user_id=current_user.id,
-    )
+    return await service.get_user_conversations(user_id=current_user.id)
 
 
 @router.post(
@@ -211,9 +188,7 @@ async def send_message(
             detail="Unable to send message.",
         )
 
-    message_out = MessageOut.model_validate(
-        message,
-    )
+    message_out = MessageOut.model_validate(message)
 
     await emit_conversation_message(
         conversation_id=conversation_id,
@@ -232,6 +207,8 @@ async def upload_message_file(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MessageAttachmentOut:
+    _ = db
+
     if current_user.school_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -239,24 +216,14 @@ async def upload_message_file(
         )
 
     service = MessageService(db)
+    upload_dir = service.get_message_upload_path(school_id=current_user.school_id)
 
-    upload_dir = service.get_message_upload_path(
-        school_id=current_user.school_id,
-    )
-
-    extension = Path(
-        file.filename or "",
-    ).suffix
-
+    extension = Path(file.filename or "").suffix
     generated_name = f"{uuid4().hex}{extension}"
-
     destination = upload_dir / generated_name
 
     contents = await file.read()
-
-    destination.write_bytes(
-        contents,
-    )
+    destination.write_bytes(contents)
 
     return MessageAttachmentOut(
         id=0,
@@ -283,9 +250,7 @@ async def attach_file_to_message(
 ) -> MessageAttachmentCreateOut:
     service = MessageService(db)
 
-    message = await service.get_message(
-        message_id=message_id,
-    )
+    message = await service.get_message(message_id=message_id)
 
     if message is None:
         raise HTTPException(
@@ -303,11 +268,16 @@ async def attach_file_to_message(
         storage_path=payload.storage_path,
     )
 
+    await emit_conversation_message(
+        conversation_id=message.conversation_id,
+        payload=MessageOut.model_validate(
+            await service.get_message(message_id=message_id),
+        ).model_dump(mode="json"),
+    )
+
     return MessageAttachmentCreateOut(
         success=True,
-        attachment=MessageAttachmentOut.model_validate(
-            attachment,
-        ),
+        attachment=MessageAttachmentOut.model_validate(attachment),
     )
 
 
@@ -320,11 +290,10 @@ async def get_attachment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MessageAttachmentDownloadOut:
-    service = MessageService(db)
+    _ = current_user
 
-    attachment = await service.get_attachment(
-        attachment_id=attachment_id,
-    )
+    service = MessageService(db)
+    attachment = await service.get_attachment(attachment_id=attachment_id)
 
     if attachment is None:
         raise HTTPException(
@@ -342,19 +311,16 @@ async def get_attachment(
     )
 
 
-@router.get(
-    "/attachments/{attachment_id}/download",
-)
+@router.get("/attachments/{attachment_id}/download")
 async def download_attachment(
     attachment_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FileResponse:
-    service = MessageService(db)
+    _ = current_user
 
-    attachment = await service.get_attachment(
-        attachment_id=attachment_id,
-    )
+    service = MessageService(db)
+    attachment = await service.get_attachment(attachment_id=attachment_id)
 
     if attachment is None:
         raise HTTPException(
@@ -362,8 +328,16 @@ async def download_attachment(
             detail="Attachment not found.",
         )
 
+    file_path = Path(attachment.storage_path)
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment file not found on disk.",
+        )
+
     return FileResponse(
-        attachment.storage_path,
+        file_path,
         filename=attachment.original_filename,
         media_type=attachment.mime_type,
     )
@@ -391,9 +365,7 @@ async def mark_message_delivered(
             detail="Message delivery record not found.",
         )
 
-    delivery_out = MessageDeliveryOut.model_validate(
-        delivery,
-    )
+    delivery_out = MessageDeliveryOut.model_validate(delivery)
 
     await emit_message_delivered(
         conversation_id=delivery.message.conversation_id,
@@ -425,9 +397,7 @@ async def mark_message_read(
             detail="Message delivery record not found.",
         )
 
-    delivery_out = MessageDeliveryOut.model_validate(
-        delivery,
-    )
+    delivery_out = MessageDeliveryOut.model_validate(delivery)
 
     await emit_message_read(
         conversation_id=delivery.message.conversation_id,

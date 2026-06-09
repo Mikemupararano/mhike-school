@@ -10,7 +10,6 @@ ALLOWED_SOCKET_ORIGINS = os.getenv(
     "http://localhost:3000,http://127.0.0.1:3000",
 ).split(",")
 
-
 sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins=ALLOWED_SOCKET_ORIGINS,
@@ -40,6 +39,8 @@ async def connect(
     environ: dict[str, Any],
     auth: dict[str, Any] | None,
 ) -> None:
+    _ = environ
+
     user_id = None
     school_id = None
 
@@ -48,16 +49,10 @@ async def connect(
         school_id = auth.get("school_id")
 
     if user_id is not None:
-        await sio.enter_room(
-            sid,
-            _room_user(user_id),
-        )
+        await sio.enter_room(sid, _room_user(user_id))
 
     if school_id is not None:
-        await sio.enter_room(
-            sid,
-            _room_school(school_id),
-        )
+        await sio.enter_room(sid, _room_school(school_id))
 
     print(
         "Socket connected:",
@@ -84,10 +79,7 @@ async def join_conversation(
     if conversation_id is None:
         return
 
-    await sio.enter_room(
-        sid,
-        _room_conversation(conversation_id),
-    )
+    await sio.enter_room(sid, _room_conversation(conversation_id))
 
     print(
         "Socket joined conversation:",
@@ -106,10 +98,7 @@ async def leave_conversation(
     if conversation_id is None:
         return
 
-    await sio.leave_room(
-        sid,
-        _room_conversation(conversation_id),
-    )
+    await sio.leave_room(sid, _room_conversation(conversation_id))
 
     print(
         "Socket left conversation:",
@@ -128,19 +117,9 @@ async def send_message(
     if conversation_id is None:
         return
 
-    await sio.emit(
-        "message:new",
-        data,
-        room=_room_conversation(conversation_id),
-    )
-
-    await sio.emit(
-        "messages:refresh",
-        {
-            "conversation_id": conversation_id,
-            "message_id": data.get("id"),
-        },
-        room=_room_conversation(conversation_id),
+    await emit_conversation_message(
+        conversation_id=int(conversation_id),
+        payload=data,
     )
 
     print(
@@ -158,22 +137,10 @@ async def typing_start(
     sid: str,
     data: dict[str, Any],
 ) -> None:
-    conversation_id = data.get("conversation_id")
-    user_id = data.get("user_id")
-    full_name = data.get("full_name")
-
-    if conversation_id is None or user_id is None:
-        return
-
-    await sio.emit(
-        "typing:start",
-        {
-            "conversation_id": conversation_id,
-            "user_id": user_id,
-            "full_name": full_name,
-        },
-        room=_room_conversation(conversation_id),
-        skip_sid=sid,
+    await _emit_typing_event(
+        sid=sid,
+        event_name="typing:start",
+        data=data,
     )
 
 
@@ -182,15 +149,28 @@ async def typing_stop(
     sid: str,
     data: dict[str, Any],
 ) -> None:
+    await _emit_typing_event(
+        sid=sid,
+        event_name="typing:stop",
+        data=data,
+    )
+
+
+async def _emit_typing_event(
+    *,
+    sid: str,
+    event_name: str,
+    data: dict[str, Any],
+) -> None:
     conversation_id = data.get("conversation_id")
     user_id = data.get("user_id")
-    full_name = data.get("full_name")
+    full_name = data.get("full_name") or data.get("user_name")
 
     if conversation_id is None or user_id is None:
         return
 
     await sio.emit(
-        "typing:stop",
+        event_name,
         {
             "conversation_id": conversation_id,
             "user_id": user_id,

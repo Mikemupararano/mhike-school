@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class ConversationCreate(BaseModel):
@@ -67,6 +69,16 @@ class MessageAttachmentOut(BaseModel):
     storage_path: str
     created_at: datetime
 
+    @computed_field
+    @property
+    def is_image(self) -> bool:
+        return self.mime_type.startswith("image/")
+
+    @computed_field
+    @property
+    def download_url(self) -> str:
+        return f"/api/v1/message-attachments/{self.id}/download"
+
 
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -74,8 +86,6 @@ class MessageOut(BaseModel):
     id: int
     conversation_id: int
     sender_id: int | None
-
-    # NEW
     sender_name: str | None = None
 
     reply_to_message_id: int | None = None
@@ -86,13 +96,9 @@ class MessageOut(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
 
-    deliveries: list[MessageDeliveryOut] = Field(
-        default_factory=list,
-    )
+    deliveries: list[MessageDeliveryOut] = Field(default_factory=list)
 
-    attachments: list[MessageAttachmentOut] = Field(
-        default_factory=list,
-    )
+    attachments: list[MessageAttachmentOut] = Field(default_factory=list)
 
 
 class ConversationLatestMessageOut(BaseModel):
@@ -101,10 +107,7 @@ class ConversationLatestMessageOut(BaseModel):
     id: int
     body: str
     sender_id: int | None = None
-
-    # NEW
     sender_name: str | None = None
-
     created_at: datetime
 
 
@@ -115,24 +118,16 @@ class ConversationOut(BaseModel):
     school_id: int | None
     title: str | None
     conversation_type: str
-
     created_by_id: int | None
 
     created_at: datetime
     updated_at: datetime | None = None
 
-    participants: list[ConversationParticipantOut] = Field(
-        default_factory=list,
-    )
-
-    messages: list[MessageOut] = Field(
-        default_factory=list,
-    )
+    participants: list[ConversationParticipantOut] = Field(default_factory=list)
+    messages: list[MessageOut] = Field(default_factory=list)
 
     unread_count: int = 0
-
     latest_message: ConversationLatestMessageOut | None = None
-
     last_activity: datetime | None = None
 
 
@@ -159,3 +154,13 @@ class MessageAttachmentDownloadOut(BaseModel):
     mime_type: str
     file_size: int
     storage_path: str
+
+    @computed_field
+    @property
+    def is_image(self) -> bool:
+        return self.mime_type.startswith("image/")
+
+    @computed_field
+    @property
+    def download_url(self) -> str:
+        return f"/api/v1/message-attachments/{self.id}/download"

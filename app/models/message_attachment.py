@@ -47,6 +47,7 @@ class MessageAttachment(Base):
     mime_type: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
+        index=True,
     )
 
     file_size: Mapped[int] = mapped_column(
@@ -65,11 +66,16 @@ class MessageAttachment(Base):
         nullable=False,
     )
 
-    message = relationship(
+    message: Mapped["Message"] = relationship(
         "Message",
         back_populates="attachments",
     )
 
-    uploaded_by = relationship(
+    uploaded_by: Mapped["User | None"] = relationship(
         "User",
+        lazy="selectin",
     )
+
+    @property
+    def is_image(self) -> bool:
+        return self.mime_type.startswith("image/")

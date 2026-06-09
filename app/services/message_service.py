@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from pathlib import Path
 
@@ -66,43 +68,19 @@ class MessageService:
                 ConversationParticipant,
                 ConversationParticipant.conversation_id == Conversation.id,
             )
-            .where(
-                ConversationParticipant.user_id == user_id,
-            )
+            .where(ConversationParticipant.user_id == user_id)
             .options(
-                selectinload(
-                    Conversation.participants,
-                ).selectinload(
-                    ConversationParticipant.user,
+                selectinload(Conversation.participants).selectinload(
+                    ConversationParticipant.user
                 ),
-                selectinload(
-                    Conversation.messages,
-                ).selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Conversation.messages,
-                )
-                .selectinload(
-                    Message.reply_to,
-                )
-                .selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Conversation.messages,
-                ).selectinload(
-                    Message.deliveries,
-                ),
-                selectinload(
-                    Conversation.messages,
-                ).selectinload(
-                    Message.attachments,
-                ),
+                selectinload(Conversation.messages).selectinload(Message.sender),
+                selectinload(Conversation.messages)
+                .selectinload(Message.reply_to)
+                .selectinload(Message.sender),
+                selectinload(Conversation.messages).selectinload(Message.deliveries),
+                selectinload(Conversation.messages).selectinload(Message.attachments),
             )
-            .order_by(
-                Conversation.updated_at.desc(),
-            )
+            .order_by(Conversation.updated_at.desc())
         )
 
         conversations = list(result.scalars().unique().all())
@@ -114,14 +92,8 @@ class MessageService:
                 conversation_id=conversation.id,
                 user_id=user_id,
             )
-
-            conversation.latest_message = self.get_latest_message(
-                conversation,
-            )
-
-            conversation.last_activity = self.get_last_activity(
-                conversation,
-            )
+            conversation.latest_message = self.get_latest_message(conversation)
+            conversation.last_activity = self.get_last_activity(conversation)
 
         return conversations
 
@@ -142,35 +114,15 @@ class MessageService:
                 ConversationParticipant.user_id == user_id,
             )
             .options(
-                selectinload(
-                    Conversation.participants,
-                ).selectinload(
-                    ConversationParticipant.user,
+                selectinload(Conversation.participants).selectinload(
+                    ConversationParticipant.user
                 ),
-                selectinload(
-                    Conversation.messages,
-                ).selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Conversation.messages,
-                )
-                .selectinload(
-                    Message.reply_to,
-                )
-                .selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Conversation.messages,
-                ).selectinload(
-                    Message.deliveries,
-                ),
-                selectinload(
-                    Conversation.messages,
-                ).selectinload(
-                    Message.attachments,
-                ),
+                selectinload(Conversation.messages).selectinload(Message.sender),
+                selectinload(Conversation.messages)
+                .selectinload(Message.reply_to)
+                .selectinload(Message.sender),
+                selectinload(Conversation.messages).selectinload(Message.deliveries),
+                selectinload(Conversation.messages).selectinload(Message.attachments),
             )
         )
 
@@ -183,14 +135,8 @@ class MessageService:
                 conversation_id=conversation.id,
                 user_id=user_id,
             )
-
-            conversation.latest_message = self.get_latest_message(
-                conversation,
-            )
-
-            conversation.last_activity = self.get_last_activity(
-                conversation,
-            )
+            conversation.latest_message = self.get_latest_message(conversation)
+            conversation.last_activity = self.get_last_activity(conversation)
 
         return conversation
 
@@ -202,13 +148,8 @@ class MessageService:
         participant_ids: list[int],
         title: str | None,
         conversation_type: str,
-    ) -> Conversation:
-        unique_participant_ids = sorted(
-            {
-                created_by_id,
-                *participant_ids,
-            },
-        )
+    ) -> Conversation | None:
+        unique_participant_ids = sorted({created_by_id, *participant_ids})
 
         conversation = Conversation(
             school_id=school_id,
@@ -218,7 +159,6 @@ class MessageService:
         )
 
         self.db.add(conversation)
-
         await self.db.flush()
 
         for participant_id in unique_participant_ids:
@@ -260,7 +200,6 @@ class MessageService:
         )
 
         self.db.add(message)
-
         conversation.updated_at = func.now()
 
         await self.db.flush()
@@ -278,32 +217,7 @@ class MessageService:
 
         await self.db.commit()
 
-        result = await self.db.execute(
-            select(Message)
-            .where(
-                Message.id == message.id,
-            )
-            .options(
-                selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Message.reply_to,
-                ).selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Message.deliveries,
-                ),
-                selectinload(
-                    Message.attachments,
-                ),
-            )
-        )
-
-        saved_message = result.scalar_one()
-        self.hydrate_message_sender_name(saved_message)
-
+        saved_message = await self.get_message(message_id=message.id)
         return saved_message
 
     async def get_message(
@@ -313,24 +227,12 @@ class MessageService:
     ) -> Message | None:
         result = await self.db.execute(
             select(Message)
-            .where(
-                Message.id == message_id,
-            )
+            .where(Message.id == message_id)
             .options(
-                selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Message.reply_to,
-                ).selectinload(
-                    Message.sender,
-                ),
-                selectinload(
-                    Message.deliveries,
-                ),
-                selectinload(
-                    Message.attachments,
-                ),
+                selectinload(Message.sender),
+                selectinload(Message.reply_to).selectinload(Message.sender),
+                selectinload(Message.deliveries),
+                selectinload(Message.attachments),
             )
         )
 
@@ -361,7 +263,6 @@ class MessageService:
         )
 
         self.db.add(attachment)
-
         await self.db.commit()
         await self.db.refresh(attachment)
 
@@ -379,6 +280,12 @@ class MessageService:
         )
 
         return result.scalar_one_or_none()
+
+    def get_attachment_download_url(
+        self,
+        attachment: MessageAttachment,
+    ) -> str:
+        return f"/api/v1/message-attachments/{attachment.id}/download"
 
     async def mark_conversation_read(
         self,
@@ -398,14 +305,12 @@ class MessageService:
         if participant is None:
             return None
 
-        participant.last_read_at = func.now()
+        now = func.now()
+        participant.last_read_at = now
 
         result = await self.db.execute(
             select(MessageDelivery)
-            .join(
-                Message,
-                Message.id == MessageDelivery.message_id,
-            )
+            .join(Message, Message.id == MessageDelivery.message_id)
             .where(
                 Message.conversation_id == conversation_id,
                 MessageDelivery.user_id == user_id,
@@ -416,10 +321,10 @@ class MessageService:
         deliveries = result.scalars().all()
 
         for delivery in deliveries:
-            delivery.read_at = func.now()
+            delivery.read_at = now
 
             if delivery.delivered_at is None:
-                delivery.delivered_at = func.now()
+                delivery.delivered_at = now
 
         await self.db.commit()
         await self.db.refresh(participant)
@@ -433,13 +338,9 @@ class MessageService:
         user_id: int,
     ) -> MessageDelivery | None:
         result = await self.db.execute(
-            select(MessageDelivery)
-            .where(
+            select(MessageDelivery).where(
                 MessageDelivery.message_id == message_id,
                 MessageDelivery.user_id == user_id,
-            )
-            .options(
-                selectinload(MessageDelivery.message),
             )
         )
 
@@ -452,14 +353,9 @@ class MessageService:
             delivery.delivered_at = func.now()
 
         await self.db.commit()
+        await self.db.refresh(delivery)
 
-        result = await self.db.execute(
-            select(MessageDelivery).where(
-                MessageDelivery.id == delivery.id,
-            )
-        )
-
-        return result.scalar_one()
+        return delivery
 
     async def mark_message_read(
         self,
@@ -468,13 +364,9 @@ class MessageService:
         user_id: int,
     ) -> MessageDelivery | None:
         result = await self.db.execute(
-            select(MessageDelivery)
-            .where(
+            select(MessageDelivery).where(
                 MessageDelivery.message_id == message_id,
                 MessageDelivery.user_id == user_id,
-            )
-            .options(
-                selectinload(MessageDelivery.message),
             )
         )
 
@@ -483,21 +375,18 @@ class MessageService:
         if delivery is None:
             return None
 
+        now = func.now()
+
         if delivery.delivered_at is None:
-            delivery.delivered_at = func.now()
+            delivery.delivered_at = now
 
         if delivery.read_at is None:
-            delivery.read_at = func.now()
+            delivery.read_at = now
 
         await self.db.commit()
+        await self.db.refresh(delivery)
 
-        result = await self.db.execute(
-            select(MessageDelivery).where(
-                MessageDelivery.id == delivery.id,
-            )
-        )
-
-        return result.scalar_one()
+        return delivery
 
     async def get_conversation_unread_count(
         self,
@@ -506,20 +395,17 @@ class MessageService:
         user_id: int,
     ) -> int:
         result = await self.db.execute(
-            select(func.count(Message.id))
-            .outerjoin(
-                MessageDelivery,
-                Message.id == MessageDelivery.message_id,
-            )
+            select(func.count(MessageDelivery.id))
+            .join(Message, Message.id == MessageDelivery.message_id)
             .where(
                 Message.conversation_id == conversation_id,
-                Message.sender_id != user_id,
-                MessageDelivery.read_at.is_(None),
                 MessageDelivery.user_id == user_id,
+                MessageDelivery.read_at.is_(None),
+                Message.sender_id != user_id,
             )
         )
 
-        return result.scalar_one() or 0
+        return int(result.scalar_one() or 0)
 
     async def get_unread_count(
         self,
@@ -533,12 +419,12 @@ class MessageService:
             )
         )
 
-        return result.scalar_one() or 0
+        return int(result.scalar_one() or 0)
 
     def get_latest_message(
         self,
         conversation: Conversation,
-    ):
+    ) -> Message | None:
         if not conversation.messages:
             return None
 
@@ -565,12 +451,8 @@ class MessageService:
     ) -> list[User]:
         result = await self.db.execute(
             select(User)
-            .where(
-                User.school_id == school_id,
-            )
-            .order_by(
-                User.full_name.asc(),
-            )
+            .where(User.school_id == school_id)
+            .order_by(User.full_name.asc())
         )
 
         return list(result.scalars().all())
@@ -580,7 +462,7 @@ class MessageService:
         *,
         school_id: int,
     ) -> Path:
-        path = Path(f"uploads/messages/{school_id}")
+        path = Path("uploads") / "messages" / str(school_id)
 
         path.mkdir(
             parents=True,
