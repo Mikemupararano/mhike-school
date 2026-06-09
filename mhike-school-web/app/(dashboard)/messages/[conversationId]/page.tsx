@@ -258,19 +258,15 @@ export default function ConversationPage() {
     }, [conversationId, user, loadConversation]);
 
     useEffect(() => {
-        if (!conversation?.messages || !user) {
-            return;
-        }
+        const visibleMessages = conversation?.messages ?? [];
 
-        const messages = conversation.messages;
+        if (visibleMessages.length === 0 || !user) return;
 
         async function markVisibleMessages() {
             let markedAnyMessage = false;
 
-            for (const message of messages) {
-                if (!shouldMarkMessageRead(message)) {
-                    continue;
-                }
+            for (const message of visibleMessages) {
+                if (!shouldMarkMessageRead(message)) continue;
 
                 try {
                     processedReadsRef.current.add(Number(message.id));
@@ -403,7 +399,7 @@ export default function ConversationPage() {
 
     if (loading) {
         return (
-            <div className="p-6 text-sm text-gray-500">
+            <div className="flex h-[calc(100vh-80px)] items-center justify-center bg-slate-50 text-sm text-gray-500">
                 Loading conversation...
             </div>
         );
@@ -411,8 +407,8 @@ export default function ConversationPage() {
 
     if (error) {
         return (
-            <div className="p-6">
-                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <div className="bg-slate-50 p-6">
+                <div className="mx-auto max-w-3xl rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                     {error}
                 </div>
             </div>
@@ -421,26 +417,28 @@ export default function ConversationPage() {
 
     if (!conversation) {
         return (
-            <div className="p-6 text-sm text-gray-500">
+            <div className="flex h-[calc(100vh-80px)] items-center justify-center bg-slate-50 text-sm text-gray-500">
                 Conversation not found.
             </div>
         );
     }
 
     return (
-        <div className="flex h-[calc(100vh-80px)] flex-col bg-gray-50">
+        <div className="flex h-[calc(100vh-80px)] flex-col bg-slate-50">
             <div className="border-b border-gray-200 bg-white px-6 py-4 shadow-sm">
-                <h1 className="text-2xl font-bold">
-                    {conversation.title || "Conversation"}
-                </h1>
+                <div className="mx-auto max-w-3xl">
+                    <h1 className="text-xl font-bold text-gray-900">
+                        {conversation.title || "Conversation"}
+                    </h1>
 
-                <p className="text-sm text-gray-500">
-                    {conversation.conversation_type}
-                </p>
+                    <p className="text-xs uppercase tracking-wide text-gray-500">
+                        {conversation.conversation_type}
+                    </p>
+                </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-6">
-                <div className="mx-auto flex max-w-5xl flex-col gap-4">
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+                <div className="mx-auto flex max-w-3xl flex-col gap-3">
                     {conversation.messages && conversation.messages.length > 0 ? (
                         conversation.messages.map((message) => (
                             <MessageBubble
@@ -465,8 +463,10 @@ export default function ConversationPage() {
             </div>
 
             {typingUsers.length > 0 && (
-                <div className="px-6 py-2 text-sm text-gray-500">
-                    {typingUsers.join(", ")} typing...
+                <div className="border-t border-gray-100 bg-white px-6 py-2">
+                    <div className="mx-auto max-w-3xl text-sm text-gray-500">
+                        {typingUsers.join(", ")} typing...
+                    </div>
                 </div>
             )}
 

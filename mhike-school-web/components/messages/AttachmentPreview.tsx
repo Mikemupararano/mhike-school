@@ -4,6 +4,7 @@ import Image from "next/image";
 import {
     Download,
     FileText,
+    Video,
 } from "lucide-react";
 
 import {
@@ -19,21 +20,20 @@ type AttachmentPreviewProps = {
 };
 
 function formatFileSize(bytes: number): string {
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)} KB`;
-    }
-
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function isVideoAttachment(attachment: MessageAttachment): boolean {
+    return attachment.mime_type.startsWith("video/");
 }
 
 export default function AttachmentPreview({
     attachment,
 }: AttachmentPreviewProps) {
     const imageAttachment = isImageAttachment(attachment);
+    const videoAttachment = isVideoAttachment(attachment);
     const previewUrl = getAttachmentPreviewUrl(attachment);
 
     return (
@@ -47,19 +47,35 @@ export default function AttachmentPreview({
                     <div className="relative h-64 w-full">
                         <Image
                             src={previewUrl}
-                            alt={
-                                attachment.original_filename ||
-                                attachment.filename
-                            }
+                            alt={attachment.original_filename || attachment.filename}
                             fill
                             unoptimized
                             className="object-cover"
                         />
                     </div>
                 </button>
+            ) : videoAttachment ? (
+                <div className="bg-black">
+                    <video
+                        controls
+                        preload="metadata"
+                        playsInline
+                        className="max-h-80 w-full bg-black"
+                    >
+                        <source
+                            src={previewUrl}
+                            type={attachment.mime_type || "video/mp4"}
+                        />
+                        Your browser does not support video playback.
+                    </video>
+                </div>
             ) : (
                 <div className="flex h-24 items-center justify-center bg-gray-100">
-                    <FileText className="h-8 w-8 text-gray-600" />
+                    {attachment.mime_type === "application/pdf" ? (
+                        <FileText className="h-8 w-8 text-red-600" />
+                    ) : (
+                        <Video className="h-8 w-8 text-gray-600" />
+                    )}
                 </div>
             )}
 
@@ -70,8 +86,12 @@ export default function AttachmentPreview({
                     </p>
 
                     <p className="text-xs text-gray-500">
-                        {imageAttachment ? "Image file" : "Attachment"} ·{" "}
-                        {formatFileSize(attachment.file_size)}
+                        {imageAttachment
+                            ? "Image"
+                            : videoAttachment
+                                ? "Video"
+                                : "Attachment"}{" "}
+                        · {formatFileSize(attachment.file_size)}
                     </p>
                 </div>
 

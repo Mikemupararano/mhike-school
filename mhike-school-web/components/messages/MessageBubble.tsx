@@ -100,10 +100,7 @@ function getSenderName(
 }
 
 function getInitials(name: string): string {
-    const parts = name
-        .trim()
-        .split(" ")
-        .filter(Boolean);
+    const parts = name.trim().split(" ").filter(Boolean);
 
     if (parts.length === 0) {
         return "U";
@@ -114,6 +111,43 @@ function getInitials(name: string): string {
     }
 
     return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase();
+}
+
+function normaliseUrl(url: string): string {
+    if (/^https?:\/\//i.test(url)) {
+        return url;
+    }
+
+    return `https://${url}`;
+}
+
+function renderMessageText(
+    text: string,
+    isOwnMessage: boolean,
+) {
+    const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+    const parts = text.split(urlRegex);
+
+    return parts.map((part, index) => {
+        if (part.match(urlRegex)) {
+            return (
+                <a
+                    key={`${part}-${index}`}
+                    href={normaliseUrl(part)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`font-medium underline underline-offset-2 ${isOwnMessage
+                        ? "text-white decoration-white/80"
+                        : "text-blue-600 decoration-blue-400"
+                        }`}
+                >
+                    {part}
+                </a>
+            );
+        }
+
+        return <span key={`${part}-${index}`}>{part}</span>;
+    });
 }
 
 export default function MessageBubble({
@@ -138,47 +172,53 @@ export default function MessageBubble({
 
     return (
         <div
-            className={`group flex ${isOwnMessage ? "justify-end" : "justify-start"
+            className={`group flex w-full ${isOwnMessage ? "justify-end" : "justify-start"
                 }`}
         >
             <div
-                className={`flex max-w-[75%] items-end gap-3 ${isOwnMessage ? "flex-row-reverse" : "flex-row"
+                className={`flex max-w-[68%] items-end gap-2 ${isOwnMessage ? "flex-row-reverse" : "flex-row"
                     }`}
             >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-300 text-sm font-semibold text-white">
-                    {getInitials(senderName)}
-                </div>
+                {!isOwnMessage && (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-300 text-xs font-semibold text-white shadow-sm">
+                        {getInitials(senderName)}
+                    </div>
+                )}
 
                 <div
-                    className={`flex flex-col ${isOwnMessage ? "items-end" : "items-start"
+                    className={`flex min-w-0 flex-col ${isOwnMessage ? "items-end" : "items-start"
                         }`}
                 >
                     <div
-                        className={`mb-1 flex flex-wrap items-center gap-2 text-xs ${isOwnMessage
-                            ? "justify-end text-gray-400"
-                            : "justify-start text-gray-500"
+                        className={`mb-1 flex max-w-full flex-wrap items-center gap-1.5 text-[11px] ${isOwnMessage
+                            ? "justify-end text-slate-400"
+                            : "justify-start text-slate-500"
                             }`}
                     >
-                        <span className="font-semibold text-gray-700">
-                            {senderName}
-                        </span>
+                        {!isOwnMessage && (
+                            <>
+                                <span className="font-semibold text-slate-700">
+                                    {senderName}
+                                </span>
 
-                        <span aria-hidden="true">·</span>
+                                <span aria-hidden="true">·</span>
+                            </>
+                        )}
 
                         <time dateTime={message.created_at}>{sentAt}</time>
                     </div>
 
                     <div
-                        className={`rounded-3xl px-5 py-3 shadow-sm transition-all ${isOwnMessage
-                            ? "bg-blue-600 text-white"
-                            : "bg-white text-gray-900"
+                        className={`max-w-full rounded-2xl px-4 py-2.5 text-sm shadow-sm ring-1 ring-black/5 ${isOwnMessage
+                            ? "rounded-br-md bg-blue-600 text-white"
+                            : "rounded-bl-md bg-white text-slate-900"
                             }`}
                     >
                         {message.reply_to && (
                             <div
-                                className={`mb-3 rounded-2xl border px-3 py-2 text-xs ${isOwnMessage
-                                    ? "border-blue-400 bg-blue-500/20 text-blue-100"
-                                    : "border-gray-200 bg-gray-50 text-gray-600"
+                                className={`mb-2 rounded-xl border px-3 py-2 text-xs ${isOwnMessage
+                                    ? "border-blue-400 bg-blue-500/30 text-blue-50"
+                                    : "border-slate-200 bg-slate-50 text-slate-600"
                                     }`}
                             >
                                 <div className="mb-1 font-semibold">
@@ -192,8 +232,11 @@ export default function MessageBubble({
                         )}
 
                         {message.body ? (
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                                {message.body}
+                            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                                {renderMessageText(
+                                    message.body,
+                                    isOwnMessage,
+                                )}
                             </p>
                         ) : null}
 
@@ -203,7 +246,7 @@ export default function MessageBubble({
                     </div>
 
                     <div
-                        className={`mt-1 flex items-center gap-2 text-xs ${isOwnMessage ? "text-gray-400" : "text-gray-500"
+                        className={`mt-1 flex items-center gap-2 text-[11px] ${isOwnMessage ? "text-slate-400" : "text-slate-500"
                             }`}
                     >
                         {isOwnMessage && (
@@ -212,9 +255,9 @@ export default function MessageBubble({
                                 title={getReceiptTooltip(message)}
                             >
                                 <CheckCheck
-                                    className={`h-4 w-4 ${messageStatus === "Read"
+                                    className={`h-3.5 w-3.5 ${messageStatus === "Read"
                                         ? "text-blue-500"
-                                        : "text-gray-400"
+                                        : "text-slate-400"
                                         }`}
                                 />
 
@@ -223,11 +266,14 @@ export default function MessageBubble({
                         )}
                     </div>
 
-                    <div className="mt-2 flex h-7 items-center gap-3 text-xs text-gray-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                    <div
+                        className={`mt-1.5 flex h-7 items-center gap-2 text-xs text-slate-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${isOwnMessage ? "justify-end" : "justify-start"
+                            }`}
+                    >
                         <button
                             type="button"
                             onClick={() => onReply(message)}
-                            className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
+                            className="flex h-7 items-center gap-1 rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
                         >
                             <Reply className="h-3 w-3" />
                             Reply
@@ -236,7 +282,7 @@ export default function MessageBubble({
                         <button
                             type="button"
                             onClick={() => onForward(message)}
-                            className="flex h-7 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 transition-colors hover:bg-gray-200"
+                            className="flex h-7 items-center gap-1 rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
                         >
                             <Forward className="h-3 w-3" />
                             Forward
@@ -244,7 +290,7 @@ export default function MessageBubble({
 
                         <button
                             type="button"
-                            className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 transition-colors hover:bg-gray-200"
+                            className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
                         >
                             <MoreHorizontal className="h-4 w-4" />
                         </button>

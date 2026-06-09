@@ -3,7 +3,7 @@
 import { Image as ImageIcon, Paperclip, Send } from "lucide-react";
 import { useRef } from "react";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200 MB
 
 type MessageComposerProps = {
     messageBody: string;
@@ -69,7 +69,7 @@ export default function MessageComposer({
         }
 
         if (file.size > MAX_FILE_SIZE) {
-            alert("Maximum file size is 10 MB.");
+            alert("Maximum file size is 200 MB.");
             event.target.value = "";
             return;
         }
@@ -160,7 +160,7 @@ export default function MessageComposer({
                     <input
                         ref={fileInputRef}
                         type="file"
-                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                        accept="image/*,video/*,.mp4,.mov,.m4v,.webm,.avi,.mpeg,.mpg,.3gp,.3g2,.ogv,.mkv,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
                         className="hidden"
                         onChange={handleFileChange}
                     />
