@@ -15,6 +15,8 @@ type MessageBubbleProps = {
     message: Message;
     currentUserId?: number | null;
     currentUserName?: string | null;
+    isGroupedWithPrevious?: boolean;
+    isGroupedWithNext?: boolean;
     onReply: (message: Message) => void;
     onForward: (message: Message) => void;
 };
@@ -100,7 +102,10 @@ function getSenderName(
 }
 
 function getInitials(name: string): string {
-    const parts = name.trim().split(" ").filter(Boolean);
+    const parts = name
+        .trim()
+        .split(" ")
+        .filter(Boolean);
 
     if (parts.length === 0) {
         return "U";
@@ -121,10 +126,7 @@ function normaliseUrl(url: string): string {
     return `https://${url}`;
 }
 
-function renderMessageText(
-    text: string,
-    isOwnMessage: boolean,
-) {
+function renderMessageText(text: string): React.ReactNode[] {
     const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
     const parts = text.split(urlRegex);
 
@@ -136,10 +138,7 @@ function renderMessageText(
                     href={normaliseUrl(part)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`font-medium underline underline-offset-2 ${isOwnMessage
-                        ? "text-white decoration-white/80"
-                        : "text-blue-600 decoration-blue-400"
-                        }`}
+                    className="font-medium text-white underline decoration-white/80 underline-offset-2"
                 >
                     {part}
                 </a>
@@ -150,10 +149,48 @@ function renderMessageText(
     });
 }
 
+function getBubbleRadiusClass(
+    isOwnMessage: boolean,
+    isGroupedWithPrevious: boolean,
+    isGroupedWithNext: boolean,
+): string {
+    if (isOwnMessage) {
+        if (isGroupedWithPrevious && isGroupedWithNext) {
+            return "rounded-r-md rounded-l-2xl";
+        }
+
+        if (isGroupedWithPrevious) {
+            return "rounded-tr-md rounded-br-2xl rounded-l-2xl";
+        }
+
+        if (isGroupedWithNext) {
+            return "rounded-br-md rounded-t-2xl rounded-bl-2xl";
+        }
+
+        return "rounded-2xl rounded-br-md";
+    }
+
+    if (isGroupedWithPrevious && isGroupedWithNext) {
+        return "rounded-l-md rounded-r-2xl";
+    }
+
+    if (isGroupedWithPrevious) {
+        return "rounded-tl-md rounded-bl-2xl rounded-r-2xl";
+    }
+
+    if (isGroupedWithNext) {
+        return "rounded-bl-md rounded-t-2xl rounded-br-2xl";
+    }
+
+    return "rounded-2xl rounded-bl-md";
+}
+
 export default function MessageBubble({
     message,
     currentUserId,
     currentUserName,
+    isGroupedWithPrevious = false,
+    isGroupedWithNext = false,
     onReply,
     onForward,
 }: MessageBubbleProps) {
@@ -170,57 +207,66 @@ export default function MessageBubble({
 
     const sentAt = formatMessageDateTime(message.created_at);
 
+    const showHeader = !isGroupedWithPrevious;
+    const showAvatar = !isOwnMessage && !isGroupedWithNext;
+    const showStatus = isOwnMessage && !isGroupedWithNext;
+
     return (
         <div
             className={`group flex w-full ${isOwnMessage ? "justify-end" : "justify-start"
                 }`}
         >
             <div
-                className={`flex max-w-[68%] items-end gap-2 ${isOwnMessage ? "flex-row-reverse" : "flex-row"
+                className={`flex w-full gap-2 ${isOwnMessage
+                    ? "flex-row-reverse items-start"
+                    : "flex-row items-start"
                     }`}
             >
                 {!isOwnMessage && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-300 text-xs font-semibold text-white shadow-sm">
-                        {getInitials(senderName)}
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+                        {showAvatar ? (
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0D5C63] text-xs font-semibold text-white shadow-sm">
+                                {getInitials(senderName)}
+                            </div>
+                        ) : null}
                     </div>
                 )}
 
                 <div
-                    className={`flex min-w-0 flex-col ${isOwnMessage ? "items-end" : "items-start"
+                    className={`flex min-w-[180px] max-w-[75%] xl:max-w-[65%] flex-col ${isOwnMessage ? "items-end" : "items-start"
                         }`}
                 >
+                    {showHeader && (
+                        <div
+                            className={`mb-1 flex flex-wrap items-center gap-1.5 text-[11px] ${isOwnMessage
+                                ? "justify-end text-[#561F37]"
+                                : "justify-start text-[#0D5C63]"
+                                }`}
+                        >
+                            <span className="font-semibold">
+                                {senderName}
+                            </span>
+
+                            <span aria-hidden="true">·</span>
+
+                            <time dateTime={message.created_at}>
+                                {sentAt}
+                            </time>
+                        </div>
+                    )}
+
                     <div
-                        className={`mb-1 flex max-w-full flex-wrap items-center gap-1.5 text-[11px] ${isOwnMessage
-                            ? "justify-end text-slate-400"
-                            : "justify-start text-slate-500"
-                            }`}
-                    >
-                        {!isOwnMessage && (
-                            <>
-                                <span className="font-semibold text-slate-700">
-                                    {senderName}
-                                </span>
-
-                                <span aria-hidden="true">·</span>
-                            </>
-                        )}
-
-                        <time dateTime={message.created_at}>{sentAt}</time>
-                    </div>
-
-                    <div
-                        className={`max-w-full rounded-2xl px-4 py-2.5 text-sm shadow-sm ring-1 ring-black/5 ${isOwnMessage
-                            ? "rounded-br-md bg-blue-600 text-white"
-                            : "rounded-bl-md bg-white text-slate-900"
-                            }`}
+                        className={`max-w-full border border-white/10 px-5 py-3 text-sm text-white shadow-lg ring-1 ring-black/5 ${isOwnMessage
+                            ? "bg-[#561F37]"
+                            : "bg-[#0D5C63]"
+                            } ${getBubbleRadiusClass(
+                                isOwnMessage,
+                                isGroupedWithPrevious,
+                                isGroupedWithNext,
+                            )}`}
                     >
                         {message.reply_to && (
-                            <div
-                                className={`mb-2 rounded-xl border px-3 py-2 text-xs ${isOwnMessage
-                                    ? "border-blue-400 bg-blue-500/30 text-blue-50"
-                                    : "border-slate-200 bg-slate-50 text-slate-600"
-                                    }`}
-                            >
+                            <div className="mb-3 min-h-[44px] rounded-xl border border-white/15 bg-black/10 px-3 py-2 text-xs text-white/90">
                                 <div className="mb-1 font-semibold">
                                     Replying to
                                 </div>
@@ -231,49 +277,41 @@ export default function MessageBubble({
                             </div>
                         )}
 
-                        {message.body ? (
-                            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                                {renderMessageText(
-                                    message.body,
-                                    isOwnMessage,
-                                )}
+                        {message.body && (
+                            <p className="whitespace-pre-wrap break-words leading-relaxed">
+                                {renderMessageText(message.body)}
                             </p>
-                        ) : null}
+                        )}
 
                         <MessageAttachmentList
                             attachments={message.attachments}
                         />
                     </div>
 
-                    <div
-                        className={`mt-1 flex items-center gap-2 text-[11px] ${isOwnMessage ? "text-slate-400" : "text-slate-500"
-                            }`}
-                    >
-                        {isOwnMessage && (
-                            <div
-                                className="flex items-center gap-1"
-                                title={getReceiptTooltip(message)}
-                            >
-                                <CheckCheck
-                                    className={`h-3.5 w-3.5 ${messageStatus === "Read"
-                                        ? "text-blue-500"
-                                        : "text-slate-400"
-                                        }`}
-                                />
+                    {showStatus && (
+                        <div
+                            className="mt-0.5 flex items-center justify-end gap-1 text-[11px] font-medium text-slate-400"
+                            title={getReceiptTooltip(message)}
+                        >
+                            <CheckCheck
+                                className={`h-4 w-4 ${messageStatus === "Read"
+                                    ? "text-[#44A1A0]"
+                                    : "text-slate-400"
+                                    }`}
+                            />
 
-                                <span>{messageStatus}</span>
-                            </div>
-                        )}
-                    </div>
+                            <span>{messageStatus}</span>
+                        </div>
+                    )}
 
                     <div
-                        className={`mt-1.5 flex h-7 items-center gap-2 text-xs text-slate-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${isOwnMessage ? "justify-end" : "justify-start"
+                        className={`mt-2 flex h-7 items-center gap-2 text-xs text-slate-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${isOwnMessage ? "justify-end" : "justify-start"
                             }`}
                     >
                         <button
                             type="button"
                             onClick={() => onReply(message)}
-                            className="flex h-7 items-center gap-1 rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
+                            className="flex h-7 items-center gap-1 rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
                         >
                             <Reply className="h-3 w-3" />
                             Reply
@@ -282,7 +320,7 @@ export default function MessageBubble({
                         <button
                             type="button"
                             onClick={() => onForward(message)}
-                            className="flex h-7 items-center gap-1 rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
+                            className="flex h-7 items-center gap-1 rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
                         >
                             <Forward className="h-3 w-3" />
                             Forward
@@ -290,7 +328,7 @@ export default function MessageBubble({
 
                         <button
                             type="button"
-                            className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
+                            className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
                         >
                             <MoreHorizontal className="h-4 w-4" />
                         </button>

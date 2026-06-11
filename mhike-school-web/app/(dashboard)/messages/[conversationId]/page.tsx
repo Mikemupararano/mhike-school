@@ -20,22 +20,37 @@ import {
     sendMessage,
     uploadMessageFile,
 } from "@/lib/messages";
-import { disconnectSocket, getSocket } from "@/lib/socket";
+import {
+    disconnectSocket,
+    getSocket,
+    requestPresence,
+    SocketEvents,
+} from "@/lib/socket";
 import { useAuth } from "@/providers/AuthProvider";
 
-import type { Conversation, Message, MessageDelivery } from "@/types/message";
+import type {
+    Conversation,
+    Message,
+    MessageDelivery,
+} from "@/types/message";
 
 export default function ConversationPage() {
     const params = useParams<{ conversationId: string }>();
     const conversationId = params.conversationId;
     const { user } = useAuth();
 
-    const [conversation, setConversation] = useState<Conversation | null>(null);
+    const [conversation, setConversation] =
+        useState<Conversation | null>(null);
     const [messageBody, setMessageBody] = useState("");
-    const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
-    const [forwardMessage, setForwardMessage] = useState<Message | null>(null);
+    const [replyToMessage, setReplyToMessage] =
+        useState<Message | null>(null);
+    const [forwardMessage, setForwardMessage] =
+        useState<Message | null>(null);
     const [typingUsers, setTypingUsers] = useState<string[]>([]);
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [presenceMap, setPresenceMap] =
+        useState<Record<number, boolean>>({});
+    const [selectedFile, setSelectedFile] =
+        useState<File | null>(null);
     const [uploadingAttachment, setUploadingAttachment] = useState(false);
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
@@ -237,6 +252,31 @@ export default function ConversationPage() {
             );
         });
 
+        socket.on(
+            SocketEvents.PRESENCE_UPDATE,
+            (payload: { user_id: number; online: boolean }) => {
+                setPresenceMap((previous) => ({
+                    ...previous,
+                    [payload.user_id]: payload.online,
+                }));
+            },
+        );
+
+        socket.on(
+            SocketEvents.PRESENCE_SNAPSHOT,
+            (payload: { presence: Record<string, boolean> }) => {
+                const next: Record<number, boolean> = {};
+
+                Object.entries(payload.presence).forEach(
+                    ([userId, online]) => {
+                        next[Number(userId)] = online;
+                    },
+                );
+
+                setPresenceMap(next);
+            },
+        );
+
         return () => {
             socket.emit("leave_conversation", {
                 conversation_id: conversationId,
@@ -248,6 +288,8 @@ export default function ConversationPage() {
             socket.off("message:read");
             socket.off("typing:start");
             socket.off("typing:stop");
+            socket.off(SocketEvents.PRESENCE_UPDATE);
+            socket.off(SocketEvents.PRESENCE_SNAPSHOT);
 
             if (typingTimeoutRef.current) {
                 clearTimeout(typingTimeoutRef.current);
@@ -256,6 +298,20 @@ export default function ConversationPage() {
             disconnectSocket();
         };
     }, [conversationId, user, loadConversation]);
+
+    useEffect(() => {
+        const participantIds =
+            conversation?.participants
+                ?.map((participant) => participant.user_id)
+                .filter(
+                    (participantId) =>
+                        Number(participantId) !== Number(user?.id),
+                ) ?? [];
+
+        if (participantIds.length > 0) {
+            requestPresence(participantIds);
+        }
+    }, [conversation?.participants, user?.id]);
 
     useEffect(() => {
         const visibleMessages = conversation?.messages ?? [];
@@ -399,7 +455,7 @@ export default function ConversationPage() {
 
     if (loading) {
         return (
-            <div className="flex h-[calc(100vh-80px)] items-center justify-center bg-slate-50 text-sm text-gray-500">
+            <div className="flex h-[calc(100vh-80px)] items-center justify-center bg-[#F4F7F8] text-sm text-gray-500">
                 Loading conversation...
             </div>
         );
@@ -407,7 +463,7 @@ export default function ConversationPage() {
 
     if (error) {
         return (
-            <div className="bg-slate-50 p-6">
+            <div className="bg-[#F4F7F8] p-6">
                 <div className="mx-auto max-w-3xl rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                     {error}
                 </div>
@@ -417,28 +473,50 @@ export default function ConversationPage() {
 
     if (!conversation) {
         return (
-            <div className="flex h-[calc(100vh-80px)] items-center justify-center bg-slate-50 text-sm text-gray-500">
+            <div className="flex h-[calc(100vh-80px)] items-center justify-center bg-[#F4F7F8] text-sm text-gray-500">
                 Conversation not found.
             </div>
         );
     }
 
-    return (
-        <div className="flex h-[calc(100vh-80px)] flex-col bg-slate-50">
-            <div className="border-b border-gray-200 bg-white px-6 py-4 shadow-sm">
-                <div className="mx-auto max-w-3xl">
-                    <h1 className="text-xl font-bold text-gray-900">
-                        {conversation.title || "Conversation"}
-                    </h1>
+    const otherParticipant = conversation.participants?.find(
+        (participant) => Number(participant.user_id) !== Number(user?.id),
+    );
 
-                    <p className="text-xs uppercase tracking-wide text-gray-500">
-                        {conversation.conversation_type}
-                    </p>
+    const isOnline = otherParticipant
+        ? Boolean(presenceMap[Number(otherParticipant.user_id)])
+        : false;
+
+    return (
+        <div className="flex h-[calc(100vh-80px)] flex-col bg-[#F4F7F8]">
+            <div className="border-b border-gray-200 bg-white px-6 py-3 shadow-sm">
+                <div className="mx-auto flex w-full max-w-6xl items-center justify-between">
+                    <div>
+                        <h1 className="text-xl font-bold text-gray-900">
+                            {conversation.title || "Conversation"}
+                        </h1>
+
+                        <div className="mt-1 flex items-center gap-3 text-sm text-gray-600">
+                            <span className="flex items-center gap-1.5">
+                                <span
+                                    className={`h-2.5 w-2.5 rounded-full ${isOnline
+                                        ? "bg-green-500"
+                                        : "bg-gray-400"
+                                        }`}
+                                />
+                                {isOnline ? "Online" : "Offline"}
+                            </span>
+
+                            <span className="text-xs uppercase tracking-wide text-gray-400">
+                                {conversation.conversation_type} conversation
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-                <div className="mx-auto flex max-w-3xl flex-col gap-3">
+            <div className="flex-1 overflow-y-auto bg-[#F4F7F8] px-6 py-4">
+                <div className="mx-auto flex w-full max-w-6xl flex-col gap-2">
                     {conversation.messages && conversation.messages.length > 0 ? (
                         conversation.messages.map((message) => (
                             <MessageBubble
@@ -464,28 +542,32 @@ export default function ConversationPage() {
 
             {typingUsers.length > 0 && (
                 <div className="border-t border-gray-100 bg-white px-6 py-2">
-                    <div className="mx-auto max-w-3xl text-sm text-gray-500">
+                    <div className="mx-auto w-full max-w-6xl text-sm text-gray-500">
                         {typingUsers.join(", ")} typing...
                     </div>
                 </div>
             )}
 
-            <MessageComposer
-                messageBody={messageBody}
-                sending={sending}
-                uploadingAttachment={uploadingAttachment}
-                selectedFile={selectedFile}
-                replyToMessage={replyToMessage}
-                forwardMessage={forwardMessage}
-                onMessageChange={handleTypingChange}
-                onSend={handleSendMessage}
-                onFileSelect={setSelectedFile}
-                onCancelReply={() => setReplyToMessage(null)}
-                onCancelForward={() => {
-                    setForwardMessage(null);
-                    setMessageBody("");
-                }}
-            />
+            <div className="sticky bottom-0 border-t border-gray-200 bg-white shadow-lg">
+                <div className="mx-auto w-full max-w-6xl">
+                    <MessageComposer
+                        messageBody={messageBody}
+                        sending={sending}
+                        uploadingAttachment={uploadingAttachment}
+                        selectedFile={selectedFile}
+                        replyToMessage={replyToMessage}
+                        forwardMessage={forwardMessage}
+                        onMessageChange={handleTypingChange}
+                        onSend={handleSendMessage}
+                        onFileSelect={setSelectedFile}
+                        onCancelReply={() => setReplyToMessage(null)}
+                        onCancelForward={() => {
+                            setForwardMessage(null);
+                            setMessageBody("");
+                        }}
+                    />
+                </div>
+            </div>
         </div>
     );
 }

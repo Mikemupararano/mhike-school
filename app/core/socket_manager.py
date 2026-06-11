@@ -20,6 +20,9 @@ socket_app = socketio.ASGIApp(
     socketio_path="socket.io",
 )
 
+_sid_to_user: dict[str, int] = {}
+_user_to_sids: dict[int, set[str]] = {}
+
 
 def _room_user(user_id: int | str) -> str:
     return f"user:{user_id}"
@@ -31,6 +34,39 @@ def _room_school(school_id: int | str) -> str:
 
 def _room_conversation(conversation_id: int | str) -> str:
     return f"conversation:{conversation_id}"
+
+
+def _normalise_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_user_online(user_id: int | str) -> bool:
+    normalised_user_id = _normalise_int(user_id)
+
+    if normalised_user_id is None:
+        return False
+
+    return bool(_user_to_sids.get(normalised_user_id))
+
+
+async def _emit_presence_update(
+    *,
+    user_id: int,
+    online: bool,
+) -> None:
+    await sio.emit(
+        "presence:update",
+        {
+            "user_id": user_id,
+            "online": online,
+        },
+    )
 
 
 @sio.event
@@ -45,11 +81,22 @@ async def connect(
     school_id = None
 
     if isinstance(auth, dict):
-        user_id = auth.get("user_id")
-        school_id = auth.get("school_id")
+        user_id = _normalise_int(auth.get("user_id"))
+        school_id = _normalise_int(auth.get("school_id"))
 
     if user_id is not None:
+        was_offline = not is_user_online(user_id)
+
+        _sid_to_user[sid] = user_id
+        _user_to_sids.setdefault(user_id, set()).add(sid)
+
         await sio.enter_room(sid, _room_user(user_id))
+
+        if was_offline:
+            await _emit_presence_update(
+                user_id=user_id,
+                online=True,
+            )
 
     if school_id is not None:
         await sio.enter_room(sid, _room_school(school_id))
@@ -66,6 +113,22 @@ async def connect(
 
 @sio.event
 async def disconnect(sid: str) -> None:
+    user_id = _sid_to_user.pop(sid, None)
+
+    if user_id is not None:
+        user_sids = _user_to_sids.get(user_id)
+
+        if user_sids is not None:
+            user_sids.discard(sid)
+
+            if not user_sids:
+                _user_to_sids.pop(user_id, None)
+
+                await _emit_presence_update(
+                    user_id=user_id,
+                    online=False,
+                )
+
     print("Socket disconnected:", sid)
 
 
@@ -153,6 +216,27 @@ async def typing_stop(
         sid=sid,
         event_name="typing:stop",
         data=data,
+    )
+
+
+@sio.event
+async def presence_get(
+    sid: str,
+    data: dict[str, Any],
+) -> None:
+    user_ids = data.get("user_ids")
+
+    if not isinstance(user_ids, list):
+        return
+
+    presence = {str(user_id): is_user_online(user_id) for user_id in user_ids}
+
+    await sio.emit(
+        "presence:snapshot",
+        {
+            "presence": presence,
+        },
+        to=sid,
     )
 
 
