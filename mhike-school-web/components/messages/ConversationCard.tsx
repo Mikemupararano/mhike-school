@@ -8,253 +8,171 @@ type ConversationCardProps = {
     conversation: Conversation;
 };
 
-function formatLastActivity(
-    dateString?: string | null,
-) {
-    if (!dateString) {
-        return "";
-    }
+function formatLastActivity(dateString?: string | null): string {
+    if (!dateString) return "";
 
-    const date = new Date(
-        dateString,
-    );
+    const date = new Date(dateString);
 
-    if (
-        Number.isNaN(
-            date.getTime(),
-        )
-    ) {
-        return "";
-    }
+    if (Number.isNaN(date.getTime())) return "";
 
     const now = new Date();
+    const diffMinutes = Math.floor(
+        (now.getTime() - date.getTime()) / 60000,
+    );
 
-    const diffMinutes =
-        Math.floor(
-            (
-                now.getTime() -
-                date.getTime()
-            ) / 60000,
-        );
+    if (diffMinutes < 1) return "Now";
+    if (diffMinutes < 60) return `${diffMinutes}m`;
 
-    if (diffMinutes < 1) {
-        return "Now";
-    }
+    const diffHours = Math.floor(diffMinutes / 60);
 
-    if (diffMinutes < 60) {
-        return `${diffMinutes}m`;
-    }
+    if (diffHours < 24) return `${diffHours}h`;
 
-    const diffHours =
-        Math.floor(
-            diffMinutes / 60,
-        );
+    const diffDays = Math.floor(diffHours / 24);
 
-    if (diffHours < 24) {
-        return `${diffHours}h`;
-    }
+    if (diffDays < 7) return `${diffDays}d`;
 
-    const diffDays =
-        Math.floor(
-            diffHours / 24,
-        );
-
-    if (diffDays < 7) {
-        return `${diffDays}d`;
-    }
-
-    return date.toLocaleDateString();
+    return date.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+    });
 }
 
-function getConversationActivityDate(
-    conversation: Conversation,
-) {
+function getConversationActivityDate(conversation: Conversation): string | null {
     return (
-        conversation.last_activity ||
-        conversation
-            .latest_message
-            ?.created_at ||
-        conversation.updated_at ||
-        conversation.created_at ||
-        conversation
-            .messages?.[
-            (
-                conversation
-                    .messages
-                    .length ?? 1
-            ) - 1
-        ]?.created_at ||
+        conversation.last_activity ??
+        conversation.latest_message?.created_at ??
+        conversation.updated_at ??
+        conversation.created_at ??
+        conversation.messages?.[conversation.messages.length - 1]?.created_at ??
         null
     );
 }
 
-function getLatestMessage(
-    conversation: Conversation,
-) {
-    if (
-        conversation.latest_message
-    ) {
+function getLatestMessage(conversation: Conversation) {
+    if (conversation.latest_message) {
         return conversation.latest_message;
     }
 
-    if (
-        !conversation.messages ||
-        conversation.messages
-            .length === 0
-    ) {
+    if (!conversation.messages || conversation.messages.length === 0) {
         return null;
     }
 
-    return conversation.messages[
-        conversation.messages
-            .length - 1
-    ];
+    return conversation.messages[conversation.messages.length - 1];
 }
 
-function getUnreadCount(
-    conversation: Conversation,
-) {
-    return (
-        conversation.unread_count ??
-        0
-    );
+function getUnreadCount(conversation: Conversation): number {
+    return conversation.unread_count ?? 0;
 }
 
-function getConversationTitle(
-    conversation: Conversation,
-) {
+function getConversationTitle(conversation: Conversation): string {
     const participantNames =
         conversation.participants
-            ?.map(
-                (
-                    participant,
-                ) =>
-                    participant
-                        .user
-                        ?.full_name,
-            )
+            ?.map((participant) => participant.user?.full_name)
             .filter(Boolean)
-            .join(", ");
+            .join(", ") ?? "";
 
-    return (
-        conversation.title ||
-        participantNames ||
-        "Untitled conversation"
-    );
+    return conversation.title || participantNames || "Untitled conversation";
+}
+
+function getInitials(title: string): string {
+    const parts = title.trim().split(" ").filter(Boolean);
+
+    if (parts.length === 0) return "M";
+    if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+
+    return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase();
+}
+
+function getLatestMessagePreview(conversation: Conversation): string {
+    const latestMessage = getLatestMessage(conversation);
+
+    if (!latestMessage) return "No messages yet";
+
+    if (latestMessage.body?.trim()) {
+        return latestMessage.body.trim();
+    }
+
+    return "No message preview";
 }
 
 export default function ConversationCard({
     conversation,
 }: ConversationCardProps) {
-    const title =
-        getConversationTitle(
-            conversation,
-        );
+    const title = getConversationTitle(conversation);
+    const latestMessage = getLatestMessage(conversation);
+    const unreadCount = getUnreadCount(conversation);
+    const activityDate = getConversationActivityDate(conversation);
+    const preview = getLatestMessagePreview(conversation);
 
-    const latestMessage =
-        getLatestMessage(
-            conversation,
-        );
-
-    const unreadCount =
-        getUnreadCount(
-            conversation,
-        );
-
-    const activityDate =
-        getConversationActivityDate(
-            conversation,
-        );
+    const hasUnread = unreadCount > 0;
 
     return (
         <Link
             href={`/messages/${conversation.id}`}
-            className={`group block rounded-3xl border p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${unreadCount > 0
-                ? "border-blue-300 bg-blue-50/40 hover:border-blue-400"
-                : "border-gray-200 bg-white hover:border-blue-200"
+            className={`group block rounded-3xl border px-5 py-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${hasUnread
+                ? "border-blue-300 bg-blue-50/70 hover:border-blue-400"
+                : "border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50"
                 }`}
         >
-            <div className="flex items-start gap-4">
+            <div className="flex items-center gap-4">
                 <div
-                    className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-semibold text-white ${unreadCount > 0
-                        ? "bg-blue-700"
-                        : "bg-blue-600"
+                    className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-lg font-bold text-white shadow-sm ${hasUnread ? "bg-blue-700" : "bg-[#0D3B66]"
                         }`}
                 >
-                    {title
-                        .charAt(0)
-                        .toUpperCase()}
+                    {getInitials(title)}
                 </div>
 
                 <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                             <h2
-                                className={`truncate text-lg ${unreadCount >
-                                    0
-                                    ? "font-bold text-gray-950"
-                                    : "font-semibold text-gray-900"
+                                className={`truncate text-lg ${hasUnread
+                                    ? "font-bold text-slate-950"
+                                    : "font-semibold text-slate-900"
                                     }`}
                             >
                                 {title}
                             </h2>
 
-                            <p className="mt-1 text-sm capitalize text-gray-500">
-                                {
-                                    conversation.conversation_type
-                                }
+                            <p className="mt-0.5 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                {conversation.conversation_type} conversation
                             </p>
                         </div>
 
                         <div className="flex shrink-0 flex-col items-end gap-2">
-                            <span className="text-xs text-gray-400">
-                                {formatLastActivity(
-                                    activityDate,
-                                )}
-                            </span>
+                            {activityDate && (
+                                <span
+                                    className={`text-xs font-medium ${hasUnread
+                                        ? "text-blue-700"
+                                        : "text-slate-400"
+                                        }`}
+                                >
+                                    {formatLastActivity(activityDate)}
+                                </span>
+                            )}
 
-                            {unreadCount >
-                                0 && (
-                                    <span className="flex h-6 min-w-[24px] items-center justify-center rounded-full bg-blue-600 px-2 text-xs font-semibold text-white">
-                                        {unreadCount >
-                                            99
-                                            ? "99+"
-                                            : unreadCount}
-                                    </span>
-                                )}
+                            {hasUnread && (
+                                <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-blue-600 px-2 text-xs font-bold text-white shadow-sm">
+                                    {unreadCount > 99 ? "99+" : unreadCount}
+                                </span>
+                            )}
                         </div>
                     </div>
 
-                    <div className="mt-4">
-                        {latestMessage ? (
-                            <p
-                                className={`truncate text-sm ${unreadCount >
-                                    0
-                                    ? "font-medium text-gray-800"
-                                    : "text-gray-600"
-                                    }`}
-                            >
-                                {
-                                    latestMessage.body
-                                }
-                            </p>
-                        ) : (
-                            <p className="text-sm italic text-gray-400">
-                                No messages
-                                yet
-                            </p>
-                        )}
+                    <p
+                        className={`mt-3 truncate text-sm ${hasUnread
+                            ? "font-semibold text-slate-800"
+                            : "text-slate-600"
+                            }`}
+                    >
+                        {preview}
+                    </p>
 
-                        {activityDate && (
-                            <p className="mt-1 text-xs text-gray-400">
-                                Last
-                                activity{" "}
-                                {formatLastActivity(
-                                    activityDate,
-                                )}
-                            </p>
-                        )}
-                    </div>
+                    {latestMessage?.sender_name && (
+                        <p className="mt-1 truncate text-xs text-slate-400">
+                            From {latestMessage.sender_name}
+                        </p>
+                    )}
                 </div>
             </div>
         </Link>
