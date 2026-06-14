@@ -1,11 +1,6 @@
 "use client";
 
-import {
-    useCallback,
-    useEffect,
-    useRef,
-    useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
 import MessageBubble from "@/components/messages/MessageBubble";
@@ -28,29 +23,20 @@ import {
 } from "@/lib/socket";
 import { useAuth } from "@/providers/AuthProvider";
 
-import type {
-    Conversation,
-    Message,
-    MessageDelivery,
-} from "@/types/message";
+import type { Conversation, Message, MessageDelivery } from "@/types/message";
 
 export default function ConversationPage() {
     const params = useParams<{ conversationId: string }>();
     const conversationId = params.conversationId;
     const { user } = useAuth();
 
-    const [conversation, setConversation] =
-        useState<Conversation | null>(null);
+    const [conversation, setConversation] = useState<Conversation | null>(null);
     const [messageBody, setMessageBody] = useState("");
-    const [replyToMessage, setReplyToMessage] =
-        useState<Message | null>(null);
-    const [forwardMessage, setForwardMessage] =
-        useState<Message | null>(null);
+    const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
+    const [forwardMessage, setForwardMessage] = useState<Message | null>(null);
     const [typingUsers, setTypingUsers] = useState<string[]>([]);
-    const [presenceMap, setPresenceMap] =
-        useState<Record<number, boolean>>({});
-    const [selectedFile, setSelectedFile] =
-        useState<File | null>(null);
+    const [presenceMap, setPresenceMap] = useState<Record<number, boolean>>({});
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [uploadingAttachment, setUploadingAttachment] = useState(false);
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
@@ -67,7 +53,6 @@ export default function ConversationPage() {
             const data = await getConversation(conversationId);
 
             setConversation(data);
-
             await markConversationRead(conversationId);
 
             setError(null);
@@ -76,6 +61,7 @@ export default function ConversationPage() {
         } catch (err) {
             console.error(err);
             setError("Unable to load conversation.");
+
             return null;
         } finally {
             setLoading(false);
@@ -159,7 +145,6 @@ export default function ConversationPage() {
 
         try {
             const upload = await uploadMessageFile(selectedFile);
-
             await attachFileToMessage(messageId, upload);
         } finally {
             setUploadingAttachment(false);
@@ -216,13 +201,8 @@ export default function ConversationPage() {
             await loadConversation();
         });
 
-        socket.on("message:delivered", (delivery: MessageDelivery) => {
-            applyDeliveryUpdate(delivery);
-        });
-
-        socket.on("message:read", (delivery: MessageDelivery) => {
-            applyDeliveryUpdate(delivery);
-        });
+        socket.on("message:delivered", applyDeliveryUpdate);
+        socket.on("message:read", applyDeliveryUpdate);
 
         socket.on("typing:start", (payload) => {
             if (Number(payload.conversation_id) !== Number(conversationId)) {
@@ -361,12 +341,7 @@ export default function ConversationPage() {
     async function handleSendMessage() {
         const body = messageBody.trim();
 
-        if (
-            (!body && !selectedFile) ||
-            sending ||
-            uploadingAttachment ||
-            !user
-        ) {
+        if ((!body && !selectedFile) || sending || uploadingAttachment || !user) {
             return;
         }
 
@@ -499,9 +474,7 @@ export default function ConversationPage() {
                         <div className="mt-1 flex items-center gap-3 text-sm text-gray-600">
                             <span className="flex items-center gap-1.5">
                                 <span
-                                    className={`h-2.5 w-2.5 rounded-full ${isOnline
-                                        ? "bg-green-500"
-                                        : "bg-gray-400"
+                                    className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-green-500" : "bg-gray-400"
                                         }`}
                                 />
                                 {isOnline ? "Online" : "Offline"}
@@ -515,19 +488,48 @@ export default function ConversationPage() {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto bg-[#F4F7F8] px-6 py-4">
-                <div className="mx-auto flex w-full max-w-6xl flex-col gap-2">
+            <div className="flex-1 overflow-y-auto bg-[#F4F7F8] px-6 py-2">
+                <div className="mx-auto flex w-full max-w-6xl flex-col">
                     {conversation.messages && conversation.messages.length > 0 ? (
-                        conversation.messages.map((message) => (
-                            <MessageBubble
-                                key={message.id}
-                                message={message}
-                                currentUserId={user?.id}
-                                currentUserName={user?.full_name}
-                                onReply={handleReply}
-                                onForward={handleForward}
-                            />
-                        ))
+                        conversation.messages.map((message, index, messages) => {
+                            const previousMessage = messages[index - 1];
+                            const nextMessage = messages[index + 1];
+
+                            const isGroupedWithPrevious =
+                                previousMessage &&
+                                Number(previousMessage.sender_id) ===
+                                Number(message.sender_id);
+
+                            const isGroupedWithNext =
+                                nextMessage &&
+                                Number(nextMessage.sender_id) ===
+                                Number(message.sender_id);
+
+                            return (
+                                <div
+                                    key={message.id}
+                                    className={
+                                        isGroupedWithPrevious
+                                            ? "mt-0.5"
+                                            : "mt-2"
+                                    }
+                                >
+                                    <MessageBubble
+                                        message={message}
+                                        currentUserId={user?.id}
+                                        currentUserName={user?.full_name}
+                                        isGroupedWithPrevious={Boolean(
+                                            isGroupedWithPrevious,
+                                        )}
+                                        isGroupedWithNext={Boolean(
+                                            isGroupedWithNext,
+                                        )}
+                                        onReply={handleReply}
+                                        onForward={handleForward}
+                                    />
+                                </div>
+                            );
+                        })
                     ) : (
                         <div className="flex h-full items-center justify-center py-20">
                             <p className="text-sm text-gray-400">

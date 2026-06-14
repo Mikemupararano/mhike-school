@@ -23,11 +23,11 @@ import type { Conversation, SchoolMessageUser } from "@/types/message";
 
 function getConversationActivityDate(conversation: Conversation) {
     return (
-        conversation.last_activity ||
-        conversation.latest_message?.created_at ||
-        conversation.updated_at ||
-        conversation.created_at ||
-        conversation.messages?.[conversation.messages.length - 1]?.created_at ||
+        conversation.last_activity ??
+        conversation.latest_message?.created_at ??
+        conversation.updated_at ??
+        conversation.created_at ??
+        conversation.messages?.[conversation.messages.length - 1]?.created_at ??
         null
     );
 }
@@ -75,34 +75,26 @@ export default function MessagesPage() {
     }, [loadData]);
 
     useEffect(() => {
-        const handleFocus = () => {
-            void loadData();
-        };
-
-        window.addEventListener("focus", handleFocus);
+        window.addEventListener("focus", loadData);
 
         return () => {
-            window.removeEventListener("focus", handleFocus);
+            window.removeEventListener("focus", loadData);
         };
     }, [loadData]);
 
     useEffect(() => {
         const socket = getSocket();
 
-        const refreshConversations = () => {
-            void loadData();
-        };
-
-        socket.on(SocketEvents.MESSAGES_REFRESH, refreshConversations);
-        socket.on(SocketEvents.MESSAGE_NEW, refreshConversations);
-        socket.on(SocketEvents.MESSAGE_DELIVERED, refreshConversations);
-        socket.on(SocketEvents.MESSAGE_READ, refreshConversations);
+        socket.on(SocketEvents.MESSAGES_REFRESH, loadData);
+        socket.on(SocketEvents.MESSAGE_NEW, loadData);
+        socket.on(SocketEvents.MESSAGE_DELIVERED, loadData);
+        socket.on(SocketEvents.MESSAGE_READ, loadData);
 
         return () => {
-            socket.off(SocketEvents.MESSAGES_REFRESH, refreshConversations);
-            socket.off(SocketEvents.MESSAGE_NEW, refreshConversations);
-            socket.off(SocketEvents.MESSAGE_DELIVERED, refreshConversations);
-            socket.off(SocketEvents.MESSAGE_READ, refreshConversations);
+            socket.off(SocketEvents.MESSAGES_REFRESH, loadData);
+            socket.off(SocketEvents.MESSAGE_NEW, loadData);
+            socket.off(SocketEvents.MESSAGE_DELIVERED, loadData);
+            socket.off(SocketEvents.MESSAGE_READ, loadData);
         };
     }, [loadData]);
 
@@ -140,23 +132,23 @@ export default function MessagesPage() {
                 const dateB = getConversationActivityDate(b);
 
                 return (
-                    new Date(dateB || 0).getTime() -
-                    new Date(dateA || 0).getTime()
+                    new Date(dateB ?? 0).getTime() -
+                    new Date(dateA ?? 0).getTime()
                 );
             }),
         [conversations],
     );
 
     return (
-        <div className="min-h-screen bg-gray-50 p-6">
+        <div className="min-h-screen bg-slate-50 p-6">
             <div className="mx-auto max-w-5xl">
                 <div className="mb-8 flex items-center justify-between gap-4">
                     <div>
-                        <h1 className="text-3xl font-bold text-gray-900">
+                        <h1 className="text-3xl font-bold text-slate-900">
                             Messages
                         </h1>
 
-                        <p className="mt-1 text-gray-500">
+                        <p className="mt-1 text-sm text-slate-500">
                             Internal school messaging
                         </p>
                     </div>
@@ -164,7 +156,7 @@ export default function MessagesPage() {
                     <button
                         type="button"
                         onClick={() => setShowModal(true)}
-                        className="flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
+                        className="flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
                     >
                         <Plus className="h-4 w-4" />
                         New Conversation
@@ -172,7 +164,7 @@ export default function MessagesPage() {
                 </div>
 
                 {loading && (
-                    <div className="rounded-2xl border border-gray-200 bg-white p-5 text-sm text-gray-500 shadow-sm">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm">
                         Loading conversations...
                     </div>
                 )}
@@ -184,20 +176,20 @@ export default function MessagesPage() {
                 )}
 
                 {!loading && !error && sortedConversations.length === 0 && (
-                    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-gray-300 bg-white py-20 text-center shadow-sm">
-                        <MessageCircle className="mb-4 h-12 w-12 text-gray-300" />
+                    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white py-20 text-center shadow-sm">
+                        <MessageCircle className="mb-4 h-12 w-12 text-slate-300" />
 
-                        <h2 className="text-lg font-semibold text-gray-700">
+                        <h2 className="text-lg font-semibold text-slate-700">
                             No conversations yet
                         </h2>
 
-                        <p className="mt-1 text-sm text-gray-500">
+                        <p className="mt-1 text-sm text-slate-500">
                             Start a new conversation with a staff member.
                         </p>
                     </div>
                 )}
 
-                {!error && sortedConversations.length > 0 && (
+                {!loading && !error && sortedConversations.length > 0 && (
                     <div className="space-y-4">
                         {sortedConversations.map((conversation) => (
                             <ConversationCard
@@ -210,13 +202,13 @@ export default function MessagesPage() {
             </div>
 
             {showModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
                     <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
-                        <h2 className="text-2xl font-bold text-gray-900">
+                        <h2 className="text-2xl font-bold text-slate-900">
                             New Conversation
                         </h2>
 
-                        <p className="mt-1 text-sm text-gray-500">
+                        <p className="mt-1 text-sm text-slate-500">
                             Start a private staff conversation.
                         </p>
 
@@ -224,7 +216,7 @@ export default function MessagesPage() {
                             <div>
                                 <label
                                     htmlFor="conversation-title"
-                                    className="mb-2 block text-sm font-medium text-gray-700"
+                                    className="mb-2 block text-sm font-medium text-slate-700"
                                 >
                                     Title
                                 </label>
@@ -237,14 +229,14 @@ export default function MessagesPage() {
                                         setConversationTitle(event.target.value)
                                     }
                                     placeholder="Optional title"
-                                    className="w-full rounded-2xl border border-gray-200 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                 />
                             </div>
 
                             <div>
                                 <label
                                     htmlFor="conversation-recipient"
-                                    className="mb-2 block text-sm font-medium text-gray-700"
+                                    className="mb-2 block text-sm font-medium text-slate-700"
                                 >
                                     Recipient
                                 </label>
@@ -255,7 +247,7 @@ export default function MessagesPage() {
                                     onChange={(event) =>
                                         setSelectedUserId(event.target.value)
                                     }
-                                    className="w-full rounded-2xl border border-gray-200 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                 >
                                     <option value="">Select a user</option>
 
@@ -279,7 +271,7 @@ export default function MessagesPage() {
                                         setConversationTitle("");
                                         setSelectedUserId("");
                                     }}
-                                    className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+                                    className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
                                 >
                                     Cancel
                                 </button>
@@ -288,7 +280,7 @@ export default function MessagesPage() {
                                     type="button"
                                     onClick={handleCreateConversation}
                                     disabled={creating || !selectedUserId}
-                                    className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                                    className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     {creating ? "Creating..." : "Create"}
                                 </button>

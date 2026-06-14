@@ -1,6 +1,6 @@
 "use client";
 
-import { Image as ImageIcon, Paperclip, Send } from "lucide-react";
+import { Image as ImageIcon, Paperclip, Send, X } from "lucide-react";
 import { useRef } from "react";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200 MB
@@ -9,34 +9,23 @@ type MessageComposerProps = {
     messageBody: string;
     sending?: boolean;
     uploadingAttachment?: boolean;
-
     selectedFile: File | null;
-
     replyToMessage?: {
         body: string;
     } | null;
-
     forwardMessage?: {
         body: string;
     } | null;
-
     onMessageChange: (value: string) => void;
     onSend: () => void;
-
     onFileSelect: (file: File | null) => void;
-
     onCancelReply: () => void;
     onCancelForward: () => void;
 };
 
 function formatFileSize(bytes: number): string {
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)} KB`;
-    }
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
@@ -64,9 +53,7 @@ export default function MessageComposer({
     function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
         const file = event.target.files?.[0] ?? null;
 
-        if (!file) {
-            return;
-        }
+        if (!file) return;
 
         if (file.size > MAX_FILE_SIZE) {
             alert("Maximum file size is 200 MB.");
@@ -86,15 +73,15 @@ export default function MessageComposer({
     }
 
     return (
-        <div className="border-t border-gray-200 bg-white px-4 py-4 shadow-lg">
-            <div className="mx-auto max-w-5xl">
+        <div className="bg-white px-4 py-4">
+            <div className="mx-auto w-full max-w-5xl">
                 {replyToMessage && (
-                    <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                    <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 shadow-sm">
                         <div className="flex items-center justify-between gap-4">
                             <div className="min-w-0">
-                                <p className="font-medium">Replying to</p>
+                                <p className="font-semibold">Replying to</p>
 
-                                <p className="max-w-xl truncate text-xs">
+                                <p className="mt-0.5 max-w-2xl truncate text-sm text-blue-800">
                                     {replyToMessage.body}
                                 </p>
                             </div>
@@ -102,23 +89,24 @@ export default function MessageComposer({
                             <button
                                 type="button"
                                 onClick={onCancelReply}
-                                className="shrink-0 text-xs underline"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-blue-100"
+                                aria-label="Cancel reply"
                             >
-                                Cancel
+                                <X className="h-4 w-4" />
                             </button>
                         </div>
                     </div>
                 )}
 
                 {forwardMessage && (
-                    <div className="mb-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+                    <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 shadow-sm">
                         <div className="flex items-center justify-between gap-4">
                             <div className="min-w-0">
-                                <p className="font-medium">
+                                <p className="font-semibold">
                                     Forwarding message
                                 </p>
 
-                                <p className="max-w-xl truncate text-xs">
+                                <p className="mt-0.5 max-w-2xl truncate text-sm text-slate-600">
                                     {forwardMessage.body}
                                 </p>
                             </div>
@@ -126,22 +114,23 @@ export default function MessageComposer({
                             <button
                                 type="button"
                                 onClick={onCancelForward}
-                                className="shrink-0 text-xs underline"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-slate-200"
+                                aria-label="Cancel forward"
                             >
-                                Cancel
+                                <X className="h-4 w-4" />
                             </button>
                         </div>
                     </div>
                 )}
 
                 {selectedFile && (
-                    <div className="mb-3 flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+                    <div className="mb-3 flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm">
                         <div className="min-w-0">
-                            <div className="truncate text-sm font-medium">
+                            <div className="truncate text-sm font-semibold text-slate-800">
                                 {selectedFile.name}
                             </div>
 
-                            <div className="text-xs text-gray-500">
+                            <div className="text-xs text-slate-500">
                                 {formatFileSize(selectedFile.size)}
                             </div>
                         </div>
@@ -149,14 +138,15 @@ export default function MessageComposer({
                         <button
                             type="button"
                             onClick={clearSelectedFile}
-                            className="text-xs underline"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-slate-200"
+                            aria-label="Remove selected file"
                         >
-                            Remove
+                            <X className="h-4 w-4 text-slate-500" />
                         </button>
                     </div>
                 )}
 
-                <div className="flex items-center gap-3 rounded-full border border-gray-200 bg-gray-100 px-4 py-3">
+                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 shadow-md">
                     <input
                         ref={fileInputRef}
                         type="file"
@@ -168,17 +158,19 @@ export default function MessageComposer({
                     <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="rounded-full p-2 transition hover:bg-gray-200"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition hover:bg-slate-200"
+                        aria-label="Attach file"
                     >
-                        <Paperclip className="h-5 w-5 text-gray-500" />
+                        <Paperclip className="h-5 w-5 text-slate-500" />
                     </button>
 
                     <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="rounded-full p-2 transition hover:bg-gray-200"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition hover:bg-slate-200"
+                        aria-label="Attach image"
                     >
-                        <ImageIcon className="h-5 w-5 text-gray-500" />
+                        <ImageIcon className="h-5 w-5 text-slate-500" />
                     </button>
 
                     <input
@@ -194,22 +186,24 @@ export default function MessageComposer({
                             }
                         }}
                         placeholder="Type a message..."
-                        className="flex-1 bg-transparent text-sm outline-none"
+                        className="min-h-10 flex-1 bg-transparent px-2 text-base text-slate-800 outline-none placeholder:text-slate-400"
                     />
 
                     <button
                         type="button"
                         onClick={onSend}
                         disabled={disabled}
-                        className="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                        className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-blue-600 px-5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <Send className="h-4 w-4" />
 
-                        {sending
-                            ? "Sending..."
-                            : uploadingAttachment
-                                ? "Uploading..."
-                                : "Send"}
+                        <span>
+                            {sending
+                                ? "Sending..."
+                                : uploadingAttachment
+                                    ? "Uploading..."
+                                    : "Send"}
+                        </span>
                     </button>
                 </div>
             </div>
