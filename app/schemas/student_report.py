@@ -15,7 +15,6 @@ class StudentReportBase(BaseModel):
 
 class StudentReportCreate(StudentReportBase):
     student_id: int
-    teacher_id: int | None = None
 
 
 class StudentReportUpdate(BaseModel):
@@ -25,6 +24,7 @@ class StudentReportUpdate(BaseModel):
     academic_year: str | None = Field(default=None, min_length=1, max_length=20)
     term: str | None = Field(default=None, max_length=50)
     teacher_id: int | None = None
+    published: bool | None = None
 
 
 class StudentReportRead(StudentReportBase):
@@ -32,6 +32,9 @@ class StudentReportRead(StudentReportBase):
     school_id: int
     student_id: int
     teacher_id: int | None
+    published: bool
+    published_at: datetime | None
+    published_by_id: int | None
     created_at: datetime
     updated_at: datetime
 

@@ -40,6 +40,9 @@ async def test_can_create_student_report(
     assert data["grade"] == "A"
     assert data["academic_year"] == "2026/27"
     assert data["term"] == "Autumn"
+    assert data["published"] is False
+    assert data["published_at"] is None
+    assert data["published_by_id"] is None
 
 
 @pytest.mark.asyncio
@@ -102,6 +105,7 @@ async def test_linked_parent_can_view_child_reports(
         grade="A",
         academic_year="2026/27",
         term="Summer",
+        published=True,
     )
 
     db_session.add_all([link, report])
@@ -120,6 +124,7 @@ async def test_linked_parent_can_view_child_reports(
     assert data[0]["student_id"] == student_user.id
     assert data[0]["title"] == "Parent Visible Report"
     assert data[0]["report_text"] == "This report should be visible to linked parents."
+    assert data[0]["published"] is True
 
 
 @pytest.mark.asyncio
