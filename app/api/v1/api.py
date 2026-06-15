@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     parent_attendance,
     parent_students,
     platform_admin,
+    report_sessions,
     school_admin,
     school_users,
     schools,
@@ -35,19 +36,11 @@ from app.api.v1.endpoints import (
 
 api_router = APIRouter()
 
-# =========================================================
-# AUTH
-# =========================================================
-
 api_router.include_router(
     auth.router,
     prefix="/auth",
     tags=["auth"],
 )
-
-# =========================================================
-# SCHOOL CORE
-# =========================================================
 
 api_router.include_router(
     schools.router,
@@ -55,29 +48,17 @@ api_router.include_router(
     tags=["schools"],
 )
 
-# =========================================================
-# SCHOOL USERS
-# =========================================================
-
 api_router.include_router(
     school_users.router,
     prefix="/school-users",
     tags=["school-users"],
 )
 
-# =========================================================
-# SCHOOL ADMIN
-# =========================================================
-
 api_router.include_router(
     school_admin.router,
     prefix="/school-admin",
     tags=["school-admin"],
 )
-
-# =========================================================
-# CLASSES & ENROLLMENTS
-# =========================================================
 
 api_router.include_router(
     classes.router,
@@ -91,10 +72,6 @@ api_router.include_router(
     tags=["enrollments"],
 )
 
-# =========================================================
-# DASHBOARDS
-# =========================================================
-
 api_router.include_router(
     dashboard.router,
     prefix="/dashboard",
@@ -107,19 +84,11 @@ api_router.include_router(
     tags=["teacher-dashboard"],
 )
 
-# =========================================================
-# COURSES
-# =========================================================
-
 api_router.include_router(
     courses.router,
     prefix="/courses",
     tags=["courses"],
 )
-
-# =========================================================
-# ASSIGNMENTS
-# =========================================================
 
 api_router.include_router(
     assignments.router,
@@ -132,10 +101,6 @@ api_router.include_router(
     prefix="/assignment-submissions",
     tags=["assignment-submissions"],
 )
-
-# =========================================================
-# ATTENDANCE
-# =========================================================
 
 api_router.include_router(
     attendance.router,
@@ -210,24 +175,22 @@ api_router.include_router(
 )
 
 api_router.include_router(
+    report_sessions.router,
+    prefix="/report-sessions",
+    tags=["report-sessions"],
+)
+
+api_router.include_router(
     student_progress.router,
     prefix="/student-progress",
     tags=["student-progress"],
 )
-
-# =========================================================
-# TIMETABLES
-# =========================================================
 
 api_router.include_router(
     timetables.router,
     prefix="/timetables",
     tags=["timetables"],
 )
-
-# =========================================================
-# NOTIFICATIONS
-# =========================================================
 
 api_router.include_router(
     notification_preferences.router,
@@ -241,10 +204,6 @@ api_router.include_router(
     tags=["notifications"],
 )
 
-# =========================================================
-# MESSAGES
-# =========================================================
-
 api_router.include_router(
     messages.router,
     prefix="/messages",
@@ -256,10 +215,6 @@ api_router.include_router(
     prefix="/message-attachments",
     tags=["message-attachments"],
 )
-
-# =========================================================
-# PLATFORM ADMIN
-# =========================================================
 
 api_router.include_router(
     platform_admin.router,
