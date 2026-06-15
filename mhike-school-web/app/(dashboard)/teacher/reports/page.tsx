@@ -10,20 +10,56 @@ import {
     type StudentReportCreateInput,
 } from "@/lib/services/studentReports";
 
+type SaveAction = "draft" | "next" | "close";
+
 type ReportFormState = {
+    teacher_id: string;
+    class_id: string;
     student_id: string;
+    report_session_id: string;
     title: string;
+    work_covered: string;
     report_text: string;
-    grade: string;
+    exam_mark: string;
+    attainment_grade: string;
+    effort_grade: string;
+    target_grade: string;
+    next_steps: string;
     academic_year: string;
     term: string;
 };
 
+type ReportSessionConfig = {
+    include_work_covered: boolean;
+    include_exam_mark: boolean;
+    include_attainment_grade: boolean;
+    include_effort_grade: boolean;
+    include_target_grade: boolean;
+    include_next_steps: boolean;
+};
+
+const reportSessionConfig: ReportSessionConfig = {
+    include_work_covered: true,
+    include_exam_mark: true,
+    include_attainment_grade: true,
+    include_effort_grade: true,
+    include_target_grade: true,
+    include_next_steps: true,
+};
+
 const initialFormState: ReportFormState = {
+    teacher_id: "",
+    class_id: "",
     student_id: "",
+    report_session_id: "",
     title: "",
+    work_covered: "",
     report_text: "",
-    grade: "",
+    exam_mark: "",
+    attainment_grade: "",
+    effort_grade: "",
+    target_grade: "",
+    next_steps: "",
     academic_year: "2026/27",
     term: "",
 };
@@ -34,6 +70,24 @@ function formatDate(value: string): string {
         month: "short",
         year: "numeric",
     });
+}
+
+function buildReportText(form: ReportFormState): string {
+    const sections: string[] = [];
+
+    if (form.work_covered.trim()) {
+        sections.push(`Work covered:\n${form.work_covered.trim()}`);
+    }
+
+    if (form.report_text.trim()) {
+        sections.push(`Student comment:\n${form.report_text.trim()}`);
+    }
+
+    if (form.next_steps.trim()) {
+        sections.push(`Next steps:\n${form.next_steps.trim()}`);
+    }
+
+    return sections.join("\n\n");
 }
 
 export default function TeacherReportsPage() {
@@ -67,31 +121,28 @@ export default function TeacherReportsPage() {
         void loadReports();
     }, []);
 
-    const sortedReports = useMemo(() => {
-        return [...reports].sort(
-            (first, second) =>
-                new Date(second.created_at).getTime() -
-                new Date(first.created_at).getTime(),
-        );
-    }, [reports]);
+    const sortedReports = useMemo(
+        () =>
+            [...reports].sort(
+                (first, second) =>
+                    new Date(second.created_at).getTime() -
+                    new Date(first.created_at).getTime(),
+            ),
+        [reports],
+    );
 
-    function updateFormField(
-        field: keyof ReportFormState,
-        value: string,
-    ) {
+    function updateFormField(field: keyof ReportFormState, value: string) {
         setForm((current) => ({
             ...current,
             [field]: value,
         }));
     }
 
-    async function handleCreateReport(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-
+    async function saveReport(action: SaveAction) {
         const studentId = Number(form.student_id);
 
         if (!studentId || Number.isNaN(studentId)) {
-            setError("Enter a valid student ID.");
+            setError("Select a valid student.");
             return;
         }
 
@@ -100,21 +151,21 @@ export default function TeacherReportsPage() {
             return;
         }
 
-        if (!form.report_text.trim()) {
-            setError("Report text is required.");
-            return;
-        }
+        const reportText = buildReportText(form);
 
-        if (!form.academic_year.trim()) {
-            setError("Academic year is required.");
+        if (!reportText.trim()) {
+            setError("Report text is required.");
             return;
         }
 
         const payload: StudentReportCreateInput = {
             student_id: studentId,
             title: form.title.trim(),
-            report_text: form.report_text.trim(),
-            grade: form.grade.trim() || null,
+            report_text: reportText,
+            grade:
+                form.attainment_grade.trim() ||
+                form.exam_mark.trim() ||
+                null,
             academic_year: form.academic_year.trim(),
             term: form.term.trim() || null,
         };
@@ -127,17 +178,44 @@ export default function TeacherReportsPage() {
             const created = await createStudentReport(payload);
 
             setReports((current) => [created, ...current]);
-            setForm(initialFormState);
-            setSuccessMessage("Report created successfully.");
+
+            if (action === "next") {
+                setForm((current) => ({
+                    ...current,
+                    student_id: "",
+                    report_text: "",
+                    exam_mark: "",
+                    attainment_grade: "",
+                    effort_grade: "",
+                    target_grade: "",
+                    next_steps: "",
+                }));
+
+                setSuccessMessage("Draft saved. Select the next student.");
+                return;
+            }
+
+            if (action === "close") {
+                setForm(initialFormState);
+                setSuccessMessage("Draft saved and closed.");
+                return;
+            }
+
+            setSuccessMessage("Draft saved.");
         } catch (err) {
             setError(
                 err instanceof Error
                     ? err.message
-                    : "Failed to create report.",
+                    : "Failed to save draft.",
             );
         } finally {
             setSaving(false);
         }
+    }
+
+    async function handleCreateReport(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        await saveReport("draft");
     }
 
     async function handleDeleteReport(reportId: number) {
@@ -145,9 +223,7 @@ export default function TeacherReportsPage() {
             "Delete this report? This cannot be undone.",
         );
 
-        if (!confirmed) {
-            return;
-        }
+        if (!confirmed) return;
 
         try {
             setError(null);
@@ -177,7 +253,8 @@ export default function TeacherReportsPage() {
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    Create and manage academic reports for students.
+                    Write student draft reports, save, move to the next student,
+                    or close when finished.
                 </p>
             </div>
 
@@ -195,14 +272,56 @@ export default function TeacherReportsPage() {
 
             <section className="rounded-2xl border bg-white p-6">
                 <h2 className="text-xl font-bold text-slate-950">
-                    Create Report
+                    Write Draft Report
                 </h2>
 
-                <form onSubmit={handleCreateReport} className="mt-6 grid gap-4">
+                <form onSubmit={handleCreateReport} className="mt-6 grid gap-5">
                     <div className="grid gap-4 md:grid-cols-3">
                         <label className="grid gap-2">
                             <span className="text-sm font-semibold text-slate-700">
-                                Student ID
+                                Teacher
+                            </span>
+
+                            <select
+                                value={form.teacher_id}
+                                onChange={(event) =>
+                                    updateFormField(
+                                        "teacher_id",
+                                        event.target.value,
+                                    )
+                                }
+                                className="rounded-xl border px-3 py-2 text-sm"
+                            >
+                                <option value="">
+                                    Current teacher / staff member
+                                </option>
+                            </select>
+                        </label>
+
+                        <label className="grid gap-2">
+                            <span className="text-sm font-semibold text-slate-700">
+                                Class
+                            </span>
+
+                            <select
+                                value={form.class_id}
+                                onChange={(event) =>
+                                    updateFormField(
+                                        "class_id",
+                                        event.target.value,
+                                    )
+                                }
+                                className="rounded-xl border px-3 py-2 text-sm"
+                            >
+                                <option value="">
+                                    Select class
+                                </option>
+                            </select>
+                        </label>
+
+                        <label className="grid gap-2">
+                            <span className="text-sm font-semibold text-slate-700">
+                                Student
                             </span>
 
                             <input
@@ -214,9 +333,32 @@ export default function TeacherReportsPage() {
                                     )
                                 }
                                 className="rounded-xl border px-3 py-2 text-sm"
-                                placeholder="e.g. 12"
+                                placeholder="Temporary student ID until selector endpoint is connected"
                                 inputMode="numeric"
                             />
+                        </label>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                        <label className="grid gap-2">
+                            <span className="text-sm font-semibold text-slate-700">
+                                Report Session
+                            </span>
+
+                            <select
+                                value={form.report_session_id}
+                                onChange={(event) =>
+                                    updateFormField(
+                                        "report_session_id",
+                                        event.target.value,
+                                    )
+                                }
+                                className="rounded-xl border px-3 py-2 text-sm"
+                            >
+                                <option value="">
+                                    Default report session
+                                </option>
+                            </select>
                         </label>
 
                         <label className="grid gap-2">
@@ -245,10 +387,7 @@ export default function TeacherReportsPage() {
                             <input
                                 value={form.term}
                                 onChange={(event) =>
-                                    updateFormField(
-                                        "term",
-                                        event.target.value,
-                                    )
+                                    updateFormField("term", event.target.value)
                                 }
                                 className="rounded-xl border px-3 py-2 text-sm"
                                 placeholder="Autumn"
@@ -256,47 +395,44 @@ export default function TeacherReportsPage() {
                         </label>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <label className="grid gap-2">
+                        <span className="text-sm font-semibold text-slate-700">
+                            Report Title
+                        </span>
+
+                        <input
+                            value={form.title}
+                            onChange={(event) =>
+                                updateFormField("title", event.target.value)
+                            }
+                            className="rounded-xl border px-3 py-2 text-sm"
+                            placeholder="Autumn Progress Report"
+                        />
+                    </label>
+
+                    {reportSessionConfig.include_work_covered && (
                         <label className="grid gap-2">
                             <span className="text-sm font-semibold text-slate-700">
-                                Title
+                                Work Covered
                             </span>
 
-                            <input
-                                value={form.title}
+                            <textarea
+                                value={form.work_covered}
                                 onChange={(event) =>
                                     updateFormField(
-                                        "title",
+                                        "work_covered",
                                         event.target.value,
                                     )
                                 }
-                                className="rounded-xl border px-3 py-2 text-sm"
-                                placeholder="Autumn Progress Report"
+                                className="min-h-24 rounded-xl border px-3 py-2 text-sm"
+                                placeholder="Write one or two lines about the work covered by the whole class."
                             />
                         </label>
-
-                        <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
-                                Grade
-                            </span>
-
-                            <input
-                                value={form.grade}
-                                onChange={(event) =>
-                                    updateFormField(
-                                        "grade",
-                                        event.target.value,
-                                    )
-                                }
-                                className="rounded-xl border px-3 py-2 text-sm"
-                                placeholder="A"
-                            />
-                        </label>
-                    </div>
+                    )}
 
                     <label className="grid gap-2">
                         <span className="text-sm font-semibold text-slate-700">
-                            Report Text
+                            Student Comment
                         </span>
 
                         <textarea
@@ -308,17 +444,141 @@ export default function TeacherReportsPage() {
                                 )
                             }
                             className="min-h-40 rounded-xl border px-3 py-2 text-sm"
-                            placeholder="Write the report feedback..."
+                            placeholder="Write the individual student comment..."
                         />
                     </label>
 
-                    <button
-                        type="submit"
-                        disabled={saving}
-                        className="w-fit rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                        {saving ? "Creating..." : "Create Report"}
-                    </button>
+                    <div className="grid gap-4 md:grid-cols-3">
+                        {reportSessionConfig.include_exam_mark && (
+                            <label className="grid gap-2">
+                                <span className="text-sm font-semibold text-slate-700">
+                                    Exam Mark
+                                </span>
+
+                                <input
+                                    value={form.exam_mark}
+                                    onChange={(event) =>
+                                        updateFormField(
+                                            "exam_mark",
+                                            event.target.value,
+                                        )
+                                    }
+                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    placeholder="e.g. 72%"
+                                />
+                            </label>
+                        )}
+
+                        {reportSessionConfig.include_attainment_grade && (
+                            <label className="grid gap-2">
+                                <span className="text-sm font-semibold text-slate-700">
+                                    Attainment Grade
+                                </span>
+
+                                <input
+                                    value={form.attainment_grade}
+                                    onChange={(event) =>
+                                        updateFormField(
+                                            "attainment_grade",
+                                            event.target.value,
+                                        )
+                                    }
+                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    placeholder="e.g. A"
+                                />
+                            </label>
+                        )}
+
+                        {reportSessionConfig.include_effort_grade && (
+                            <label className="grid gap-2">
+                                <span className="text-sm font-semibold text-slate-700">
+                                    Effort Grade
+                                </span>
+
+                                <input
+                                    value={form.effort_grade}
+                                    onChange={(event) =>
+                                        updateFormField(
+                                            "effort_grade",
+                                            event.target.value,
+                                        )
+                                    }
+                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    placeholder="e.g. Excellent"
+                                />
+                            </label>
+                        )}
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                        {reportSessionConfig.include_target_grade && (
+                            <label className="grid gap-2">
+                                <span className="text-sm font-semibold text-slate-700">
+                                    Target Grade
+                                </span>
+
+                                <input
+                                    value={form.target_grade}
+                                    onChange={(event) =>
+                                        updateFormField(
+                                            "target_grade",
+                                            event.target.value,
+                                        )
+                                    }
+                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    placeholder="e.g. A*"
+                                />
+                            </label>
+                        )}
+
+                        {reportSessionConfig.include_next_steps && (
+                            <label className="grid gap-2">
+                                <span className="text-sm font-semibold text-slate-700">
+                                    Next Steps
+                                </span>
+
+                                <input
+                                    value={form.next_steps}
+                                    onChange={(event) =>
+                                        updateFormField(
+                                            "next_steps",
+                                            event.target.value,
+                                        )
+                                    }
+                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    placeholder="What should the student focus on next?"
+                                />
+                            </label>
+                        )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-3 border-t pt-5">
+                        <button
+                            type="submit"
+                            disabled={saving}
+                            className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {saving ? "Saving..." : "Save Draft"}
+                        </button>
+
+                        <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void saveReport("next")}
+                            className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            Save & Next Student
+                        </button>
+
+                        <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void saveReport("close")}
+                            className="rounded-xl border px-5 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            Save & Close
+                        </button>
+                    </div>
                 </form>
             </section>
 
@@ -357,11 +617,16 @@ export default function TeacherReportsPage() {
                                         </p>
                                     </div>
 
-                                    {report.grade && (
-                                        <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
-                                            {report.grade}
-                                        </span>
-                                    )}
+                                    <span
+                                        className={`rounded-full px-3 py-1 text-sm font-bold ${report.published
+                                                ? "bg-green-50 text-green-700"
+                                                : "bg-amber-50 text-amber-700"
+                                            }`}
+                                    >
+                                        {report.published
+                                            ? "Published"
+                                            : "Draft"}
+                                    </span>
                                 </div>
 
                                 <p className="mt-4 whitespace-pre-line text-sm leading-6 text-slate-700">
