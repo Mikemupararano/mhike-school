@@ -11,6 +11,7 @@ from app.models.notification import Notification
 from app.models.notification_delivery import NotificationDelivery
 from app.models.progress import Progress
 from app.models.quiz import QuizOption, QuizQuestion
+from app.models.report_session import ReportSession
 from app.models.school import School
 from app.models.student_report import StudentReport
 from app.models.user import User, UserRole, UserStatus
@@ -31,6 +32,7 @@ __all__ = [
     "Progress",
     "QuizOption",
     "QuizQuestion",
+    "ReportSession",
     "School",
     "StudentReport",
     "User",

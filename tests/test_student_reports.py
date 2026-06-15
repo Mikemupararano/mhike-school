@@ -123,7 +123,9 @@ async def test_linked_parent_can_view_child_reports(
     assert len(data) == 1
     assert data[0]["student_id"] == student_user.id
     assert data[0]["title"] == "Parent Visible Report"
-    assert data[0]["report_text"] == "This report should be visible to linked parents."
+    assert data[0]["report_text"] == (
+        "This report should be visible to linked parents."
+    )
     assert data[0]["published"] is True
 
 
@@ -235,3 +237,231 @@ async def test_can_delete_student_report(
     deleted = await db_session.get(StudentReport, report.id)
 
     assert deleted is None
+
+
+@pytest.mark.asyncio
+async def test_teacher_cannot_publish_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Draft Report",
+        report_text="Teacher should not be able to publish this.",
+        grade="B",
+        academic_year="2026/27",
+        term="Autumn",
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.patch(
+        f"/api/v1/student-reports/{report.id}",
+        json={"published": True},
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_school_admin_can_publish_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Admin Publish Report",
+        report_text="School admin should be able to publish this.",
+        grade="A",
+        academic_year="2026/27",
+        term="Spring",
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.patch(
+        f"/api/v1/student-reports/{report.id}",
+        json={"published": True},
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["published"] is True
+    assert data["published_by_id"] == school_admin_user.id
+    assert data["published_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_without_school_cannot_publish_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    platform_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Platform Admin Publish Report",
+        report_text=(
+            "Platform admin should need a school context to publish this."
+        ),
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.patch(
+        f"/api/v1/student-reports/{report.id}",
+        json={"published": True},
+        headers=auth_headers(platform_admin_user),
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_parent_cannot_see_draft_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    parent_user,
+    student_user,
+    teacher_user,
+    auth_headers,
+):
+    link = ParentStudent(
+        parent_id=parent_user.id,
+        student_id=student_user.id,
+    )
+
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Draft Parent Hidden Report",
+        report_text="This draft should not be visible to parents.",
+        grade="B",
+        academic_year="2026/27",
+        term="Autumn",
+        published=False,
+    )
+
+    db_session.add_all([link, report])
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/student-reports/parent",
+        headers=auth_headers(parent_user),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_parent_can_see_published_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    parent_user,
+    student_user,
+    teacher_user,
+    auth_headers,
+):
+    link = ParentStudent(
+        parent_id=parent_user.id,
+        student_id=student_user.id,
+    )
+
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Published Parent Visible Report",
+        report_text="This published report should be visible to parents.",
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+        published=True,
+    )
+
+    db_session.add_all([link, report])
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/student-reports/parent",
+        headers=auth_headers(parent_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+    assert data[0]["title"] == "Published Parent Visible Report"
+    assert data[0]["published"] is True
+
+
+@pytest.mark.asyncio
+async def test_unpublishing_clears_publication_metadata(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Published Report",
+        report_text="This report will be unpublished.",
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+        published=True,
+        published_by_id=school_admin_user.id,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.patch(
+        f"/api/v1/student-reports/{report.id}",
+        json={"published": False},
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["published"] is False
+    assert data["published_at"] is None
+    assert data["published_by_id"] is None
