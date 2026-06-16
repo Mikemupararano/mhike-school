@@ -3,6 +3,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
+    listReportSessions,
+    type ReportSession,
+} from "@/lib/report-sessions";
+import {
     createStudentReport,
     deleteStudentReport,
     listStudentReports,
@@ -25,26 +29,9 @@ type ReportFormState = {
     effort_grade: string;
     target_grade: string;
     next_steps: string;
+    tutor_comment: string;
     academic_year: string;
     term: string;
-};
-
-type ReportSessionConfig = {
-    include_work_covered: boolean;
-    include_exam_mark: boolean;
-    include_attainment_grade: boolean;
-    include_effort_grade: boolean;
-    include_target_grade: boolean;
-    include_next_steps: boolean;
-};
-
-const reportSessionConfig: ReportSessionConfig = {
-    include_work_covered: true,
-    include_exam_mark: true,
-    include_attainment_grade: true,
-    include_effort_grade: true,
-    include_target_grade: true,
-    include_next_steps: true,
 };
 
 const initialFormState: ReportFormState = {
@@ -60,6 +47,7 @@ const initialFormState: ReportFormState = {
     effort_grade: "",
     target_grade: "",
     next_steps: "",
+    tutor_comment: "",
     academic_year: "2026/27",
     term: "",
 };
@@ -72,19 +60,45 @@ function formatDate(value: string): string {
     });
 }
 
-function buildReportText(form: ReportFormState): string {
+function buildReportText(
+    form: ReportFormState,
+    activeSession: ReportSession | null,
+): string {
     const sections: string[] = [];
 
-    if (form.work_covered.trim()) {
+    if (activeSession?.include_work_covered && form.work_covered.trim()) {
         sections.push(`Work covered:\n${form.work_covered.trim()}`);
     }
 
-    if (form.report_text.trim()) {
+    if (activeSession?.include_student_comment && form.report_text.trim()) {
         sections.push(`Student comment:\n${form.report_text.trim()}`);
     }
 
-    if (form.next_steps.trim()) {
+    if (activeSession?.include_exam_mark && form.exam_mark.trim()) {
+        sections.push(`Exam mark:\n${form.exam_mark.trim()}`);
+    }
+
+    if (
+        activeSession?.include_attainment_grade &&
+        form.attainment_grade.trim()
+    ) {
+        sections.push(`Attainment grade:\n${form.attainment_grade.trim()}`);
+    }
+
+    if (activeSession?.include_effort_grade && form.effort_grade.trim()) {
+        sections.push(`Effort grade:\n${form.effort_grade.trim()}`);
+    }
+
+    if (activeSession?.include_target_grade && form.target_grade.trim()) {
+        sections.push(`Target grade:\n${form.target_grade.trim()}`);
+    }
+
+    if (activeSession?.include_next_steps && form.next_steps.trim()) {
         sections.push(`Next steps:\n${form.next_steps.trim()}`);
+    }
+
+    if (activeSession?.include_tutor_comment && form.tutor_comment.trim()) {
+        sections.push(`Tutor comment:\n${form.tutor_comment.trim()}`);
     }
 
     return sections.join("\n\n");
@@ -92,6 +106,10 @@ function buildReportText(form: ReportFormState): string {
 
 export default function TeacherReportsPage() {
     const [reports, setReports] = useState<StudentReport[]>([]);
+    const [reportSessions, setReportSessions] = useState<ReportSession[]>([]);
+    const [activeSession, setActiveSession] = useState<ReportSession | null>(
+        null,
+    );
     const [form, setForm] = useState<ReportFormState>(initialFormState);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -99,14 +117,35 @@ export default function TeacherReportsPage() {
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     useEffect(() => {
-        async function loadReports() {
+        async function loadPageData() {
             try {
                 setLoading(true);
                 setError(null);
 
-                const data = await listStudentReports();
+                const [reportsData, sessionsData] = await Promise.all([
+                    listStudentReports(),
+                    listReportSessions(),
+                ]);
 
-                setReports(data);
+                setReports(reportsData);
+                setReportSessions(sessionsData);
+
+                const active =
+                    sessionsData.find((session) => session.active) ??
+                    sessionsData[0] ??
+                    null;
+
+                setActiveSession(active);
+
+                if (active) {
+                    setForm((current) => ({
+                        ...current,
+                        report_session_id: String(active.id),
+                        academic_year: active.academic_year,
+                        term: active.term ?? "",
+                        title: current.title || active.title,
+                    }));
+                }
             } catch (err) {
                 setError(
                     err instanceof Error
@@ -118,7 +157,7 @@ export default function TeacherReportsPage() {
             }
         }
 
-        void loadReports();
+        void loadPageData();
     }, []);
 
     const sortedReports = useMemo(
@@ -138,6 +177,24 @@ export default function TeacherReportsPage() {
         }));
     }
 
+    function handleSessionChange(sessionId: string) {
+        const selectedSession =
+            reportSessions.find(
+                (session) => String(session.id) === sessionId,
+            ) ?? null;
+
+        setActiveSession(selectedSession);
+
+        setForm((current) => ({
+            ...current,
+            report_session_id: sessionId,
+            academic_year:
+                selectedSession?.academic_year ?? current.academic_year,
+            term: selectedSession?.term ?? current.term,
+            title: selectedSession?.title ?? current.title,
+        }));
+    }
+
     async function saveReport(action: SaveAction) {
         const studentId = Number(form.student_id);
 
@@ -146,12 +203,17 @@ export default function TeacherReportsPage() {
             return;
         }
 
+        if (!activeSession) {
+            setError("Select a report session.");
+            return;
+        }
+
         if (!form.title.trim()) {
             setError("Report title is required.");
             return;
         }
 
-        const reportText = buildReportText(form);
+        const reportText = buildReportText(form, activeSession);
 
         if (!reportText.trim()) {
             setError("Report text is required.");
@@ -189,6 +251,7 @@ export default function TeacherReportsPage() {
                     effort_grade: "",
                     target_grade: "",
                     next_steps: "",
+                    tutor_comment: "",
                 }));
 
                 setSuccessMessage("Draft saved. Select the next student.");
@@ -196,7 +259,16 @@ export default function TeacherReportsPage() {
             }
 
             if (action === "close") {
-                setForm(initialFormState);
+                setForm({
+                    ...initialFormState,
+                    report_session_id: activeSession
+                        ? String(activeSession.id)
+                        : "",
+                    academic_year: activeSession.academic_year,
+                    term: activeSession.term ?? "",
+                    title: activeSession.title,
+                });
+
                 setSuccessMessage("Draft saved and closed.");
                 return;
             }
@@ -253,8 +325,7 @@ export default function TeacherReportsPage() {
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    Write student draft reports, save, move to the next student,
-                    or close when finished.
+                    Write student draft reports using the active report session.
                 </p>
             </div>
 
@@ -313,9 +384,7 @@ export default function TeacherReportsPage() {
                                 }
                                 className="rounded-xl border px-3 py-2 text-sm"
                             >
-                                <option value="">
-                                    Select class
-                                </option>
+                                <option value="">Select class</option>
                             </select>
                         </label>
 
@@ -348,16 +417,23 @@ export default function TeacherReportsPage() {
                             <select
                                 value={form.report_session_id}
                                 onChange={(event) =>
-                                    updateFormField(
-                                        "report_session_id",
-                                        event.target.value,
-                                    )
+                                    handleSessionChange(event.target.value)
                                 }
                                 className="rounded-xl border px-3 py-2 text-sm"
                             >
                                 <option value="">
-                                    Default report session
+                                    Select report session
                                 </option>
+
+                                {reportSessions.map((session) => (
+                                    <option
+                                        key={session.id}
+                                        value={String(session.id)}
+                                    >
+                                        {session.title}
+                                        {session.active ? " (Active)" : ""}
+                                    </option>
+                                ))}
                             </select>
                         </label>
 
@@ -410,7 +486,7 @@ export default function TeacherReportsPage() {
                         />
                     </label>
 
-                    {reportSessionConfig.include_work_covered && (
+                    {activeSession?.include_work_covered && (
                         <label className="grid gap-2">
                             <span className="text-sm font-semibold text-slate-700">
                                 Work Covered
@@ -430,26 +506,28 @@ export default function TeacherReportsPage() {
                         </label>
                     )}
 
-                    <label className="grid gap-2">
-                        <span className="text-sm font-semibold text-slate-700">
-                            Student Comment
-                        </span>
+                    {activeSession?.include_student_comment && (
+                        <label className="grid gap-2">
+                            <span className="text-sm font-semibold text-slate-700">
+                                Student Comment
+                            </span>
 
-                        <textarea
-                            value={form.report_text}
-                            onChange={(event) =>
-                                updateFormField(
-                                    "report_text",
-                                    event.target.value,
-                                )
-                            }
-                            className="min-h-40 rounded-xl border px-3 py-2 text-sm"
-                            placeholder="Write the individual student comment..."
-                        />
-                    </label>
+                            <textarea
+                                value={form.report_text}
+                                onChange={(event) =>
+                                    updateFormField(
+                                        "report_text",
+                                        event.target.value,
+                                    )
+                                }
+                                className="min-h-40 rounded-xl border px-3 py-2 text-sm"
+                                placeholder="Write the individual student comment..."
+                            />
+                        </label>
+                    )}
 
                     <div className="grid gap-4 md:grid-cols-3">
-                        {reportSessionConfig.include_exam_mark && (
+                        {activeSession?.include_exam_mark && (
                             <label className="grid gap-2">
                                 <span className="text-sm font-semibold text-slate-700">
                                     Exam Mark
@@ -469,7 +547,7 @@ export default function TeacherReportsPage() {
                             </label>
                         )}
 
-                        {reportSessionConfig.include_attainment_grade && (
+                        {activeSession?.include_attainment_grade && (
                             <label className="grid gap-2">
                                 <span className="text-sm font-semibold text-slate-700">
                                     Attainment Grade
@@ -489,7 +567,7 @@ export default function TeacherReportsPage() {
                             </label>
                         )}
 
-                        {reportSessionConfig.include_effort_grade && (
+                        {activeSession?.include_effort_grade && (
                             <label className="grid gap-2">
                                 <span className="text-sm font-semibold text-slate-700">
                                     Effort Grade
@@ -511,7 +589,7 @@ export default function TeacherReportsPage() {
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-2">
-                        {reportSessionConfig.include_target_grade && (
+                        {activeSession?.include_target_grade && (
                             <label className="grid gap-2">
                                 <span className="text-sm font-semibold text-slate-700">
                                     Target Grade
@@ -531,7 +609,7 @@ export default function TeacherReportsPage() {
                             </label>
                         )}
 
-                        {reportSessionConfig.include_next_steps && (
+                        {activeSession?.include_next_steps && (
                             <label className="grid gap-2">
                                 <span className="text-sm font-semibold text-slate-700">
                                     Next Steps
@@ -551,6 +629,26 @@ export default function TeacherReportsPage() {
                             </label>
                         )}
                     </div>
+
+                    {activeSession?.include_tutor_comment && (
+                        <label className="grid gap-2">
+                            <span className="text-sm font-semibold text-slate-700">
+                                Tutor Comment
+                            </span>
+
+                            <textarea
+                                value={form.tutor_comment}
+                                onChange={(event) =>
+                                    updateFormField(
+                                        "tutor_comment",
+                                        event.target.value,
+                                    )
+                                }
+                                className="min-h-28 rounded-xl border px-3 py-2 text-sm"
+                                placeholder="Write tutor comment..."
+                            />
+                        </label>
+                    )}
 
                     <div className="flex flex-wrap gap-3 border-t pt-5">
                         <button
@@ -619,8 +717,8 @@ export default function TeacherReportsPage() {
 
                                     <span
                                         className={`rounded-full px-3 py-1 text-sm font-bold ${report.published
-                                                ? "bg-green-50 text-green-700"
-                                                : "bg-amber-50 text-amber-700"
+                                            ? "bg-green-50 text-green-700"
+                                            : "bg-amber-50 text-amber-700"
                                             }`}
                                     >
                                         {report.published
