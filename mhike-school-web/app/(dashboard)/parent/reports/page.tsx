@@ -1,10 +1,6 @@
 "use client";
 
-import {
-    useEffect,
-    useMemo,
-    useState,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import ChildSelector from "@/components/parent/ChildSelector";
 import ParentPageState from "@/components/parent/ParentPageState";
@@ -34,14 +30,9 @@ export default function ParentReportsPage() {
         error: childrenError,
     } = useParentChildren();
 
-    const [reports, setReports] =
-        useState<StudentReport[]>([]);
-
-    const [reportsLoading, setReportsLoading] =
-        useState(true);
-
-    const [reportsError, setReportsError] =
-        useState<string | null>(null);
+    const [reports, setReports] = useState<StudentReport[]>([]);
+    const [reportsLoading, setReportsLoading] = useState(true);
+    const [reportsError, setReportsError] = useState<string | null>(null);
 
     useEffect(() => {
         async function loadReports() {
@@ -71,20 +62,17 @@ export default function ParentReportsPage() {
             return [];
         }
 
-        return reports.filter(
-            (report) =>
-                report.student_id === selectedStudentId,
-        );
-    }, [
-        reports,
-        selectedStudentId,
-    ]);
+        return [...reports]
+            .filter((report) => report.student_id === selectedStudentId)
+            .sort(
+                (first, second) =>
+                    new Date(second.created_at).getTime() -
+                    new Date(first.created_at).getTime(),
+            );
+    }, [reports, selectedStudentId]);
 
-    const isLoading =
-        childrenLoading || reportsLoading;
-
-    const pageError =
-        childrenError || reportsError;
+    const isLoading = childrenLoading || reportsLoading;
+    const pageError = childrenError || reportsError;
 
     return (
         <main className="space-y-6 p-8">
@@ -94,8 +82,8 @@ export default function ParentReportsPage() {
                 </h1>
 
                 <p className="mt-2 text-slate-500">
-                    View academic reports, progress summaries, and teacher
-                    feedback for your child.
+                    View published academic reports, progress summaries and
+                    teacher feedback for your child.
                 </p>
             </div>
 
@@ -112,13 +100,13 @@ export default function ParentReportsPage() {
                             selectedStudentId={selectedStudentId}
                             onSelectStudent={setSelectedStudentId}
                             title="Linked Students"
-                            description="Select a child to view their reports."
+                            description="Select a child to view their published reports."
                         />
 
                         <section className="rounded-2xl border bg-white p-6">
                             <div>
                                 <h2 className="text-xl font-bold text-slate-950">
-                                    Reports
+                                    Published Reports
                                 </h2>
 
                                 <p className="mt-2 text-slate-500">
@@ -133,7 +121,8 @@ export default function ParentReportsPage() {
 
                             {selectedReports.length === 0 ? (
                                 <div className="mt-6 rounded-2xl border border-dashed bg-slate-50 p-6 text-slate-500">
-                                    No reports have been published yet.
+                                    No published reports are currently
+                                    available.
                                 </div>
                             ) : (
                                 <div className="mt-6 grid gap-4">
@@ -154,21 +143,24 @@ export default function ParentReportsPage() {
                                                             ? ` · ${report.term}`
                                                             : ""}
                                                     </p>
+
+                                                    <p className="mt-1 text-xs text-slate-400">
+                                                        Published report ·{" "}
+                                                        {formatDate(
+                                                            report.created_at,
+                                                        )}
+                                                    </p>
                                                 </div>
 
                                                 {report.grade && (
-                                                    <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
+                                                    <span className="w-fit rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
                                                         {report.grade}
                                                     </span>
                                                 )}
                                             </div>
 
-                                            <p className="mt-4 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                            <p className="mt-4 whitespace-pre-line rounded-xl bg-white p-4 text-sm leading-6 text-slate-700">
                                                 {report.report_text}
-                                            </p>
-
-                                            <p className="mt-4 text-xs font-medium text-slate-400">
-                                                Published {formatDate(report.created_at)}
                                             </p>
                                         </article>
                                     ))}

@@ -57,13 +57,14 @@ export async function listReportsForStudent(
     );
 }
 
+export async function listParentStudentReports(): Promise<StudentReport[]> {
+    return apiGet<StudentReport[]>("/student-reports/parent");
+}
+
 export async function createStudentReport(
     payload: StudentReportCreateInput,
 ): Promise<StudentReport> {
-    return apiPost<StudentReport>(
-        "/student-reports",
-        payload,
-    );
+    return apiPost<StudentReport>("/student-reports", payload);
 }
 
 export async function updateStudentReport(
@@ -79,15 +80,11 @@ export async function updateStudentReport(
 export async function deleteStudentReport(
     reportId: number,
 ): Promise<void> {
-    return apiDelete<void>(
-        `/student-reports/${reportId}`,
-    );
+    return apiDelete<void>(`/student-reports/${reportId}`);
 }
 
 export async function getStudentReport(
     reportId: number,
 ): Promise<StudentReport> {
-    return apiGet<StudentReport>(
-        `/student-reports/${reportId}`,
-    );
+    return apiGet<StudentReport>(`/student-reports/${reportId}`);
 }
