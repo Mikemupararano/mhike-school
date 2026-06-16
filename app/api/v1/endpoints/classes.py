@@ -16,12 +16,18 @@ router = APIRouter()
 
 @router.get("/", response_model=List[ClassGroupOut])
 async def list_classes(
+    teacher_id: int | None = Query(default=None, ge=1),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     current_school_id: int = Depends(get_current_school_id),
 ):
     PermissionService.ensure_active_user(current_user)
-    return await ClassService.list_classes_by_school(db, current_school_id)
+
+    return await ClassService.list_classes_by_school(
+        db,
+        current_school_id,
+        teacher_id=teacher_id,
+    )
 
 
 @router.get("/{class_id}", response_model=ClassGroupOut)
@@ -32,10 +38,19 @@ async def get_class(
     current_school_id: int = Depends(get_current_school_id),
 ):
     PermissionService.ensure_active_user(current_user)
-    return await ClassService.get_class(db, class_id, current_school_id)
+
+    return await ClassService.get_class(
+        db,
+        class_id,
+        current_school_id,
+    )
 
 
-@router.post("/", response_model=ClassGroupOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=ClassGroupOut,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_class(
     payload: ClassGroupCreate,
     db: AsyncSession = Depends(get_db),
@@ -52,11 +67,14 @@ async def create_class(
             school_id=current_school_id,
             teacher_id=payload.teacher_id,
         )
+
         await db.commit()
         await db.refresh(class_group)
+
         return class_group
     except ValueError as e:
         await db.rollback()
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -81,11 +99,14 @@ async def assign_teacher(
             teacher_id=teacher_id,
             school_id=current_school_id,
         )
+
         await db.commit()
         await db.refresh(class_group)
+
         return class_group
     except ValueError as e:
         await db.rollback()
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -100,6 +121,7 @@ async def get_class_students(
     current_school_id: int = Depends(get_current_school_id),
 ):
     PermissionService.ensure_active_user(current_user)
+
     return await ClassService.get_students_in_class(
         db,
         class_id,

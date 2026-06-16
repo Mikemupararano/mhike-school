@@ -7,6 +7,14 @@ import {
     type ReportSession,
 } from "@/lib/report-sessions";
 import {
+    listReportClasses,
+    listReportClassStudents,
+    listReportTeachers,
+    type ReportClass,
+    type ReportStudent,
+    type ReportTeacher,
+} from "@/lib/report-data";
+import {
     createStudentReport,
     deleteStudentReport,
     listStudentReports,
@@ -110,8 +118,15 @@ export default function TeacherReportsPage() {
     const [activeSession, setActiveSession] = useState<ReportSession | null>(
         null,
     );
+
+    const [teachers, setTeachers] = useState<ReportTeacher[]>([]);
+    const [classes, setClasses] = useState<ReportClass[]>([]);
+    const [students, setStudents] = useState<ReportStudent[]>([]);
+
     const [form, setForm] = useState<ReportFormState>(initialFormState);
     const [loading, setLoading] = useState(true);
+    const [loadingClasses, setLoadingClasses] = useState(false);
+    const [loadingStudents, setLoadingStudents] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -122,13 +137,18 @@ export default function TeacherReportsPage() {
                 setLoading(true);
                 setError(null);
 
-                const [reportsData, sessionsData] = await Promise.all([
-                    listStudentReports(),
-                    listReportSessions(),
-                ]);
+                const [reportsData, sessionsData, teachersData, classesData] =
+                    await Promise.all([
+                        listStudentReports(),
+                        listReportSessions(),
+                        listReportTeachers(),
+                        listReportClasses(),
+                    ]);
 
                 setReports(reportsData);
                 setReportSessions(sessionsData);
+                setTeachers(teachersData);
+                setClasses(classesData);
 
                 const active =
                     sessionsData.find((session) => session.active) ??
@@ -195,6 +215,92 @@ export default function TeacherReportsPage() {
         }));
     }
 
+    async function handleTeacherChange(teacherId: string) {
+        updateFormField("teacher_id", teacherId);
+
+        setForm((current) => ({
+            ...current,
+            teacher_id: teacherId,
+            class_id: "",
+            student_id: "",
+        }));
+
+        setStudents([]);
+
+        try {
+            setLoadingClasses(true);
+            setError(null);
+
+            const data = await listReportClasses(teacherId || null);
+
+            setClasses(data);
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load classes.",
+            );
+        } finally {
+            setLoadingClasses(false);
+        }
+    }
+
+    async function handleClassChange(classId: string) {
+        setForm((current) => ({
+            ...current,
+            class_id: classId,
+            student_id: "",
+        }));
+
+        if (!classId) {
+            setStudents([]);
+            return;
+        }
+
+        try {
+            setLoadingStudents(true);
+            setError(null);
+
+            const data = await listReportClassStudents(classId);
+
+            setStudents(data);
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load students.",
+            );
+        } finally {
+            setLoadingStudents(false);
+        }
+    }
+
+    function moveToNextStudent() {
+        const currentIndex = students.findIndex(
+            (student) => String(student.id) === form.student_id,
+        );
+
+        const nextStudent = students[currentIndex + 1];
+
+        setForm((current) => ({
+            ...current,
+            student_id: nextStudent ? String(nextStudent.id) : "",
+            report_text: "",
+            exam_mark: "",
+            attainment_grade: "",
+            effort_grade: "",
+            target_grade: "",
+            next_steps: "",
+            tutor_comment: "",
+        }));
+
+        setSuccessMessage(
+            nextStudent
+                ? "Draft saved. Moved to the next student."
+                : "Draft saved. No more students in this class.",
+        );
+    }
+
     async function saveReport(action: SaveAction) {
         const studentId = Number(form.student_id);
 
@@ -242,33 +348,20 @@ export default function TeacherReportsPage() {
             setReports((current) => [created, ...current]);
 
             if (action === "next") {
-                setForm((current) => ({
-                    ...current,
-                    student_id: "",
-                    report_text: "",
-                    exam_mark: "",
-                    attainment_grade: "",
-                    effort_grade: "",
-                    target_grade: "",
-                    next_steps: "",
-                    tutor_comment: "",
-                }));
-
-                setSuccessMessage("Draft saved. Select the next student.");
+                moveToNextStudent();
                 return;
             }
 
             if (action === "close") {
                 setForm({
                     ...initialFormState,
-                    report_session_id: activeSession
-                        ? String(activeSession.id)
-                        : "",
+                    report_session_id: String(activeSession.id),
                     academic_year: activeSession.academic_year,
                     term: activeSession.term ?? "",
                     title: activeSession.title,
                 });
 
+                setStudents([]);
                 setSuccessMessage("Draft saved and closed.");
                 return;
             }
@@ -295,7 +388,9 @@ export default function TeacherReportsPage() {
             "Delete this report? This cannot be undone.",
         );
 
-        if (!confirmed) return;
+        if (!confirmed) {
+            return;
+        }
 
         try {
             setError(null);
@@ -356,16 +451,24 @@ export default function TeacherReportsPage() {
                             <select
                                 value={form.teacher_id}
                                 onChange={(event) =>
-                                    updateFormField(
-                                        "teacher_id",
+                                    void handleTeacherChange(
                                         event.target.value,
                                     )
                                 }
                                 className="rounded-xl border px-3 py-2 text-sm"
                             >
                                 <option value="">
-                                    Current teacher / staff member
+                                    Current teacher / all classes
                                 </option>
+
+                                {teachers.map((teacher) => (
+                                    <option
+                                        key={teacher.id}
+                                        value={String(teacher.id)}
+                                    >
+                                        {teacher.full_name}
+                                    </option>
+                                ))}
                             </select>
                         </label>
 
@@ -377,14 +480,27 @@ export default function TeacherReportsPage() {
                             <select
                                 value={form.class_id}
                                 onChange={(event) =>
-                                    updateFormField(
-                                        "class_id",
-                                        event.target.value,
-                                    )
+                                    void handleClassChange(event.target.value)
                                 }
                                 className="rounded-xl border px-3 py-2 text-sm"
                             >
-                                <option value="">Select class</option>
+                                <option value="">
+                                    {loadingClasses
+                                        ? "Loading classes..."
+                                        : "Select class"}
+                                </option>
+
+                                {classes.map((classGroup) => (
+                                    <option
+                                        key={classGroup.id}
+                                        value={String(classGroup.id)}
+                                    >
+                                        {classGroup.name}
+                                        {classGroup.subject_name
+                                            ? ` · ${classGroup.subject_name}`
+                                            : ""}
+                                    </option>
+                                ))}
                             </select>
                         </label>
 
@@ -393,7 +509,7 @@ export default function TeacherReportsPage() {
                                 Student
                             </span>
 
-                            <input
+                            <select
                                 value={form.student_id}
                                 onChange={(event) =>
                                     updateFormField(
@@ -402,9 +518,22 @@ export default function TeacherReportsPage() {
                                     )
                                 }
                                 className="rounded-xl border px-3 py-2 text-sm"
-                                placeholder="Temporary student ID until selector endpoint is connected"
-                                inputMode="numeric"
-                            />
+                            >
+                                <option value="">
+                                    {loadingStudents
+                                        ? "Loading students..."
+                                        : "Select student"}
+                                </option>
+
+                                {students.map((student) => (
+                                    <option
+                                        key={student.id}
+                                        value={String(student.id)}
+                                    >
+                                        {student.full_name}
+                                    </option>
+                                ))}
+                            </select>
                         </label>
                     </div>
 

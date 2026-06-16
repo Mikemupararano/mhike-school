@@ -25,11 +25,12 @@ class ClassService:
             .where(
                 ClassGroup.id == class_id,
                 ClassGroup.school_id == school_id,
-            )
+            ),
         )
+
         class_group = result.scalar_one_or_none()
 
-        if not class_group:
+        if class_group is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Class not found",
@@ -41,13 +42,23 @@ class ClassService:
     async def list_classes_by_school(
         db: AsyncSession,
         school_id: int,
+        teacher_id: int | None = None,
     ) -> list[ClassGroup]:
-        result = await db.execute(
+        statement = (
             select(ClassGroup)
             .options(selectinload(ClassGroup.teacher))
             .where(ClassGroup.school_id == school_id)
-            .order_by(ClassGroup.created_at.desc())
         )
+
+        if teacher_id is not None:
+            statement = statement.where(
+                ClassGroup.teacher_id == teacher_id,
+            )
+
+        statement = statement.order_by(ClassGroup.created_at.desc())
+
+        result = await db.execute(statement)
+
         return list(result.scalars().all())
 
     @staticmethod
@@ -61,23 +72,30 @@ class ClassService:
             select(ClassGroup).where(
                 ClassGroup.name == name,
                 ClassGroup.school_id == school_id,
-            )
+            ),
         )
+
         existing_class = existing_result.scalar_one_or_none()
 
         if existing_class is not None:
-            raise ValueError("A class with this name already exists in this school")
+            raise ValueError(
+                "A class with this name already exists in this school",
+            )
 
         if teacher_id is not None:
             teacher_result = await db.execute(
                 select(User).where(
                     User.id == teacher_id,
                     User.school_id == school_id,
-                )
+                ),
             )
+
             teacher = teacher_result.scalar_one_or_none()
 
-            if teacher is None or not ClassService.has_role(teacher, UserRole.TEACHER):
+            if teacher is None or not ClassService.has_role(
+                teacher,
+                UserRole.TEACHER,
+            ):
                 raise ValueError("Invalid teacher for this school")
 
         class_group = ClassGroup(
@@ -98,17 +116,25 @@ class ClassService:
         teacher_id: int,
         school_id: int,
     ) -> ClassGroup:
-        class_group = await ClassService.get_class(db, class_id, school_id)
+        class_group = await ClassService.get_class(
+            db,
+            class_id,
+            school_id,
+        )
 
         teacher_result = await db.execute(
             select(User).where(
                 User.id == teacher_id,
                 User.school_id == school_id,
-            )
+            ),
         )
+
         teacher = teacher_result.scalar_one_or_none()
 
-        if teacher is None or not ClassService.has_role(teacher, UserRole.TEACHER):
+        if teacher is None or not ClassService.has_role(
+            teacher,
+            UserRole.TEACHER,
+        ):
             raise ValueError("Invalid teacher")
 
         class_group.teacher_id = teacher_id
@@ -123,7 +149,11 @@ class ClassService:
         class_id: int,
         school_id: int,
     ) -> list[User]:
-        class_group = await ClassService.get_class(db, class_id, school_id)
+        class_group = await ClassService.get_class(
+            db,
+            class_id,
+            school_id,
+        )
 
         result = await db.execute(
             select(User)
@@ -132,10 +162,11 @@ class ClassService:
                 Enrollment.class_id == class_group.id,
                 User.school_id == school_id,
             )
-            .order_by(User.id)
+            .order_by(User.id),
         )
 
         users = list(result.scalars().all())
+
         return [user for user in users if ClassService.has_role(user, UserRole.STUDENT)]
 
     @staticmethod
@@ -145,17 +176,25 @@ class ClassService:
         student_id: int,
         school_id: int,
     ) -> Enrollment:
-        class_group = await ClassService.get_class(db, class_id, school_id)
+        class_group = await ClassService.get_class(
+            db,
+            class_id,
+            school_id,
+        )
 
         student_result = await db.execute(
             select(User).where(
                 User.id == student_id,
                 User.school_id == school_id,
-            )
+            ),
         )
+
         student = student_result.scalar_one_or_none()
 
-        if student is None or not ClassService.has_role(student, UserRole.STUDENT):
+        if student is None or not ClassService.has_role(
+            student,
+            UserRole.STUDENT,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid student",
@@ -165,7 +204,7 @@ class ClassService:
             select(Enrollment).where(
                 Enrollment.class_id == class_group.id,
                 Enrollment.user_id == student_id,
-            )
+            ),
         )
 
         if existing.scalar_one_or_none():
@@ -191,14 +230,19 @@ class ClassService:
         student_id: int,
         school_id: int,
     ) -> None:
-        class_group = await ClassService.get_class(db, class_id, school_id)
+        class_group = await ClassService.get_class(
+            db,
+            class_id,
+            school_id,
+        )
 
         result = await db.execute(
             select(Enrollment).where(
                 Enrollment.class_id == class_group.id,
                 Enrollment.user_id == student_id,
-            )
+            ),
         )
+
         enrollment = result.scalar_one_or_none()
 
         if enrollment is None:
