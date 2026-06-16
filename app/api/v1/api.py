@@ -32,6 +32,7 @@ from app.api.v1.endpoints import (
     student_reports,
     teacher_dashboard,
     timetables,
+    report_quality,
 )
 
 api_router = APIRouter()
@@ -220,4 +221,9 @@ api_router.include_router(
     platform_admin.router,
     prefix="/admin",
     tags=["platform-admin"],
+)
+api_router.include_router(
+    report_quality.router,
+    prefix="/report-quality",
+    tags=["report-quality"],
 )

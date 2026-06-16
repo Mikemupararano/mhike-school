@@ -15,6 +15,10 @@ import {
     type ReportTeacher,
 } from "@/lib/report-data";
 import {
+    checkReportComment,
+    type ReportQualityResponse,
+} from "@/lib/report-quality";
+import {
     createStudentReport,
     deleteStudentReport,
     listStudentReports,
@@ -128,6 +132,9 @@ export default function TeacherReportsPage() {
     const [loadingClasses, setLoadingClasses] = useState(false);
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [checkingQuality, setCheckingQuality] = useState(false);
+    const [qualityResult, setQualityResult] =
+        useState<ReportQualityResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -191,6 +198,10 @@ export default function TeacherReportsPage() {
     );
 
     function updateFormField(field: keyof ReportFormState, value: string) {
+        if (field === "report_text") {
+            setQualityResult(null);
+        }
+
         setForm((current) => ({
             ...current,
             [field]: value,
@@ -216,8 +227,6 @@ export default function TeacherReportsPage() {
     }
 
     async function handleTeacherChange(teacherId: string) {
-        updateFormField("teacher_id", teacherId);
-
         setForm((current) => ({
             ...current,
             teacher_id: teacherId,
@@ -275,12 +284,39 @@ export default function TeacherReportsPage() {
         }
     }
 
+    async function handleCheckQuality() {
+        if (!form.report_text.trim()) {
+            setError("Enter a student comment first.");
+            return;
+        }
+
+        try {
+            setCheckingQuality(true);
+            setError(null);
+            setSuccessMessage(null);
+
+            const result = await checkReportComment(form.report_text);
+
+            setQualityResult(result);
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to check UK grammar and spelling.",
+            );
+        } finally {
+            setCheckingQuality(false);
+        }
+    }
+
     function moveToNextStudent() {
         const currentIndex = students.findIndex(
             (student) => String(student.id) === form.student_id,
         );
 
         const nextStudent = students[currentIndex + 1];
+
+        setQualityResult(null);
 
         setForm((current) => ({
             ...current,
@@ -362,6 +398,7 @@ export default function TeacherReportsPage() {
                 });
 
                 setStudents([]);
+                setQualityResult(null);
                 setSuccessMessage("Draft saved and closed.");
                 return;
             }
@@ -636,23 +673,80 @@ export default function TeacherReportsPage() {
                     )}
 
                     {activeSession?.include_student_comment && (
-                        <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
-                                Student Comment
-                            </span>
+                        <div className="grid gap-3">
+                            <label className="grid gap-2">
+                                <span className="text-sm font-semibold text-slate-700">
+                                    Student Comment
+                                </span>
 
-                            <textarea
-                                value={form.report_text}
-                                onChange={(event) =>
-                                    updateFormField(
-                                        "report_text",
-                                        event.target.value,
-                                    )
-                                }
-                                className="min-h-40 rounded-xl border px-3 py-2 text-sm"
-                                placeholder="Write the individual student comment..."
-                            />
-                        </label>
+                                <textarea
+                                    value={form.report_text}
+                                    onChange={(event) =>
+                                        updateFormField(
+                                            "report_text",
+                                            event.target.value,
+                                        )
+                                    }
+                                    className="min-h-40 rounded-xl border px-3 py-2 text-sm"
+                                    placeholder="Write the individual student comment..."
+                                />
+                            </label>
+
+                            <div className="flex flex-wrap gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        void handleCheckQuality()
+                                    }
+                                    disabled={
+                                        checkingQuality ||
+                                        !form.report_text.trim()
+                                    }
+                                    className="rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    {checkingQuality
+                                        ? "Checking..."
+                                        : "Check UK Grammar & Spelling"}
+                                </button>
+                            </div>
+
+                            {qualityResult && (
+                                <div className="rounded-xl border bg-slate-50 p-4">
+                                    <h3 className="font-bold text-slate-900">
+                                        Report Quality Review
+                                    </h3>
+
+                                    <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                        {qualityResult.corrected_comment}
+                                    </p>
+
+                                    {qualityResult.issues.length > 0 && (
+                                        <ul className="mt-3 list-disc pl-5 text-sm text-slate-600">
+                                            {qualityResult.issues.map(
+                                                (issue, index) => (
+                                                    <li key={index}>
+                                                        {issue.message}
+                                                    </li>
+                                                ),
+                                            )}
+                                        </ul>
+                                    )}
+
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            updateFormField(
+                                                "report_text",
+                                                qualityResult.corrected_comment,
+                                            )
+                                        }
+                                        className="mt-4 rounded-xl bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                                    >
+                                        Apply Suggestions
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     )}
 
                     <div className="grid gap-4 md:grid-cols-3">
