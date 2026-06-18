@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
     listReportSessions,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/report-data";
 import {
     checkReportComment,
+    generateReportFromNotes,
     type ReportQualityResponse,
 } from "@/lib/report-quality";
 import {
@@ -136,6 +138,8 @@ function buildReportText(
 }
 
 export default function TeacherReportsPage() {
+    const router = useRouter();
+
     const [reports, setReports] = useState<StudentReport[]>([]);
     const [reportSessions, setReportSessions] = useState<ReportSession[]>([]);
     const [activeSession, setActiveSession] = useState<ReportSession | null>(
@@ -152,6 +156,7 @@ export default function TeacherReportsPage() {
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [saving, setSaving] = useState(false);
     const [checkingQuality, setCheckingQuality] = useState(false);
+    const [generatingFromNotes, setGeneratingFromNotes] = useState(false);
     const [qualityResult, setQualityResult] =
         useState<ReportQualityResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -328,6 +333,57 @@ export default function TeacherReportsPage() {
         }
     }
 
+    async function handleGenerateFromNotes() {
+        if (!form.work_covered.trim() && !form.report_text.trim()) {
+            setError("Enter work covered and/or teacher notes first.");
+            return;
+        }
+
+        try {
+            setGeneratingFromNotes(true);
+            setError(null);
+            setSuccessMessage(null);
+            setQualityResult(null);
+
+            const selectedStudent = students.find(
+                (student) => String(student.id) === form.student_id,
+            );
+
+            const selectedClass = classes.find(
+                (classItem) => String(classItem.id) === form.class_id,
+            );
+
+            const notesForGeneration = [
+                form.work_covered.trim()
+                    ? `Work covered: ${form.work_covered.trim()}`
+                    : "",
+                form.report_text.trim()
+                    ? `Teacher notes: ${form.report_text.trim()}`
+                    : "",
+            ]
+                .filter(Boolean)
+                .join("\n\n");
+
+            const generated = await generateReportFromNotes(
+                notesForGeneration,
+                selectedStudent?.full_name,
+                selectedClass?.subject_name ?? undefined,
+                selectedClass?.name ?? undefined,
+            );
+
+            updateFormField("report_text", generated.generated_comment);
+            setSuccessMessage("Report generated from notes.");
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to generate report from notes.",
+            );
+        } finally {
+            setGeneratingFromNotes(false);
+        }
+    }
+
     function moveToNextStudent() {
         const currentIndex = students.findIndex(
             (student) => String(student.id) === form.student_id,
@@ -486,16 +542,31 @@ export default function TeacherReportsPage() {
         }
     }
 
+    const generationDisabled =
+        generatingFromNotes ||
+        (!form.work_covered.trim() && !form.report_text.trim());
+
     return (
         <main className="space-y-6 p-8">
-            <div>
-                <h1 className="text-3xl font-extrabold text-slate-950">
-                    Student Reports
-                </h1>
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                    <h1 className="text-3xl font-extrabold text-slate-950">
+                        Student Reports
+                    </h1>
 
-                <p className="mt-2 text-slate-500">
-                    Write student draft reports using the active report session.
-                </p>
+                    <p className="mt-2 text-slate-500">
+                        Write student draft reports using the active report
+                        session.
+                    </p>
+                </div>
+
+                <button
+                    type="button"
+                    onClick={() => router.back()}
+                    className="w-fit rounded-xl border px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                >
+                    ← Back
+                </button>
             </div>
 
             {error && (
@@ -713,80 +784,94 @@ export default function TeacherReportsPage() {
                         </label>
                     )}
 
-                    {(!activeSession || activeSession.include_student_comment) && (
-                        <div className="grid gap-3">
-                            <label className="grid gap-2">
-                                <span className="text-sm font-semibold text-slate-700">
-                                    Student Comment
-                                </span>
+                    {(!activeSession ||
+                        activeSession.include_student_comment) && (
+                            <div className="grid gap-3">
+                                <label className="grid gap-2">
+                                    <span className="text-sm font-semibold text-slate-700">
+                                        Teacher Notes / Generated Student Comment
+                                    </span>
 
-                                <textarea
-                                    value={form.report_text}
-                                    onChange={(event) =>
-                                        updateFormField(
-                                            "report_text",
-                                            event.target.value,
-                                        )
-                                    }
-                                    className="min-h-40 rounded-xl border px-3 py-2 text-sm"
-                                    placeholder="Write the individual student comment..."
-                                />
-                            </label>
+                                    <textarea
+                                        value={form.report_text}
+                                        onChange={(event) =>
+                                            updateFormField(
+                                                "report_text",
+                                                event.target.value,
+                                            )
+                                        }
+                                        className="min-h-40 rounded-xl border px-3 py-2 text-sm"
+                                        placeholder="Write teacher notes first, then click Generate From Notes. The generated report will appear here."
+                                    />
+                                </label>
 
-                            <div className="flex flex-wrap gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => void handleCheckQuality()}
-                                    disabled={
-                                        checkingQuality ||
-                                        !form.report_text.trim()
-                                    }
-                                    className="rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                    {checkingQuality
-                                        ? "Checking..."
-                                        : "Check UK Grammar & Spelling"}
-                                </button>
-                            </div>
-
-                            {qualityResult && (
-                                <div className="rounded-xl border bg-slate-50 p-4">
-                                    <h3 className="font-bold text-slate-900">
-                                        Report Quality Review
-                                    </h3>
-
-                                    <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700">
-                                        {qualityResult.corrected_comment}
-                                    </p>
-
-                                    {qualityResult.issues.length > 0 && (
-                                        <ul className="mt-3 list-disc pl-5 text-sm text-slate-600">
-                                            {qualityResult.issues.map(
-                                                (issue, index) => (
-                                                    <li key={index}>
-                                                        {issue.message}
-                                                    </li>
-                                                ),
-                                            )}
-                                        </ul>
-                                    )}
-
+                                <div className="flex flex-wrap gap-3">
                                     <button
                                         type="button"
                                         onClick={() =>
-                                            updateFormField(
-                                                "report_text",
-                                                qualityResult.corrected_comment,
-                                            )
+                                            void handleGenerateFromNotes()
                                         }
-                                        className="mt-4 rounded-xl bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                                        disabled={generationDisabled}
+                                        className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
-                                        Apply Suggestions
+                                        {generatingFromNotes
+                                            ? "Generating..."
+                                            : "Generate From Notes"}
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleCheckQuality()}
+                                        disabled={
+                                            checkingQuality ||
+                                            !form.report_text.trim()
+                                        }
+                                        className="rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        {checkingQuality
+                                            ? "Checking..."
+                                            : "Check UK Grammar & Spelling"}
                                     </button>
                                 </div>
-                            )}
-                        </div>
-                    )}
+
+                                {qualityResult && (
+                                    <div className="rounded-xl border bg-slate-50 p-4">
+                                        <h3 className="font-bold text-slate-900">
+                                            Report Quality Review
+                                        </h3>
+
+                                        <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                            {qualityResult.corrected_comment}
+                                        </p>
+
+                                        {qualityResult.issues.length > 0 && (
+                                            <ul className="mt-3 list-disc pl-5 text-sm text-slate-600">
+                                                {qualityResult.issues.map(
+                                                    (issue, index) => (
+                                                        <li key={index}>
+                                                            {issue.message}
+                                                        </li>
+                                                    ),
+                                                )}
+                                            </ul>
+                                        )}
+
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                updateFormField(
+                                                    "report_text",
+                                                    qualityResult.corrected_comment,
+                                                )
+                                            }
+                                            className="mt-4 rounded-xl bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                                        >
+                                            Apply Suggestions
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                     <div className="grid gap-4 md:grid-cols-3">
                         {activeSession?.include_exam_mark && (

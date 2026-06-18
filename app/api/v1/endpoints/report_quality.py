@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_current_user
 from app.models.user import User
@@ -56,11 +56,7 @@ COMMON_PHRASE_FIXES = {
 
 def _capitalise_first_letter(text: str) -> str:
     stripped = text.strip()
-
-    if not stripped:
-        return stripped
-
-    return stripped[0].upper() + stripped[1:]
+    return stripped[0].upper() + stripped[1:] if stripped else stripped
 
 
 def _ensure_final_punctuation(text: str) -> str:
@@ -87,7 +83,6 @@ def _apply_replacements(
     for incorrect, correct in replacements.items():
         if incorrect in corrected:
             corrected = corrected.replace(incorrect, correct)
-
             issues.append(
                 ReportQualityIssue(
                     type=issue_type,
@@ -111,35 +106,119 @@ def _extract_student_name(notes: str, fallback: str | None) -> str:
     return "The student"
 
 
-def _generate_report_from_notes_text(
-    *,
-    notes: str,
-    student_name: str,
-    subject: str | None,
-    year_group: str | None,
-) -> str:
-    lower_notes = notes.lower()
-    subject_name = subject.strip() if subject else "the subject"
-    year_group_name = year_group.strip() if year_group else "this year"
+def _get_first_name(student_name: str) -> str:
+    cleaned = student_name.strip()
 
+    if not cleaned or cleaned.lower() == "the student":
+        return "The student"
+
+    return cleaned.split()[0]
+
+
+def _join_items(items: list[str]) -> str:
+    unique_items: list[str] = []
+
+    for item in items:
+        if item and item not in unique_items:
+            unique_items.append(item)
+
+    if not unique_items:
+        return ""
+
+    if len(unique_items) == 1:
+        return unique_items[0]
+
+    return ", ".join(unique_items[:-1]) + f" and {unique_items[-1]}"
+
+
+def _detect_topics(lower_notes: str) -> list[str]:
+    topic_map = {
+        "rates of reaction": "rates of reaction",
+        "rate of reaction": "rates of reaction",
+        "reaction rate": "rates of reaction",
+        "organic chemistry": "organic chemistry",
+        "alkanes": "organic chemistry",
+        "alkenes": "organic chemistry",
+        "alcohols": "organic chemistry",
+        "carboxylic": "organic chemistry",
+        "polymers": "organic chemistry",
+        "crude oil": "organic chemistry",
+        "chemical changes": "chemical changes",
+        "energy changes": "energy changes",
+        "bond energy": "energy changes",
+        "exothermic": "energy changes",
+        "endothermic": "energy changes",
+        "equilibria": "equilibria",
+        "equilibrium": "equilibria",
+        "bonding": "bonding",
+        "atomic structure": "atomic structure",
+        "periodic table": "the periodic table",
+        "electrolysis": "electrolysis",
+        "acids": "acids and alkalis",
+        "alkalis": "acids and alkalis",
+        "moles": "chemical calculations",
+        "calculations": "chemical calculations",
+        "titration": "quantitative chemistry",
+        "practical": "practical work",
+        "experiment": "practical work",
+    }
+
+    topics: list[str] = []
+
+    for keyword, topic in topic_map.items():
+        if keyword in lower_notes and topic not in topics:
+            topics.append(topic)
+
+    return topics
+
+
+def _detect_strengths(lower_notes: str) -> list[str]:
     strengths: list[str] = []
-    next_steps: list[str] = []
 
     if "hard working" in lower_notes or "hardworking" in lower_notes:
-        strengths.append("has worked hard and shown a positive attitude")
+        strengths.append("shown a hardworking and positive approach")
+
+    if "engaged" in lower_notes or "engagement" in lower_notes:
+        strengths.append("engaged well with learning")
+
+    if "confident" in lower_notes or "confidence" in lower_notes:
+        strengths.append("developed greater confidence")
+
+    if "independent" in lower_notes or "independently" in lower_notes:
+        strengths.append("worked with increasing independence")
+
+    if "resilient" in lower_notes or "resilience" in lower_notes:
+        strengths.append("shown resilience when tackling challenging work")
+
+    if "practical" in lower_notes or "experiment" in lower_notes:
+        strengths.append("developed practical and investigative skills")
+
+    if "exam question" in lower_notes or "exam-style" in lower_notes:
+        strengths.append("made progress with examination-style questions")
 
     if "high test score" in lower_notes or "strong test score" in lower_notes:
-        strengths.append("performed very well in a recent assessment")
+        strengths.append("performed well in recent assessment work")
 
-    if "organic chemistry" in lower_notes:
-        strengths.append(
-            "demonstrated strong understanding of Organic Chemistry",
-        )
+    if "good progress" in lower_notes or "positive progress" in lower_notes:
+        strengths.append("made positive progress across the course")
 
-    if "rates of reaction" in lower_notes:
-        strengths.append(
-            "developed confidence with rates of reaction",
-        )
+    if "excellent" in lower_notes:
+        strengths.append("produced work of an excellent standard")
+
+    if "improved" in lower_notes or "improvement" in lower_notes:
+        strengths.append("shown clear improvement over time")
+
+    if "knowledge" in lower_notes or "understanding" in lower_notes:
+        strengths.append("developed secure subject knowledge")
+
+    if "answers" in lower_notes or "written" in lower_notes:
+        strengths.append("improved the quality of written responses")
+
+    return strengths
+
+
+def _detect_next_steps(lower_notes: str) -> list[str]:
+    next_steps: list[str] = []
 
     if "revision guide" in lower_notes:
         next_steps.append(
@@ -147,28 +226,112 @@ def _generate_report_from_notes_text(
         )
 
     if "exam question" in lower_notes or "exam-style" in lower_notes:
+        next_steps.append("continue practising examination-style questions")
+
+    if "application" in lower_notes or "apply" in lower_notes:
         next_steps.append(
-            "continue practising examination-style questions",
+            "focus on applying knowledge accurately to unfamiliar questions",
         )
+
+    if "calculation" in lower_notes or "maths" in lower_notes:
+        next_steps.append(
+            "show clear working in calculations and check units carefully"
+        )
+
+    if "detail" in lower_notes or "explain" in lower_notes:
+        next_steps.append(
+            "include more precise scientific detail in written explanations",
+        )
+
+    if "recall" in lower_notes or "remember" in lower_notes:
+        next_steps.append("strengthen recall of key facts and definitions")
+
+    if "revise" in lower_notes or "revision" in lower_notes:
+        next_steps.append("maintain a regular revision routine")
+
+    if "six-mark" in lower_notes or "6-mark" in lower_notes:
+        next_steps.append(
+            "structure extended responses carefully and include sufficient detail",
+        )
+
+    return next_steps
+
+
+def _infer_next_step_from_topics(topics: list[str]) -> str:
+    if "rates of reaction" in topics:
+        return (
+            "practise explaining how changes in conditions affect reaction rate "
+            "using precise scientific language"
+        )
+
+    if "organic chemistry" in topics:
+        return "secure the key reactions and terminology used in organic chemistry"
+
+    if "chemical calculations" in topics:
+        return "show clear working in calculations and check units carefully"
+
+    if "practical work" in topics:
+        return (
+            "continue linking practical observations to accurate scientific conclusions"
+        )
+
+    return "continue to review class notes and practise applying knowledge"
+
+
+def _generate_report_from_notes_text(
+    *,
+    notes: str,
+    student_name: str,
+    subject: str | None,
+    year_group: str | None,
+) -> str:
+    if len(notes.split()) < 4:
+        raise HTTPException(
+            status_code=400,
+            detail="Please enter more detailed teacher notes before generating a report.",
+        )
+
+    lower_notes = notes.lower()
+    first_name = _get_first_name(student_name)
+    subject_name = subject.strip() if subject and subject.strip() else "the subject"
+    year_group_name = (
+        year_group.strip() if year_group and year_group.strip() else "this year"
+    )
+
+    topics = _detect_topics(lower_notes)
+    strengths = _detect_strengths(lower_notes)
+    next_steps = _detect_next_steps(lower_notes)
 
     if not strengths:
-        strengths.append(
-            "has made positive progress and engaged well with learning",
-        )
+        if topics:
+            strengths.append("built a more secure understanding of the topics studied")
+        else:
+            strengths.append("made positive progress in lessons")
 
     if not next_steps:
-        next_steps.append(
-            "continue to review class notes and practise applying knowledge",
+        next_steps.append(_infer_next_step_from_topics(topics))
+
+    topic_sentence = ""
+    if topics:
+        topic_sentence = (
+            f" In {subject_name}, this has included {_join_items(topics[:4])}, "
+            "helping to strengthen subject knowledge and confidence."
         )
 
-    strengths_sentence = "; ".join(strengths)
-    next_steps_sentence = "; ".join(next_steps)
+    strengths_sentence = _join_items(strengths[:3])
+    next_step_sentence = next_steps[0]
+
+    if first_name == "The student":
+        return (
+            f"The student has made good progress in {subject_name} during "
+            f"{year_group_name}.{topic_sentence} They have {strengths_sentence}. "
+            f"To build on this progress, they should {next_step_sentence}."
+        )
 
     return (
-        f"{student_name} has made good progress in {subject_name} during "
-        f"{year_group_name}. {student_name} {strengths_sentence}. "
-        f"To build on this progress, {student_name} should "
-        f"{next_steps_sentence}."
+        f"{first_name} has made good progress in {subject_name} during "
+        f"{year_group_name}.{topic_sentence} He has {strengths_sentence}. "
+        f"To build on this progress, he should {next_step_sentence}."
     )
 
 
@@ -238,8 +401,7 @@ async def check_report_comment(
                 type="length",
                 message="The report comment may be too short.",
                 suggestion=(
-                    "Consider adding specific evidence, progress and a "
-                    "clear next step."
+                    "Consider adding specific evidence, progress and a clear next step."
                 ),
             ),
         )
@@ -269,6 +431,7 @@ async def generate_report_from_notes(
     current_user: User = Depends(get_current_user),
 ) -> ReportNotesGenerateResponse:
     notes = payload.notes.strip()
+
     student_name = _extract_student_name(
         notes,
         payload.student_name,
