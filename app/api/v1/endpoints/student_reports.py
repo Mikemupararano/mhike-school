@@ -8,11 +8,16 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.repositories.parent_student import ParentStudentRepository
 from app.repositories.student_reports import (
+    REPORT_STATUS_APPROVED,
+    REPORT_STATUS_DRAFT,
+    REPORT_STATUS_PUBLISHED,
+    REPORT_STATUS_SUBMITTED,
     create_student_report,
     delete_student_report,
     get_student_report,
     list_reports_for_student,
     list_student_reports,
+    publish_reports_for_session,
     update_student_report,
 )
 from app.schemas.student_report import (
@@ -87,9 +92,56 @@ def _require_school_staff(user: User) -> None:
         )
 
 
+def _require_report_reviewer(user: User) -> None:
+    if not _can_publish_reports(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school admins can review student reports.",
+        )
+
+
+def _require_report_publisher(user: User) -> None:
+    if not _can_publish_reports(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school admins can publish student reports.",
+        )
+
+
+def _validate_requested_status_change(
+    *,
+    payload: StudentReportUpdate,
+    current_user: User,
+) -> None:
+    requested_status = getattr(payload, "status", None)
+    publishing_requested = getattr(payload, "published", None)
+
+    if requested_status is None and publishing_requested is None:
+        return
+
+    if publishing_requested is True:
+        _require_report_publisher(current_user)
+        return
+
+    if requested_status in {
+        REPORT_STATUS_APPROVED,
+        REPORT_STATUS_PUBLISHED,
+    }:
+        _require_report_reviewer(current_user)
+
+    if requested_status == REPORT_STATUS_DRAFT:
+        _require_school_staff(current_user)
+
+    if requested_status == REPORT_STATUS_SUBMITTED:
+        _require_school_staff(current_user)
+
+
 @router.get("/", response_model=list[StudentReportRead])
 async def list_reports_endpoint(
     teacher_id: int | None = None,
+    report_session_id: int | None = None,
+    published: bool | None = None,
+    status: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[StudentReportRead]:
@@ -100,6 +152,9 @@ async def list_reports_endpoint(
         db,
         school_id=school_id,
         teacher_id=teacher_id,
+        report_session_id=report_session_id,
+        published=published,
+        status=status,
     )
 
 
@@ -122,6 +177,28 @@ async def create_report_endpoint(
         teacher_id=current_user.id,
         payload=payload,
     )
+
+
+@router.post("/publish-session/{report_session_id}")
+async def publish_report_session_endpoint(
+    report_session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, int]:
+    school_id = _require_school_id(current_user)
+    _require_school_staff(current_user)
+    _require_report_publisher(current_user)
+
+    published_count = await publish_reports_for_session(
+        db,
+        school_id=school_id,
+        report_session_id=report_session_id,
+        published_by_id=current_user.id,
+    )
+
+    return {
+        "published_count": published_count,
+    }
 
 
 @router.get(
@@ -211,6 +288,10 @@ async def update_report_endpoint(
 ) -> StudentReportRead:
     school_id = _require_school_id(current_user)
     _require_school_staff(current_user)
+    _validate_requested_status_change(
+        payload=payload,
+        current_user=current_user,
+    )
 
     report = await get_student_report(
         db,
@@ -222,14 +303,6 @@ async def update_report_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student report not found.",
-        )
-
-    if getattr(payload, "published", None) is True and not _can_publish_reports(
-        current_user,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school admins can publish student reports.",
         )
 
     return await update_student_report(

@@ -32,6 +32,12 @@ class StudentReport(Base):
         nullable=True,
     )
 
+    report_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("report_sessions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
     title: Mapped[str] = mapped_column(String(200), nullable=False)
 
     report_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -45,6 +51,14 @@ class StudentReport(Base):
     )
 
     term: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    status: Mapped[str] = mapped_column(
+        String(50),
+        default="draft",
+        server_default="draft",
+        nullable=False,
+        index=True,
+    )
 
     published: Mapped[bool] = mapped_column(
         Boolean,
@@ -60,6 +74,17 @@ class StudentReport(Base):
     )
 
     published_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    reviewed_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
@@ -82,3 +107,8 @@ class StudentReport(Base):
     student = relationship("User", foreign_keys=[student_id])
     teacher = relationship("User", foreign_keys=[teacher_id])
     published_by = relationship("User", foreign_keys=[published_by_id])
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_id])
+    report_session = relationship(
+        "ReportSession",
+        foreign_keys=[report_session_id],
+    )

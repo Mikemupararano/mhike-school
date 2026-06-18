@@ -22,11 +22,12 @@ import {
     createStudentReport,
     deleteStudentReport,
     listStudentReports,
+    updateStudentReport,
     type StudentReport,
     type StudentReportCreateInput,
 } from "@/lib/services/studentReports";
 
-type SaveAction = "draft" | "next" | "close";
+type SaveAction = "draft" | "next" | "close" | "submit";
 
 type ReportFormState = {
     teacher_id: string;
@@ -64,12 +65,27 @@ const initialFormState: ReportFormState = {
     term: "",
 };
 
+const REPORT_STATUS_SUBMITTED = "submitted";
+
 function formatDate(value: string): string {
     return new Date(value).toLocaleDateString("en-GB", {
         day: "2-digit",
         month: "short",
         year: "numeric",
     });
+}
+
+function getStatusBadgeClass(status: string): string {
+    switch (status) {
+        case "published":
+            return "bg-green-50 text-green-700";
+        case "approved":
+            return "bg-blue-50 text-blue-700";
+        case "submitted":
+            return "bg-purple-50 text-purple-700";
+        default:
+            return "bg-amber-50 text-amber-700";
+    }
 }
 
 function buildReportText(
@@ -82,7 +98,10 @@ function buildReportText(
         sections.push(`Work covered:\n${form.work_covered.trim()}`);
     }
 
-    if (activeSession?.include_student_comment && form.report_text.trim()) {
+    if (
+        (!activeSession || activeSession.include_student_comment) &&
+        form.report_text.trim()
+    ) {
         sections.push(`Student comment:\n${form.report_text.trim()}`);
     }
 
@@ -362,8 +381,16 @@ export default function TeacherReportsPage() {
             return;
         }
 
+        const reportSessionId = Number(form.report_session_id);
+
+        if (!reportSessionId || Number.isNaN(reportSessionId)) {
+            setError("Select a report session.");
+            return;
+        }
+
         const payload: StudentReportCreateInput = {
             student_id: studentId,
+            report_session_id: reportSessionId,
             title: form.title.trim(),
             report_text: reportText,
             grade:
@@ -380,6 +407,16 @@ export default function TeacherReportsPage() {
             setSuccessMessage(null);
 
             const created = await createStudentReport(payload);
+
+            if (action === "submit") {
+                const submitted = await updateStudentReport(created.id, {
+                    status: REPORT_STATUS_SUBMITTED,
+                });
+
+                setReports((current) => [submitted, ...current]);
+                setSuccessMessage("Report submitted for review.");
+                return;
+            }
 
             setReports((current) => [created, ...current]);
 
@@ -559,7 +596,9 @@ export default function TeacherReportsPage() {
                                 <option value="">
                                     {loadingStudents
                                         ? "Loading students..."
-                                        : "Select student"}
+                                        : form.class_id
+                                            ? "Select student"
+                                            : "Select a class first"}
                                 </option>
 
                                 {students.map((student) => (
@@ -588,7 +627,9 @@ export default function TeacherReportsPage() {
                                 className="rounded-xl border px-3 py-2 text-sm"
                             >
                                 <option value="">
-                                    Select report session
+                                    {reportSessions.length === 0
+                                        ? "No report sessions available"
+                                        : "Select report session"}
                                 </option>
 
                                 {reportSessions.map((session) => (
@@ -672,7 +713,7 @@ export default function TeacherReportsPage() {
                         </label>
                     )}
 
-                    {activeSession?.include_student_comment && (
+                    {(!activeSession || activeSession.include_student_comment) && (
                         <div className="grid gap-3">
                             <label className="grid gap-2">
                                 <span className="text-sm font-semibold text-slate-700">
@@ -695,9 +736,7 @@ export default function TeacherReportsPage() {
                             <div className="flex flex-wrap gap-3">
                                 <button
                                     type="button"
-                                    onClick={() =>
-                                        void handleCheckQuality()
-                                    }
+                                    onClick={() => void handleCheckQuality()}
                                     disabled={
                                         checkingQuality ||
                                         !form.report_text.trim()
@@ -885,6 +924,15 @@ export default function TeacherReportsPage() {
                         <button
                             type="button"
                             disabled={saving}
+                            onClick={() => void saveReport("submit")}
+                            className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            Submit For Review
+                        </button>
+
+                        <button
+                            type="button"
+                            disabled={saving}
                             onClick={() => void saveReport("next")}
                             className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                         >
@@ -939,14 +987,11 @@ export default function TeacherReportsPage() {
                                     </div>
 
                                     <span
-                                        className={`rounded-full px-3 py-1 text-sm font-bold ${report.published
-                                            ? "bg-green-50 text-green-700"
-                                            : "bg-amber-50 text-amber-700"
-                                            }`}
+                                        className={`rounded-full px-3 py-1 text-sm font-bold ${getStatusBadgeClass(
+                                            report.status,
+                                        )}`}
                                     >
-                                        {report.published
-                                            ? "Published"
-                                            : "Draft"}
+                                        {report.status}
                                     </span>
                                 </div>
 

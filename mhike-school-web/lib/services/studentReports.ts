@@ -5,6 +5,7 @@ export type StudentReport = {
     school_id: number;
     student_id: number;
     teacher_id: number | null;
+    report_session_id: number | null;
 
     title: string;
     report_text: string;
@@ -13,9 +14,14 @@ export type StudentReport = {
     academic_year: string;
     term: string | null;
 
+    status: string;
+
     published: boolean;
     published_at: string | null;
     published_by_id: number | null;
+
+    reviewed_at: string | null;
+    reviewed_by_id: number | null;
 
     created_at: string;
     updated_at: string;
@@ -23,6 +29,7 @@ export type StudentReport = {
 
 export type StudentReportCreateInput = {
     student_id: number;
+    report_session_id?: number | null;
 
     title: string;
     report_text: string;
@@ -42,6 +49,8 @@ export type StudentReportUpdateInput = {
     academic_year?: string;
     term?: string | null;
 
+    report_session_id?: number | null;
+    status?: string;
     published?: boolean;
 };
 

@@ -9,6 +9,11 @@ from app.models.student_report import StudentReport
 from app.models.user import User
 from app.schemas.student_report import StudentReportCreate, StudentReportUpdate
 
+REPORT_STATUS_DRAFT = "draft"
+REPORT_STATUS_SUBMITTED = "submitted"
+REPORT_STATUS_APPROVED = "approved"
+REPORT_STATUS_PUBLISHED = "published"
+
 
 async def create_student_report(
     db: AsyncSession,
@@ -21,14 +26,18 @@ async def create_student_report(
         school_id=school_id,
         student_id=payload.student_id,
         teacher_id=teacher_id,
+        report_session_id=payload.report_session_id,
         title=payload.title,
         report_text=payload.report_text,
         grade=payload.grade,
         academic_year=payload.academic_year,
         term=payload.term,
+        status=REPORT_STATUS_DRAFT,
         published=False,
         published_at=None,
         published_by_id=None,
+        reviewed_at=None,
+        reviewed_by_id=None,
     )
 
     db.add(report)
@@ -59,6 +68,9 @@ async def list_student_reports(
     *,
     school_id: int,
     teacher_id: int | None = None,
+    report_session_id: int | None = None,
+    published: bool | None = None,
+    status: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[StudentReport]:
@@ -71,9 +83,23 @@ async def list_student_reports(
             StudentReport.teacher_id == teacher_id,
         )
 
-    statement = (
-        statement.order_by(StudentReport.created_at.desc()).offset(offset).limit(limit)
-    )
+    if report_session_id is not None:
+        statement = statement.where(
+            StudentReport.report_session_id == report_session_id,
+        )
+
+    if published is not None:
+        statement = statement.where(
+            StudentReport.published.is_(published),
+        )
+
+    if status is not None:
+        statement = statement.where(
+            StudentReport.status == status,
+        )
+
+    statement = statement.order_by(StudentReport.created_at.desc())
+    statement = statement.offset(offset).limit(limit)
 
     result = await db.execute(statement)
 
@@ -106,6 +132,48 @@ async def list_reports_for_student(
     return list(result.scalars().all())
 
 
+def _apply_status_change(
+    report: StudentReport,
+    *,
+    status: str,
+    current_user: User | None,
+) -> None:
+    now = datetime.now(timezone.utc)
+
+    report.status = status
+
+    if status == REPORT_STATUS_DRAFT:
+        report.reviewed_at = None
+        report.reviewed_by_id = None
+        report.published = False
+        report.published_at = None
+        report.published_by_id = None
+
+    elif status == REPORT_STATUS_SUBMITTED:
+        report.reviewed_at = None
+        report.reviewed_by_id = None
+        report.published = False
+        report.published_at = None
+        report.published_by_id = None
+
+    elif status == REPORT_STATUS_APPROVED:
+        report.reviewed_at = now
+
+        if current_user is not None:
+            report.reviewed_by_id = current_user.id
+
+        report.published = False
+        report.published_at = None
+        report.published_by_id = None
+
+    elif status == REPORT_STATUS_PUBLISHED:
+        report.published = True
+        report.published_at = now
+
+        if current_user is not None:
+            report.published_by_id = current_user.id
+
+
 async def update_student_report(
     db: AsyncSession,
     *,
@@ -120,17 +188,31 @@ async def update_student_report(
         None,
     )
 
-    if publishing_requested is True:
-        report.published = True
-        report.published_at = datetime.now(timezone.utc)
+    requested_status = update_data.pop(
+        "status",
+        None,
+    )
 
-        if current_user is not None:
-            report.published_by_id = current_user.id
+    if publishing_requested is True:
+        _apply_status_change(
+            report,
+            status=REPORT_STATUS_PUBLISHED,
+            current_user=current_user,
+        )
 
     elif publishing_requested is False:
-        report.published = False
-        report.published_at = None
-        report.published_by_id = None
+        _apply_status_change(
+            report,
+            status=REPORT_STATUS_DRAFT,
+            current_user=current_user,
+        )
+
+    if requested_status is not None:
+        _apply_status_change(
+            report,
+            status=requested_status,
+            current_user=current_user,
+        )
 
     for key, value in update_data.items():
         setattr(report, key, value)
@@ -139,6 +221,36 @@ async def update_student_report(
     await db.refresh(report)
 
     return report
+
+
+async def publish_reports_for_session(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    report_session_id: int,
+    published_by_id: int,
+) -> int:
+    result = await db.execute(
+        select(StudentReport).where(
+            StudentReport.school_id == school_id,
+            StudentReport.report_session_id == report_session_id,
+            StudentReport.published.is_(False),
+            StudentReport.status == REPORT_STATUS_APPROVED,
+        ),
+    )
+
+    reports = list(result.scalars().all())
+    published_at = datetime.now(timezone.utc)
+
+    for report in reports:
+        report.status = REPORT_STATUS_PUBLISHED
+        report.published = True
+        report.published_at = published_at
+        report.published_by_id = published_by_id
+
+    await db.commit()
+
+    return len(reports)
 
 
 async def delete_student_report(
