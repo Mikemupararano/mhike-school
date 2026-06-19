@@ -13,7 +13,6 @@ REPORT_OPENINGS = [
     "{name} has embraced opportunities to develop skills and has made positive progress in {subject} over the course of the year.",
 ]
 
-
 SUBJECT_TOPIC_MAPS = {
     "chemistry": {
         "reaction rates": "reaction rates",
@@ -142,7 +141,6 @@ SUBJECT_TOPIC_MAPS = {
     },
 }
 
-
 SUBJECT_TOPIC_SENTENCES = {
     "chemistry": "Through the study of {topics}, {learner} has strengthened scientific knowledge and confidence.",
     "biology": "Through work on {topics}, {learner} has developed a stronger understanding of biological concepts and processes.",
@@ -156,12 +154,10 @@ SUBJECT_TOPIC_SENTENCES = {
     "mathematics": "Through work on {topics}, {learner} has developed mathematical fluency, accuracy and problem-solving confidence.",
 }
 
-
 DEFAULT_TOPIC_SENTENCE = (
     "Through work on {topics}, {learner} has strengthened subject knowledge, "
     "confidence and understanding."
 )
-
 
 CURRICULUM_FILLER_PHRASES = [
     "in gcse chemistry",
@@ -194,6 +190,16 @@ CURRICULUM_FILLER_PHRASES = [
     "end of topic tests",
     "end-of-topic assessments",
     "end of topic assessments",
+]
+
+MEMORY_EXCLUSION_PHRASES = [
+    "to build on this progress",
+    "next step",
+    "should",
+    "needs to",
+    "must",
+    "work covered",
+    "teacher notes",
 ]
 
 
@@ -544,6 +550,58 @@ def infer_next_step_from_topics(topics: list[str], subject_key: str) -> str:
     return "continue to review class notes and practise applying knowledge"
 
 
+def extract_memory_phrases(
+    similar_reports: list[str] | None,
+) -> list[str]:
+    if not similar_reports:
+        return []
+
+    phrases: list[str] = []
+
+    for report in similar_reports:
+        for raw_sentence in report.split("."):
+            sentence = raw_sentence.strip()
+
+            if len(sentence) < 35:
+                continue
+
+            lower_sentence = sentence.lower()
+
+            if any(excluded in lower_sentence for excluded in MEMORY_EXCLUSION_PHRASES):
+                continue
+
+            if sentence not in phrases:
+                phrases.append(sentence)
+
+            if len(phrases) >= 20:
+                return phrases
+
+    return phrases
+
+
+def choose_memory_sentence(
+    similar_reports: list[str] | None,
+    *,
+    first_name: str,
+    student_name: str,
+    learner: str,
+) -> str | None:
+    phrases = extract_memory_phrases(similar_reports)
+
+    if not phrases:
+        return None
+
+    selected = random.choice(phrases).strip()
+
+    selected = selected.replace(student_name, learner)
+    selected = selected.replace(first_name, learner)
+
+    if not selected.endswith("."):
+        selected += "."
+
+    return selected
+
+
 def select_opening_sentence(
     *,
     first_name: str,
@@ -652,7 +710,14 @@ def generate_report_comment(
             combined_lower,
         )
 
-    if achievement_sentence is None and not topic_sentence:
+    memory_sentence = choose_memory_sentence(
+        similar_reports,
+        first_name=first_name,
+        student_name=student_name,
+        learner=learner,
+    )
+
+    if achievement_sentence is None and not topic_sentence and memory_sentence is None:
         achievement_sentence = (
             f"{first_name if first_name != 'The student' else 'The student'} "
             "has made positive progress in lessons."
@@ -665,6 +730,7 @@ def generate_report_comment(
         topic_sentence,
         attitude_sentence,
         achievement_sentence,
+        memory_sentence,
         next_step_sentence,
     ]
 
