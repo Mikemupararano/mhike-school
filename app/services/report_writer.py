@@ -1,6 +1,5 @@
 import random
 
-
 REPORT_OPENINGS = [
     "{name} has continued to make positive progress in {subject} throughout {year_group}.",
     "{name} has approached {subject} with a positive attitude and has made steady progress across the course.",
@@ -17,10 +16,12 @@ REPORT_OPENINGS = [
 
 SUBJECT_TOPIC_MAPS = {
     "chemistry": {
-        "rates of reaction": "rates of reaction",
-        "rate of reaction": "rates of reaction",
-        "reaction rate": "rates of reaction",
-        "reaction rates": "rates of reaction",
+        "reaction rates": "reaction rates",
+        "rates of reaction": "reaction rates",
+        "rate of reaction": "reaction rates",
+        "reaction rate": "reaction rates",
+        "reversible reactions": "reversible reactions",
+        "making salts": "making salts",
         "organic": "organic chemistry",
         "alkanes": "organic chemistry",
         "alkenes": "organic chemistry",
@@ -162,6 +163,40 @@ DEFAULT_TOPIC_SENTENCE = (
 )
 
 
+CURRICULUM_FILLER_PHRASES = [
+    "in gcse chemistry",
+    "in gcse biology",
+    "in gcse physics",
+    "in gcse english",
+    "in gcse geography",
+    "in gcse computer science",
+    "in gcse mathematics",
+    "in gcse maths",
+    "in chemistry",
+    "in biology",
+    "in physics",
+    "in english",
+    "in geography",
+    "the pupils have covered",
+    "pupils have covered",
+    "students have covered",
+    "the students have covered",
+    "the following topics:",
+    "the following topics",
+    "they have also sat end-of-topic tests",
+    "they have sat end-of-topic tests",
+    "also they have sat end-of-topic tests",
+    "they have also completed end-of-topic tests",
+    "they have completed end-of-topic tests",
+    "they have also completed assessments",
+    "they have completed assessments",
+    "end-of-topic tests",
+    "end of topic tests",
+    "end-of-topic assessments",
+    "end of topic assessments",
+]
+
+
 def normalise_subject(subject: str | None) -> str:
     if not subject:
         return "default"
@@ -235,7 +270,7 @@ def split_generation_notes(notes: str) -> tuple[str, str]:
     if teacher_marker in lower_notes:
         marker_index = lower_notes.index(teacher_marker)
         work_covered = notes[:marker_index]
-        teacher_notes = notes[marker_index + len(teacher_marker):]
+        teacher_notes = notes[marker_index + len(teacher_marker) :]
 
         if work_marker in work_covered.lower():
             work_covered = work_covered.split(":", maxsplit=1)[-1]
@@ -248,29 +283,44 @@ def split_generation_notes(notes: str) -> tuple[str, str]:
     return notes.strip(), notes.strip()
 
 
-def detect_topics(lower_notes: str, subject_key: str) -> list[str]:
+def clean_work_covered_text(text: str) -> str:
+    cleaned = text.lower()
+
+    for phrase in CURRICULUM_FILLER_PHRASES:
+        cleaned = cleaned.replace(phrase, "")
+
+    cleaned = cleaned.replace(".", ",")
+    cleaned = cleaned.replace(";", ",")
+    cleaned = cleaned.replace(" and ", ",")
+
+    while ",," in cleaned:
+        cleaned = cleaned.replace(",,", ",")
+
+    return cleaned.strip(" ,.:")
+
+
+def detect_topics(text: str, subject_key: str) -> list[str]:
     topic_map = SUBJECT_TOPIC_MAPS.get(subject_key, {})
     topics: list[str] = []
 
+    cleaned_text = clean_work_covered_text(text)
+
     for keyword, topic in topic_map.items():
-        if keyword in lower_notes and topic not in topics:
+        if keyword in cleaned_text and topic not in topics:
             topics.append(topic)
 
     if topics:
         return topics
 
-    cleaned = lower_notes.replace("work covered:", "").replace(
-        "teacher notes:",
-        "",
-    )
+    parts = [part.strip() for part in cleaned_text.split(",") if len(part.strip()) > 2]
 
-    parts = [
-        part.strip(" .")
-        for part in cleaned.replace(" and ", ",").split(",")
-        if len(part.strip()) > 2
-    ]
+    unique_parts: list[str] = []
 
-    return parts[:4]
+    for part in parts:
+        if part not in unique_parts:
+            unique_parts.append(part)
+
+    return unique_parts[:5]
 
 
 def build_topic_sentence(
@@ -285,7 +335,7 @@ def build_topic_sentence(
     template = SUBJECT_TOPIC_SENTENCES.get(subject_key, DEFAULT_TOPIC_SENTENCE)
 
     return template.format(
-        topics=join_items(topics[:4]),
+        topics=join_items(topics[:5]),
         learner=learner,
     )
 
@@ -332,7 +382,14 @@ def detect_achievement_sentence(first_name: str, lower_notes: str) -> str | None
     if "confident" in lower_notes or "confidence" in lower_notes:
         achievements.append("grown in confidence")
 
-    if "passed tests" in lower_notes or "test" in lower_notes:
+    if (
+        "passed tests" in lower_notes
+        or "excellent assessment" in lower_notes
+        or "strong assessment" in lower_notes
+        or "good assessment" in lower_notes
+        or "high test score" in lower_notes
+        or "strong test score" in lower_notes
+    ):
         achievements.append("performed well in recent assessment work")
 
     if "good progress" in lower_notes or "positive progress" in lower_notes:
@@ -444,7 +501,7 @@ def infer_next_step_from_topics(topics: list[str], subject_key: str) -> str:
         if "chemical calculations" in topics:
             return "show clear working in calculations and check units carefully"
 
-        if "rates of reaction" in topics:
+        if "reaction rates" in topics:
             return (
                 "practise explaining how changes in conditions affect reaction "
                 "rate using precise scientific language"
@@ -463,7 +520,9 @@ def infer_next_step_from_topics(topics: list[str], subject_key: str) -> str:
         )
 
     if subject_key == "computer science":
-        return "continue practising programming problems and explaining algorithms clearly"
+        return (
+            "continue practising programming problems and explaining algorithms clearly"
+        )
 
     if subject_key == "art":
         return (
@@ -478,7 +537,9 @@ def infer_next_step_from_topics(topics: list[str], subject_key: str) -> str:
         )
 
     if subject_key == "history":
-        return "continue supporting judgements with precise evidence and clear explanation"
+        return (
+            "continue supporting judgements with precise evidence and clear explanation"
+        )
 
     if subject_key == "mathematics":
         return "continue practising multi-step problems and checking working carefully"
@@ -605,9 +666,7 @@ def generate_report_comment(
             "has made positive progress in lessons."
         )
 
-    next_step_sentence = (
-        f"To build on this progress, {learner} should {next_steps[0]}."
-    )
+    next_step_sentence = f"To build on this progress, {learner} should {next_steps[0]}."
 
     parts = [
         opening_sentence,
@@ -617,8 +676,4 @@ def generate_report_comment(
         next_step_sentence,
     ]
 
-    return " ".join(
-        part.strip()
-        for part in parts
-        if part
-    ).strip()
+    return " ".join(part.strip() for part in parts if part).strip()
