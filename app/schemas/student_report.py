@@ -9,6 +9,11 @@ class StudentReportBase(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     report_text: str = Field(min_length=1)
     grade: str | None = Field(default=None, max_length=50)
+
+    work_covered: str | None = None
+    teacher_notes: str | None = None
+    generated_report_text: str | None = None
+
     academic_year: str = Field(min_length=1, max_length=20)
     term: str | None = Field(default=None, max_length=50)
 
@@ -22,6 +27,11 @@ class StudentReportUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     report_text: str | None = Field(default=None, min_length=1)
     grade: str | None = Field(default=None, max_length=50)
+
+    work_covered: str | None = None
+    teacher_notes: str | None = None
+    generated_report_text: str | None = None
+
     academic_year: str | None = Field(default=None, min_length=1, max_length=20)
     term: str | None = Field(default=None, max_length=50)
     teacher_id: int | None = None

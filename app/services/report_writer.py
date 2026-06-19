@@ -1,4 +1,5 @@
 import random
+import re
 
 REPORT_OPENINGS = [
     "{name} has continued to make positive progress in {subject} throughout {year_group}.",
@@ -15,6 +16,9 @@ REPORT_OPENINGS = [
 
 SUBJECT_TOPIC_MAPS = {
     "chemistry": {
+        "atomic structure": "atomic structure",
+        "isotopes": "isotopes",
+        "separating mixtures": "separating mixtures",
         "reaction rates": "reaction rates",
         "rates of reaction": "reaction rates",
         "rate of reaction": "reaction rates",
@@ -177,6 +181,10 @@ CURRICULUM_FILLER_PHRASES = [
     "pupils have covered",
     "students have covered",
     "the students have covered",
+    "the pupils have completed",
+    "pupils have completed",
+    "students have completed",
+    "the students have completed",
     "the following topics:",
     "the following topics",
     "they have also sat end-of-topic tests",
@@ -282,6 +290,27 @@ def split_generation_notes(notes: str) -> tuple[str, str]:
 
 def clean_work_covered_text(text: str) -> str:
     cleaned = text.lower()
+
+    cleaned = re.sub(
+        r"\bin\s+(aqa|ocr|edexcel)\s+gcse\s+[a-z ]+?,",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\b(aqa|ocr|edexcel)\s+gcse\s+[a-z ]+?,",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\bin\s+(aqa|ocr|edexcel)\s+[a-z ]+?,",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\b(aqa|ocr|edexcel)\s+[a-z ]+?,",
+        "",
+        cleaned,
+    )
 
     for phrase in CURRICULUM_FILLER_PHRASES:
         cleaned = cleaned.replace(phrase, "")

@@ -11,6 +11,10 @@ export type StudentReport = {
     report_text: string;
     grade: string | null;
 
+    work_covered: string | null;
+    teacher_notes: string | null;
+    generated_report_text: string | null;
+
     academic_year: string;
     term: string | null;
 
@@ -36,6 +40,10 @@ export type StudentReportCreateInput = {
 
     grade?: string | null;
 
+    work_covered?: string | null;
+    teacher_notes?: string | null;
+    generated_report_text?: string | null;
+
     academic_year: string;
     term?: string | null;
 };
@@ -45,6 +53,10 @@ export type StudentReportUpdateInput = {
     report_text?: string;
 
     grade?: string | null;
+
+    work_covered?: string | null;
+    teacher_notes?: string | null;
+    generated_report_text?: string | null;
 
     academic_year?: string;
     term?: string | null;

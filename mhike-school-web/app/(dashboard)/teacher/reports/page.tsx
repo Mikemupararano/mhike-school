@@ -38,6 +38,8 @@ type ReportFormState = {
     report_session_id: string;
     title: string;
     work_covered: string;
+    teacher_notes: string;
+    generated_report_text: string;
     report_text: string;
     exam_mark: string;
     attainment_grade: string;
@@ -56,6 +58,8 @@ const initialFormState: ReportFormState = {
     report_session_id: "",
     title: "",
     work_covered: "",
+    teacher_notes: "",
+    generated_report_text: "",
     report_text: "",
     exam_mark: "",
     attainment_grade: "",
@@ -90,51 +94,19 @@ function getStatusBadgeClass(status: string): string {
     }
 }
 
-function buildReportText(
-    form: ReportFormState,
-    activeSession: ReportSession | null,
-): string {
-    const sections: string[] = [];
+function upsertReport(
+    reports: StudentReport[],
+    nextReport: StudentReport,
+): StudentReport[] {
+    const exists = reports.some((report) => report.id === nextReport.id);
 
-    if (activeSession?.include_work_covered && form.work_covered.trim()) {
-        sections.push(`Work covered:\n${form.work_covered.trim()}`);
+    if (!exists) {
+        return [nextReport, ...reports];
     }
 
-    if (
-        (!activeSession || activeSession.include_student_comment) &&
-        form.report_text.trim()
-    ) {
-        sections.push(`Student comment:\n${form.report_text.trim()}`);
-    }
-
-    if (activeSession?.include_exam_mark && form.exam_mark.trim()) {
-        sections.push(`Exam mark:\n${form.exam_mark.trim()}`);
-    }
-
-    if (
-        activeSession?.include_attainment_grade &&
-        form.attainment_grade.trim()
-    ) {
-        sections.push(`Attainment grade:\n${form.attainment_grade.trim()}`);
-    }
-
-    if (activeSession?.include_effort_grade && form.effort_grade.trim()) {
-        sections.push(`Effort grade:\n${form.effort_grade.trim()}`);
-    }
-
-    if (activeSession?.include_target_grade && form.target_grade.trim()) {
-        sections.push(`Target grade:\n${form.target_grade.trim()}`);
-    }
-
-    if (activeSession?.include_next_steps && form.next_steps.trim()) {
-        sections.push(`Next steps:\n${form.next_steps.trim()}`);
-    }
-
-    if (activeSession?.include_tutor_comment && form.tutor_comment.trim()) {
-        sections.push(`Tutor comment:\n${form.tutor_comment.trim()}`);
-    }
-
-    return sections.join("\n\n");
+    return reports.map((report) =>
+        report.id === nextReport.id ? nextReport : report,
+    );
 }
 
 export default function TeacherReportsPage() {
@@ -310,7 +282,7 @@ export default function TeacherReportsPage() {
 
     async function handleCheckQuality() {
         if (!form.report_text.trim()) {
-            setError("Enter a student comment first.");
+            setError("Enter a final student comment first.");
             return;
         }
 
@@ -334,7 +306,7 @@ export default function TeacherReportsPage() {
     }
 
     async function handleGenerateFromNotes() {
-        if (!form.work_covered.trim() && !form.report_text.trim()) {
+        if (!form.work_covered.trim() && !form.teacher_notes.trim()) {
             setError("Enter work covered and/or teacher notes first.");
             return;
         }
@@ -357,8 +329,8 @@ export default function TeacherReportsPage() {
                 form.work_covered.trim()
                     ? `Work covered: ${form.work_covered.trim()}`
                     : "",
-                form.report_text.trim()
-                    ? `Teacher notes: ${form.report_text.trim()}`
+                form.teacher_notes.trim()
+                    ? `Teacher notes: ${form.teacher_notes.trim()}`
                     : "",
             ]
                 .filter(Boolean)
@@ -371,7 +343,12 @@ export default function TeacherReportsPage() {
                 selectedClass?.name ?? undefined,
             );
 
-            updateFormField("report_text", generated.generated_comment);
+            setForm((current) => ({
+                ...current,
+                generated_report_text: generated.generated_comment,
+                report_text: generated.generated_comment,
+            }));
+
             setSuccessMessage("Report generated from notes.");
         } catch (err) {
             setError(
@@ -384,18 +361,14 @@ export default function TeacherReportsPage() {
         }
     }
 
-    function moveToNextStudent() {
-        const currentIndex = students.findIndex(
-            (student) => String(student.id) === form.student_id,
-        );
-
-        const nextStudent = students[currentIndex + 1];
-
+    function resetStudentSpecificFields(nextStudentId = "") {
         setQualityResult(null);
 
         setForm((current) => ({
             ...current,
-            student_id: nextStudent ? String(nextStudent.id) : "",
+            student_id: nextStudentId,
+            teacher_notes: "",
+            generated_report_text: "",
             report_text: "",
             exam_mark: "",
             attainment_grade: "",
@@ -404,6 +377,16 @@ export default function TeacherReportsPage() {
             next_steps: "",
             tutor_comment: "",
         }));
+    }
+
+    function moveToNextStudent() {
+        const currentIndex = students.findIndex(
+            (student) => String(student.id) === form.student_id,
+        );
+
+        const nextStudent = students[currentIndex + 1];
+
+        resetStudentSpecificFields(nextStudent ? String(nextStudent.id) : "");
 
         setSuccessMessage(
             nextStudent
@@ -430,10 +413,8 @@ export default function TeacherReportsPage() {
             return;
         }
 
-        const reportText = buildReportText(form, activeSession);
-
-        if (!reportText.trim()) {
-            setError("Report text is required.");
+        if (!form.report_text.trim()) {
+            setError("Final student comment is required.");
             return;
         }
 
@@ -448,7 +429,11 @@ export default function TeacherReportsPage() {
             student_id: studentId,
             report_session_id: reportSessionId,
             title: form.title.trim(),
-            report_text: reportText,
+            work_covered: form.work_covered.trim() || null,
+            teacher_notes: form.teacher_notes.trim() || null,
+            generated_report_text:
+                form.generated_report_text.trim() || null,
+            report_text: form.report_text.trim(),
             grade:
                 form.attainment_grade.trim() ||
                 form.exam_mark.trim() ||
@@ -462,19 +447,19 @@ export default function TeacherReportsPage() {
             setError(null);
             setSuccessMessage(null);
 
-            const created = await createStudentReport(payload);
+            const saved = await createStudentReport(payload);
 
             if (action === "submit") {
-                const submitted = await updateStudentReport(created.id, {
+                const submitted = await updateStudentReport(saved.id, {
                     status: REPORT_STATUS_SUBMITTED,
                 });
 
-                setReports((current) => [submitted, ...current]);
+                setReports((current) => upsertReport(current, submitted));
                 setSuccessMessage("Report submitted for review.");
                 return;
             }
 
-            setReports((current) => [created, ...current]);
+            setReports((current) => upsertReport(current, saved));
 
             if (action === "next") {
                 moveToNextStudent();
@@ -544,7 +529,7 @@ export default function TeacherReportsPage() {
 
     const generationDisabled =
         generatingFromNotes ||
-        (!form.work_covered.trim() && !form.report_text.trim());
+        (!form.work_covered.trim() && !form.teacher_notes.trim());
 
     return (
         <main className="space-y-6 p-8">
@@ -786,22 +771,22 @@ export default function TeacherReportsPage() {
 
                     {(!activeSession ||
                         activeSession.include_student_comment) && (
-                            <div className="grid gap-3">
+                            <div className="grid gap-4">
                                 <label className="grid gap-2">
                                     <span className="text-sm font-semibold text-slate-700">
-                                        Teacher Notes / Generated Student Comment
+                                        Teacher Notes
                                     </span>
 
                                     <textarea
-                                        value={form.report_text}
+                                        value={form.teacher_notes}
                                         onChange={(event) =>
                                             updateFormField(
-                                                "report_text",
+                                                "teacher_notes",
                                                 event.target.value,
                                             )
                                         }
-                                        className="min-h-40 rounded-xl border px-3 py-2 text-sm"
-                                        placeholder="Write teacher notes first, then click Generate From Notes. The generated report will appear here."
+                                        className="min-h-28 rounded-xl border px-3 py-2 text-sm"
+                                        placeholder="Write brief teacher notes here, then click Generate From Notes."
                                     />
                                 </label>
 
@@ -833,6 +818,36 @@ export default function TeacherReportsPage() {
                                             : "Check UK Grammar & Spelling"}
                                     </button>
                                 </div>
+
+                                {form.generated_report_text && (
+                                    <div className="rounded-xl border bg-slate-50 p-4">
+                                        <h3 className="text-sm font-bold text-slate-900">
+                                            Generated Draft
+                                        </h3>
+
+                                        <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
+                                            {form.generated_report_text}
+                                        </p>
+                                    </div>
+                                )}
+
+                                <label className="grid gap-2">
+                                    <span className="text-sm font-semibold text-slate-700">
+                                        Final Student Comment
+                                    </span>
+
+                                    <textarea
+                                        value={form.report_text}
+                                        onChange={(event) =>
+                                            updateFormField(
+                                                "report_text",
+                                                event.target.value,
+                                            )
+                                        }
+                                        className="min-h-40 rounded-xl border px-3 py-2 text-sm"
+                                        placeholder="The generated report will appear here. Edit it before saving."
+                                    />
+                                </label>
 
                                 {qualityResult && (
                                     <div className="rounded-xl border bg-slate-50 p-4">
@@ -1080,9 +1095,47 @@ export default function TeacherReportsPage() {
                                     </span>
                                 </div>
 
-                                <p className="mt-4 whitespace-pre-line text-sm leading-6 text-slate-700">
-                                    {report.report_text}
-                                </p>
+                                {report.work_covered && (
+                                    <div className="mt-4">
+                                        <p className="text-xs font-bold uppercase text-slate-500">
+                                            Work Covered
+                                        </p>
+                                        <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                            {report.work_covered}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {report.teacher_notes && (
+                                    <div className="mt-4">
+                                        <p className="text-xs font-bold uppercase text-slate-500">
+                                            Teacher Notes
+                                        </p>
+                                        <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                            {report.teacher_notes}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {report.generated_report_text && (
+                                    <div className="mt-4 rounded-xl border bg-white p-4">
+                                        <p className="text-xs font-bold uppercase text-slate-500">
+                                            Generated Draft
+                                        </p>
+                                        <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-600">
+                                            {report.generated_report_text}
+                                        </p>
+                                    </div>
+                                )}
+
+                                <div className="mt-4">
+                                    <p className="text-xs font-bold uppercase text-slate-500">
+                                        Final Student Comment
+                                    </p>
+                                    <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                        {report.report_text}
+                                    </p>
+                                </div>
 
                                 <div className="mt-4 flex flex-col gap-3 border-t pt-4 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
                                     <span>

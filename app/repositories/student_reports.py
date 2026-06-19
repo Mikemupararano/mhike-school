@@ -39,6 +39,9 @@ async def create_student_report(
         existing_report.title = payload.title
         existing_report.report_text = payload.report_text
         existing_report.grade = payload.grade
+        existing_report.work_covered = payload.work_covered
+        existing_report.teacher_notes = payload.teacher_notes
+        existing_report.generated_report_text = payload.generated_report_text
         existing_report.academic_year = payload.academic_year
         existing_report.term = payload.term
 
@@ -61,6 +64,9 @@ async def create_student_report(
         title=payload.title,
         report_text=payload.report_text,
         grade=payload.grade,
+        work_covered=payload.work_covered,
+        teacher_notes=payload.teacher_notes,
+        generated_report_text=payload.generated_report_text,
         academic_year=payload.academic_year,
         term=payload.term,
         status=REPORT_STATUS_DRAFT,
@@ -263,9 +269,9 @@ async def _store_report_memory_for_published_report(
             teacher_name=_get_user_display_name(teacher),
             subject=report.title or "General",
             year_group=report.academic_year,
-            topics_studied=None,
-            teacher_notes=None,
-            generated_report=None,
+            topics_studied=report.work_covered,
+            teacher_notes=report.teacher_notes,
+            generated_report=report.generated_report_text,
             final_report=report.report_text.strip(),
             source_report_id=report.id,
         ),

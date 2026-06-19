@@ -52,6 +52,10 @@ class StudentReport(Base):
     report_text: Mapped[str] = mapped_column(Text, nullable=False)
     grade: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
+    work_covered: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teacher_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_report_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     academic_year: Mapped[str] = mapped_column(
         String(20),
         index=True,
