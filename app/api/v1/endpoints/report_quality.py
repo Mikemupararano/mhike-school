@@ -71,6 +71,15 @@ def _ensure_final_punctuation(text: str) -> str:
     return f"{stripped}."
 
 
+def _sentence_case(text: str) -> str:
+    stripped = text.strip()
+
+    if not stripped:
+        return stripped
+
+    return stripped[0].upper() + stripped[1:]
+
+
 def _apply_replacements(
     text: str,
     replacements: dict[str, str],
@@ -136,6 +145,7 @@ def _detect_topics(lower_notes: str) -> list[str]:
         "rates of reaction": "rates of reaction",
         "rate of reaction": "rates of reaction",
         "reaction rate": "rates of reaction",
+        "reaction rates": "rates of reaction",
         "organic chemistry": "organic chemistry",
         "alkanes": "organic chemistry",
         "alkenes": "organic chemistry",
@@ -150,6 +160,7 @@ def _detect_topics(lower_notes: str) -> list[str]:
         "endothermic": "energy changes",
         "equilibria": "equilibria",
         "equilibrium": "equilibria",
+        "reversible reactions": "reversible reactions",
         "bonding": "bonding",
         "atomic structure": "atomic structure",
         "periodic table": "the periodic table",
@@ -158,6 +169,7 @@ def _detect_topics(lower_notes: str) -> list[str]:
         "alkalis": "acids and alkalis",
         "moles": "chemical calculations",
         "calculations": "chemical calculations",
+        "calculation": "chemical calculations",
         "titration": "quantitative chemistry",
         "practical": "practical work",
         "experiment": "practical work",
@@ -175,44 +187,53 @@ def _detect_topics(lower_notes: str) -> list[str]:
 def _detect_strengths(lower_notes: str) -> list[str]:
     strengths: list[str] = []
 
-    if "hard working" in lower_notes or "hardworking" in lower_notes:
-        strengths.append("shown a hardworking and positive approach")
+    if "hard worker" in lower_notes or "hard working" in lower_notes:
+        strengths.append("has shown a hardworking and positive approach")
+
+    if "hardworking" in lower_notes:
+        strengths.append("has shown a hardworking and positive approach")
+
+    if "asks questions" in lower_notes or "asking questions" in lower_notes:
+        strengths.append("asks thoughtful questions to improve understanding")
 
     if "engaged" in lower_notes or "engagement" in lower_notes:
-        strengths.append("engaged well with learning")
+        strengths.append("engages well with learning")
 
     if "confident" in lower_notes or "confidence" in lower_notes:
-        strengths.append("developed greater confidence")
+        strengths.append("has developed greater confidence")
 
     if "independent" in lower_notes or "independently" in lower_notes:
-        strengths.append("worked with increasing independence")
+        strengths.append("works with increasing independence")
 
     if "resilient" in lower_notes or "resilience" in lower_notes:
-        strengths.append("shown resilience when tackling challenging work")
+        strengths.append("shows resilience when tackling challenging work")
 
     if "practical" in lower_notes or "experiment" in lower_notes:
-        strengths.append("developed practical and investigative skills")
+        strengths.append("has developed practical and investigative skills")
 
     if "exam question" in lower_notes or "exam-style" in lower_notes:
-        strengths.append("made progress with examination-style questions")
+        strengths.append("has made progress with examination-style questions")
+
+    if "passed tests" in lower_notes or "test" in lower_notes:
+        strengths.append("has performed well in recent assessment work")
 
     if "high test score" in lower_notes or "strong test score" in lower_notes:
-        strengths.append("performed well in recent assessment work")
+        strengths.append("has performed well in recent assessment work")
 
     if "good progress" in lower_notes or "positive progress" in lower_notes:
-        strengths.append("made positive progress across the course")
+        strengths.append("has made positive progress across the course")
 
     if "excellent" in lower_notes:
-        strengths.append("produced work of an excellent standard")
+        strengths.append("has produced work of an excellent standard")
 
     if "improved" in lower_notes or "improvement" in lower_notes:
-        strengths.append("shown clear improvement over time")
+        strengths.append("has shown clear improvement over time")
 
     if "knowledge" in lower_notes or "understanding" in lower_notes:
-        strengths.append("developed secure subject knowledge")
+        strengths.append("has developed secure subject knowledge")
 
     if "answers" in lower_notes or "written" in lower_notes:
-        strengths.append("improved the quality of written responses")
+        strengths.append("has improved the quality of written responses")
 
     return strengths
 
@@ -233,9 +254,13 @@ def _detect_next_steps(lower_notes: str) -> list[str]:
             "focus on applying knowledge accurately to unfamiliar questions",
         )
 
-    if "calculation" in lower_notes or "maths" in lower_notes:
+    if (
+        "calculation" in lower_notes
+        or "calculations" in lower_notes
+        or "maths" in lower_notes
+    ):
         next_steps.append(
-            "show clear working in calculations and check units carefully"
+            "show clear working in calculations and check units carefully",
         )
 
     if "detail" in lower_notes or "explain" in lower_notes:
@@ -258,6 +283,9 @@ def _detect_next_steps(lower_notes: str) -> list[str]:
 
 
 def _infer_next_step_from_topics(topics: list[str]) -> str:
+    if "chemical calculations" in topics:
+        return "show clear working in calculations and check units carefully"
+
     if "rates of reaction" in topics:
         return (
             "practise explaining how changes in conditions affect reaction rate "
@@ -267,8 +295,8 @@ def _infer_next_step_from_topics(topics: list[str]) -> str:
     if "organic chemistry" in topics:
         return "secure the key reactions and terminology used in organic chemistry"
 
-    if "chemical calculations" in topics:
-        return "show clear working in calculations and check units carefully"
+    if "acids and alkalis" in topics:
+        return "practise applying key ideas about acids and alkalis to unfamiliar questions"
 
     if "practical work" in topics:
         return (
@@ -304,35 +332,40 @@ def _generate_report_from_notes_text(
 
     if not strengths:
         if topics:
-            strengths.append("built a more secure understanding of the topics studied")
+            strengths.append(
+                "has built a more secure understanding of the topics studied"
+            )
         else:
-            strengths.append("made positive progress in lessons")
+            strengths.append("has made positive progress in lessons")
 
     if not next_steps:
         next_steps.append(_infer_next_step_from_topics(topics))
 
+    learner = "the student" if first_name == "The student" else first_name
+
+    opening_sentence = (
+        f"{first_name} has made good progress in {subject_name} during "
+        f"{year_group_name}."
+        if first_name != "The student"
+        else f"The student has made good progress in {subject_name} during {year_group_name}."
+    )
+
     topic_sentence = ""
     if topics:
         topic_sentence = (
-            f" In {subject_name}, this has included {_join_items(topics[:4])}, "
-            "helping to strengthen subject knowledge and confidence."
+            f" Work on {_join_items(topics[:4])} has helped to strengthen "
+            "subject knowledge and confidence."
         )
 
-    strengths_sentence = _join_items(strengths[:3])
-    next_step_sentence = next_steps[0]
+    strengths_sentence = ""
+    if strengths:
+        strengths_sentence = f" {_sentence_case(_join_items(strengths[:3]))}."
 
-    if first_name == "The student":
-        return (
-            f"The student has made good progress in {subject_name} during "
-            f"{year_group_name}.{topic_sentence} They have {strengths_sentence}. "
-            f"To build on this progress, they should {next_step_sentence}."
-        )
-
-    return (
-        f"{first_name} has made good progress in {subject_name} during "
-        f"{year_group_name}.{topic_sentence} He has {strengths_sentence}. "
-        f"To build on this progress, he should {next_step_sentence}."
+    next_step_sentence = (
+        f" To build on this progress, {learner} should {next_steps[0]}."
     )
+
+    return opening_sentence + topic_sentence + strengths_sentence + next_step_sentence
 
 
 @router.post(
