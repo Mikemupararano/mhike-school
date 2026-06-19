@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.student_report import StudentReport
 from app.models.user import User
+from app.schemas.report_memory import ReportMemoryCreate
 from app.schemas.student_report import StudentReportCreate, StudentReportUpdate
+from app.services.report_memory import create_report_memory
 
 REPORT_STATUS_DRAFT = "draft"
 REPORT_STATUS_SUBMITTED = "submitted"
@@ -174,6 +176,44 @@ def _apply_status_change(
             report.published_by_id = current_user.id
 
 
+async def _store_report_memory_for_published_report(
+    db: AsyncSession,
+    *,
+    report: StudentReport,
+) -> None:
+    if not report.published:
+        return
+
+    if not report.report_text or not report.report_text.strip():
+        return
+
+    result = await db.execute(
+        select(StudentReport).where(
+            StudentReport.id == report.id,
+            StudentReport.school_id == report.school_id,
+        ),
+    )
+
+    existing_report = result.scalar_one_or_none()
+
+    if existing_report is None:
+        return
+
+    await create_report_memory(
+        db,
+        ReportMemoryCreate(
+            school_id=report.school_id,
+            subject=report.title or "General",
+            year_group=report.academic_year,
+            topics_studied=None,
+            teacher_notes=None,
+            generated_report=None,
+            final_report=report.report_text.strip(),
+            source_report_id=report.id,
+        ),
+    )
+
+
 async def update_student_report(
     db: AsyncSession,
     *,
@@ -220,6 +260,12 @@ async def update_student_report(
     await db.commit()
     await db.refresh(report)
 
+    if report.published:
+        await _store_report_memory_for_published_report(
+            db,
+            report=report,
+        )
+
     return report
 
 
@@ -249,6 +295,12 @@ async def publish_reports_for_session(
         report.published_by_id = published_by_id
 
     await db.commit()
+
+    for report in reports:
+        await _store_report_memory_for_published_report(
+            db,
+            report=report,
+        )
 
     return len(reports)
 
