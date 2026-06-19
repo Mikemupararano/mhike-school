@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.models.user import User
@@ -11,7 +12,6 @@ from app.schemas.report_quality import (
 )
 from app.services.report_memory import find_similar_report_memory
 from app.services.report_writer import generate_report_comment
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -220,6 +220,7 @@ async def generate_report_from_notes(
         memories = await find_similar_report_memory(
             db,
             school_id=current_user.school_id,
+            teacher_id=current_user.id,
             subject=payload.subject or "",
             year_group=payload.year_group,
             teacher_notes=notes,
