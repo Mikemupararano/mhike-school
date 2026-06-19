@@ -24,6 +24,35 @@ async def create_student_report(
     teacher_id: int,
     payload: StudentReportCreate,
 ) -> StudentReport:
+    existing_result = await db.execute(
+        select(StudentReport).where(
+            StudentReport.school_id == school_id,
+            StudentReport.student_id == payload.student_id,
+            StudentReport.report_session_id == payload.report_session_id,
+            StudentReport.teacher_id == teacher_id,
+        ),
+    )
+
+    existing_report = existing_result.scalar_one_or_none()
+
+    if existing_report is not None:
+        existing_report.title = payload.title
+        existing_report.report_text = payload.report_text
+        existing_report.grade = payload.grade
+        existing_report.academic_year = payload.academic_year
+        existing_report.term = payload.term
+
+        if existing_report.status == REPORT_STATUS_PUBLISHED:
+            existing_report.status = REPORT_STATUS_DRAFT
+            existing_report.published = False
+            existing_report.published_at = None
+            existing_report.published_by_id = None
+
+        await db.commit()
+        await db.refresh(existing_report)
+
+        return existing_report
+
     report = StudentReport(
         school_id=school_id,
         student_id=payload.student_id,

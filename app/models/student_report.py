@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -11,6 +11,16 @@ from app.db.base import Base
 
 class StudentReport(Base):
     __tablename__ = "student_reports"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "school_id",
+            "student_id",
+            "teacher_id",
+            "report_session_id",
+            name="uq_student_report_session_teacher",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -39,9 +49,7 @@ class StudentReport(Base):
     )
 
     title: Mapped[str] = mapped_column(String(200), nullable=False)
-
     report_text: Mapped[str] = mapped_column(Text, nullable=False)
-
     grade: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     academic_year: Mapped[str] = mapped_column(
