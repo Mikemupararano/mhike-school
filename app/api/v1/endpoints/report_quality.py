@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_db
 from app.models.user import User
 from app.schemas.report_quality import (
     ReportNotesGenerateRequest,
@@ -9,7 +9,9 @@ from app.schemas.report_quality import (
     ReportQualityCheckResponse,
     ReportQualityIssue,
 )
+from app.services.report_memory import find_similar_report_memory
 from app.services.report_writer import generate_report_comment
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -202,6 +204,7 @@ async def check_report_comment(
 )
 async def generate_report_from_notes(
     payload: ReportNotesGenerateRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ReportNotesGenerateResponse:
     notes = payload.notes.strip()
@@ -211,12 +214,29 @@ async def generate_report_from_notes(
         payload.student_name,
     )
 
+    similar_reports: list[str] = []
+
+    if current_user.school_id is not None:
+        memories = await find_similar_report_memory(
+            db,
+            school_id=current_user.school_id,
+            subject=payload.subject or "",
+            year_group=payload.year_group,
+            teacher_notes=notes,
+            limit=5,
+        )
+
+        similar_reports = [
+            memory.final_report for memory in memories if memory.final_report
+        ]
+
     try:
         generated_comment = generate_report_comment(
             notes=notes,
             student_name=student_name,
             subject=payload.subject,
             year_group=payload.year_group,
+            similar_reports=similar_reports,
         )
     except ValueError as exc:
         raise HTTPException(

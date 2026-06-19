@@ -205,31 +205,22 @@ def normalise_subject(subject: str | None) -> str:
 
     if "chemistry" in subject_lower:
         return "chemistry"
-
     if "biology" in subject_lower:
         return "biology"
-
     if "physics" in subject_lower:
         return "physics"
-
     if "english" in subject_lower:
         return "english"
-
     if "geography" in subject_lower:
         return "geography"
-
     if "computer" in subject_lower or "computing" in subject_lower:
         return "computer science"
-
     if "art" in subject_lower:
         return "art"
-
     if "religious" in subject_lower or subject_lower in {"rs", "re"}:
         return "religious studies"
-
     if "history" in subject_lower:
         return "history"
-
     if "math" in subject_lower:
         return "mathematics"
 
@@ -580,6 +571,7 @@ def generate_report_comment(
     student_name: str,
     subject: str | None,
     year_group: str | None,
+    similar_reports: list[str] | None = None,
 ) -> str:
     if len(notes.split()) < 4:
         raise ValueError(
