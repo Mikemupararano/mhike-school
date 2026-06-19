@@ -134,6 +134,23 @@ async def list_reports_for_student(
     return list(result.scalars().all())
 
 
+def _get_user_display_name(user: User | None) -> str | None:
+    if user is None:
+        return None
+
+    full_name = getattr(user, "full_name", None)
+
+    if isinstance(full_name, str) and full_name.strip():
+        return full_name.strip()
+
+    email = getattr(user, "email", None)
+
+    if isinstance(email, str) and email.strip():
+        return email.strip()
+
+    return None
+
+
 def _apply_status_change(
     report: StudentReport,
     *,
@@ -176,6 +193,23 @@ def _apply_status_change(
             report.published_by_id = current_user.id
 
 
+async def _get_teacher_for_report(
+    db: AsyncSession,
+    report: StudentReport,
+) -> User | None:
+    if report.teacher_id is None:
+        return None
+
+    result = await db.execute(
+        select(User).where(
+            User.id == report.teacher_id,
+            User.school_id == report.school_id,
+        ),
+    )
+
+    return result.scalar_one_or_none()
+
+
 async def _store_report_memory_for_published_report(
     db: AsyncSession,
     *,
@@ -187,22 +221,17 @@ async def _store_report_memory_for_published_report(
     if not report.report_text or not report.report_text.strip():
         return
 
-    result = await db.execute(
-        select(StudentReport).where(
-            StudentReport.id == report.id,
-            StudentReport.school_id == report.school_id,
-        ),
+    teacher = await _get_teacher_for_report(
+        db,
+        report,
     )
-
-    existing_report = result.scalar_one_or_none()
-
-    if existing_report is None:
-        return
 
     await create_report_memory(
         db,
         ReportMemoryCreate(
             school_id=report.school_id,
+            teacher_id=report.teacher_id,
+            teacher_name=_get_user_display_name(teacher),
             subject=report.title or "General",
             year_group=report.academic_year,
             topics_studied=None,
