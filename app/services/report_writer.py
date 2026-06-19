@@ -582,16 +582,48 @@ def extract_memory_phrases(
 def choose_memory_sentence(
     similar_reports: list[str] | None,
     *,
+    teacher_notes: str,
     first_name: str,
     student_name: str,
     learner: str,
+    used_phrases: set[str] | None = None,
 ) -> str | None:
     phrases = extract_memory_phrases(similar_reports)
 
     if not phrases:
         return None
 
-    selected = random.choice(phrases).strip()
+    used_phrases = used_phrases or set()
+
+    keywords = {
+        word.strip(".,!?").lower()
+        for word in teacher_notes.split()
+        if len(word.strip(".,!?")) >= 5
+    }
+
+    scored: list[tuple[int, str]] = []
+
+    for phrase in phrases:
+        phrase_lower = phrase.lower()
+
+        score = sum(1 for keyword in keywords if keyword in phrase_lower)
+
+        if phrase_lower in used_phrases:
+            score -= 100
+
+        scored.append((score, phrase))
+
+    scored.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    top_candidates = [phrase for score, phrase in scored[:5] if score > -100]
+
+    if not top_candidates:
+        return None
+
+    selected = random.choice(top_candidates).strip()
 
     selected = selected.replace(student_name, learner)
     selected = selected.replace(first_name, learner)
@@ -630,6 +662,7 @@ def generate_report_comment(
     subject: str | None,
     year_group: str | None,
     similar_reports: list[str] | None = None,
+    used_phrases: set[str] | None = None,
 ) -> str:
     if len(notes.split()) < 4:
         raise ValueError(
@@ -712,9 +745,11 @@ def generate_report_comment(
 
     memory_sentence = choose_memory_sentence(
         similar_reports,
+        teacher_notes=teacher_notes_text,
         first_name=first_name,
         student_name=student_name,
         learner=learner,
+        used_phrases=used_phrases,
     )
 
     if achievement_sentence is None and not topic_sentence and memory_sentence is None:
