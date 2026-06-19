@@ -1,0 +1,624 @@
+import random
+
+
+REPORT_OPENINGS = [
+    "{name} has continued to make positive progress in {subject} throughout {year_group}.",
+    "{name} has approached {subject} with a positive attitude and has made steady progress across the course.",
+    "{name} has worked consistently well this year and developed a stronger understanding of key concepts in {subject}.",
+    "{name} has shown increasing confidence in {subject} and has made good progress in developing subject knowledge and skills.",
+    "{name} has engaged positively with lessons and has made encouraging progress throughout the year.",
+    "{name} has demonstrated a good commitment to learning and has responded well to the challenges presented in {subject}.",
+    "{name} has worked hard throughout the course and has made clear progress in {subject}.",
+    "{name} has shown a mature approach to learning and continues to build knowledge and confidence in {subject}.",
+    "{name} has made steady progress this year and has developed a more secure understanding of the topics studied in {subject}.",
+    "{name} has embraced opportunities to develop skills and has made positive progress in {subject} over the course of the year.",
+]
+
+
+SUBJECT_TOPIC_MAPS = {
+    "chemistry": {
+        "rates of reaction": "rates of reaction",
+        "rate of reaction": "rates of reaction",
+        "reaction rate": "rates of reaction",
+        "reaction rates": "rates of reaction",
+        "organic": "organic chemistry",
+        "alkanes": "organic chemistry",
+        "alkenes": "organic chemistry",
+        "alcohols": "organic chemistry",
+        "acids": "acids and alkalis",
+        "alkalis": "acids and alkalis",
+        "moles": "chemical calculations",
+        "calculations": "chemical calculations",
+        "equilibrium": "equilibria",
+        "equilibria": "equilibria",
+        "bonding": "bonding",
+        "electrolysis": "electrolysis",
+        "titration": "quantitative chemistry",
+    },
+    "biology": {
+        "cells": "cell biology",
+        "microscopy": "microscopy",
+        "enzymes": "enzymes",
+        "photosynthesis": "photosynthesis",
+        "respiration": "respiration",
+        "genetics": "genetics",
+        "inheritance": "inheritance",
+        "ecology": "ecology",
+        "evolution": "evolution",
+        "homeostasis": "homeostasis",
+        "infection": "infection and response",
+    },
+    "physics": {
+        "forces": "forces",
+        "motion": "motion",
+        "energy": "energy",
+        "waves": "waves",
+        "electricity": "electricity",
+        "circuits": "electricity",
+        "magnetism": "magnetism",
+        "radioactivity": "radioactivity",
+        "moments": "moments",
+        "pressure": "pressure",
+        "space": "space physics",
+    },
+    "english": {
+        "poetry": "poetry analysis",
+        "shakespeare": "Shakespeare",
+        "macbeth": "Macbeth",
+        "essay": "essay writing",
+        "creative writing": "creative writing",
+        "language analysis": "language analysis",
+        "reading": "reading comprehension",
+        "literature": "literature study",
+        "writing": "written communication",
+        "grammar": "grammar and expression",
+    },
+    "geography": {
+        "rivers": "rivers",
+        "coasts": "coasts",
+        "tectonics": "tectonic hazards",
+        "earthquakes": "tectonic hazards",
+        "volcanoes": "tectonic hazards",
+        "rainforests": "rainforests",
+        "urbanisation": "urbanisation",
+        "fieldwork": "geographical fieldwork",
+        "climate": "climate change",
+        "development": "development",
+        "population": "population",
+    },
+    "computer science": {
+        "python": "Python programming",
+        "programming": "programming",
+        "algorithms": "algorithms",
+        "databases": "databases",
+        "networks": "networks",
+        "cyber": "cyber security",
+        "binary": "binary and data representation",
+        "logic": "logic gates",
+        "html": "web development",
+        "css": "web development",
+    },
+    "art": {
+        "drawing": "drawing skills",
+        "painting": "painting techniques",
+        "colour": "colour theory",
+        "artist research": "artist research",
+        "portfolio": "portfolio development",
+        "composition": "composition",
+        "sketchbook": "sketchbook development",
+        "mixed media": "mixed media",
+    },
+    "religious studies": {
+        "christianity": "Christianity",
+        "islam": "Islam",
+        "judaism": "Judaism",
+        "ethics": "ethical issues",
+        "morality": "morality",
+        "beliefs": "religious beliefs",
+        "philosophy": "philosophical ideas",
+        "peace": "peace and conflict",
+        "justice": "justice",
+    },
+    "history": {
+        "medicine": "medicine through time",
+        "war": "war and conflict",
+        "cold war": "the Cold War",
+        "tudors": "the Tudors",
+        "normans": "the Normans",
+        "empire": "empire",
+        "source": "source analysis",
+        "interpretation": "historical interpretations",
+    },
+    "mathematics": {
+        "algebra": "algebra",
+        "geometry": "geometry",
+        "trigonometry": "trigonometry",
+        "graphs": "graphs",
+        "statistics": "statistics",
+        "probability": "probability",
+        "ratio": "ratio and proportion",
+        "number": "number skills",
+    },
+}
+
+
+SUBJECT_TOPIC_SENTENCES = {
+    "chemistry": "Through the study of {topics}, {learner} has strengthened scientific knowledge and confidence.",
+    "biology": "Through work on {topics}, {learner} has developed a stronger understanding of biological concepts and processes.",
+    "physics": "Through the study of {topics}, {learner} has strengthened problem-solving skills and understanding of physical principles.",
+    "english": "Through work on {topics}, {learner} has developed analytical, reading and written communication skills.",
+    "geography": "Through the study of {topics}, {learner} has developed geographical knowledge and the ability to explain processes and places.",
+    "computer science": "Through work on {topics}, {learner} has developed computational thinking and problem-solving skills.",
+    "art": "Through work on {topics}, {learner} has developed creative confidence, technical control and visual communication skills.",
+    "religious studies": "Through the study of {topics}, {learner} has developed understanding of beliefs, ethics and different viewpoints.",
+    "history": "Through work on {topics}, {learner} has developed historical knowledge, source skills and analytical thinking.",
+    "mathematics": "Through work on {topics}, {learner} has developed mathematical fluency, accuracy and problem-solving confidence.",
+}
+
+
+DEFAULT_TOPIC_SENTENCE = (
+    "Through work on {topics}, {learner} has strengthened subject knowledge, "
+    "confidence and understanding."
+)
+
+
+def normalise_subject(subject: str | None) -> str:
+    if not subject:
+        return "default"
+
+    subject_lower = subject.lower().strip()
+
+    if "chemistry" in subject_lower:
+        return "chemistry"
+
+    if "biology" in subject_lower:
+        return "biology"
+
+    if "physics" in subject_lower:
+        return "physics"
+
+    if "english" in subject_lower:
+        return "english"
+
+    if "geography" in subject_lower:
+        return "geography"
+
+    if "computer" in subject_lower or "computing" in subject_lower:
+        return "computer science"
+
+    if "art" in subject_lower:
+        return "art"
+
+    if "religious" in subject_lower or subject_lower in {"rs", "re"}:
+        return "religious studies"
+
+    if "history" in subject_lower:
+        return "history"
+
+    if "math" in subject_lower:
+        return "mathematics"
+
+    return "default"
+
+
+def get_first_name(student_name: str) -> str:
+    cleaned = student_name.strip()
+
+    if not cleaned or cleaned.lower() == "the student":
+        return "The student"
+
+    return cleaned.split()[0]
+
+
+def join_items(items: list[str]) -> str:
+    unique_items: list[str] = []
+
+    for item in items:
+        if item and item not in unique_items:
+            unique_items.append(item)
+
+    if not unique_items:
+        return ""
+
+    if len(unique_items) == 1:
+        return unique_items[0]
+
+    return ", ".join(unique_items[:-1]) + f" and {unique_items[-1]}"
+
+
+def split_generation_notes(notes: str) -> tuple[str, str]:
+    lower_notes = notes.lower()
+
+    teacher_marker = "teacher notes:"
+    work_marker = "work covered:"
+
+    if teacher_marker in lower_notes:
+        marker_index = lower_notes.index(teacher_marker)
+        work_covered = notes[:marker_index]
+        teacher_notes = notes[marker_index + len(teacher_marker):]
+
+        if work_marker in work_covered.lower():
+            work_covered = work_covered.split(":", maxsplit=1)[-1]
+
+        return work_covered.strip(), teacher_notes.strip()
+
+    if work_marker in lower_notes:
+        return notes.split(":", maxsplit=1)[-1].strip(), ""
+
+    return notes.strip(), notes.strip()
+
+
+def detect_topics(lower_notes: str, subject_key: str) -> list[str]:
+    topic_map = SUBJECT_TOPIC_MAPS.get(subject_key, {})
+    topics: list[str] = []
+
+    for keyword, topic in topic_map.items():
+        if keyword in lower_notes and topic not in topics:
+            topics.append(topic)
+
+    if topics:
+        return topics
+
+    cleaned = lower_notes.replace("work covered:", "").replace(
+        "teacher notes:",
+        "",
+    )
+
+    parts = [
+        part.strip(" .")
+        for part in cleaned.replace(" and ", ",").split(",")
+        if len(part.strip()) > 2
+    ]
+
+    return parts[:4]
+
+
+def build_topic_sentence(
+    *,
+    topics: list[str],
+    learner: str,
+    subject_key: str,
+) -> str:
+    if not topics:
+        return ""
+
+    template = SUBJECT_TOPIC_SENTENCES.get(subject_key, DEFAULT_TOPIC_SENTENCE)
+
+    return template.format(
+        topics=join_items(topics[:4]),
+        learner=learner,
+    )
+
+
+def detect_attitude_sentence(first_name: str, lower_notes: str) -> str | None:
+    qualities: list[str] = []
+
+    if (
+        "hard worker" in lower_notes
+        or "hard working" in lower_notes
+        or "hardworking" in lower_notes
+    ):
+        qualities.append("works hard")
+
+    if "asks questions" in lower_notes or "asking questions" in lower_notes:
+        qualities.append("asks thoughtful questions to deepen understanding")
+
+    if "engaged" in lower_notes or "engagement" in lower_notes:
+        qualities.append("engages well with learning")
+
+    if "independent" in lower_notes or "independently" in lower_notes:
+        qualities.append("works with increasing independence")
+
+    if "resilient" in lower_notes or "resilience" in lower_notes:
+        qualities.append("shows resilience when tackling challenging work")
+
+    if "creative" in lower_notes or "creativity" in lower_notes:
+        qualities.append("shows creativity and originality")
+
+    if "organised" in lower_notes or "organized" in lower_notes:
+        qualities.append("is organised and prepared for learning")
+
+    if not qualities:
+        return None
+
+    learner = "The student" if first_name == "The student" else first_name
+
+    return f"{learner} {join_items(qualities[:3])}."
+
+
+def detect_achievement_sentence(first_name: str, lower_notes: str) -> str | None:
+    achievements: list[str] = []
+
+    if "confident" in lower_notes or "confidence" in lower_notes:
+        achievements.append("grown in confidence")
+
+    if "passed tests" in lower_notes or "test" in lower_notes:
+        achievements.append("performed well in recent assessment work")
+
+    if "good progress" in lower_notes or "positive progress" in lower_notes:
+        achievements.append("made positive progress across the course")
+
+    if "excellent" in lower_notes:
+        achievements.append("produced work of an excellent standard")
+
+    if "improved" in lower_notes or "improvement" in lower_notes:
+        achievements.append("shown clear improvement over time")
+
+    if "knowledge" in lower_notes or "understanding" in lower_notes:
+        achievements.append("developed secure subject knowledge")
+
+    if "answers" in lower_notes or "written" in lower_notes:
+        achievements.append("improved the quality of written responses")
+
+    if "practical" in lower_notes or "experiment" in lower_notes:
+        achievements.append("developed practical and investigative skills")
+
+    if "exam question" in lower_notes or "exam-style" in lower_notes:
+        achievements.append("made progress with examination-style questions")
+
+    if "analysis" in lower_notes or "analytical" in lower_notes:
+        achievements.append("developed analytical skills")
+
+    if "evaluation" in lower_notes or "evaluate" in lower_notes:
+        achievements.append("improved evaluative skills")
+
+    if "coding" in lower_notes or "programming" in lower_notes:
+        achievements.append("developed programming skills")
+
+    if "composition" in lower_notes or "portfolio" in lower_notes:
+        achievements.append("developed creative and technical skills")
+
+    if not achievements:
+        return None
+
+    learner = "the student" if first_name == "The student" else first_name
+
+    return f"This has helped {learner} to {join_items(achievements[:3])}."
+
+
+def detect_next_steps(lower_notes: str, subject_key: str) -> list[str]:
+    next_steps: list[str] = []
+
+    if "revision guide" in lower_notes:
+        next_steps.append(
+            "use the revision guide regularly to consolidate key knowledge",
+        )
+
+    if "exam question" in lower_notes or "exam-style" in lower_notes:
+        next_steps.append("continue practising examination-style questions")
+
+    if "application" in lower_notes or "apply" in lower_notes:
+        next_steps.append(
+            "focus on applying knowledge accurately to unfamiliar questions",
+        )
+
+    if (
+        "calculation" in lower_notes
+        or "calculations" in lower_notes
+        or "maths" in lower_notes
+    ):
+        next_steps.append(
+            "show clear working in calculations and check units carefully",
+        )
+
+    if "detail" in lower_notes or "explain" in lower_notes:
+        next_steps.append("include more precise detail in written explanations")
+
+    if "recall" in lower_notes or "remember" in lower_notes:
+        next_steps.append("strengthen recall of key facts and definitions")
+
+    if "revise" in lower_notes or "revision" in lower_notes:
+        next_steps.append("maintain a regular revision routine")
+
+    if "six-mark" in lower_notes or "6-mark" in lower_notes:
+        next_steps.append(
+            "structure extended responses carefully and include sufficient detail",
+        )
+
+    if next_steps:
+        return next_steps
+
+    subject_defaults = {
+        "english": "continue developing clear paragraph structure and support ideas with precise textual evidence",
+        "geography": "continue using accurate geographical terminology and evidence when explaining processes",
+        "computer science": "continue practising programming problems and explaining algorithms clearly",
+        "art": "continue refining observational detail and recording development clearly in the sketchbook",
+        "religious studies": "continue using evidence and examples to explain different beliefs and viewpoints",
+        "history": "continue supporting judgements with precise evidence and clear explanation",
+        "mathematics": "continue practising multi-step problems and checking working carefully",
+        "biology": "continue using key terminology accurately when explaining biological processes",
+        "physics": "continue applying equations carefully and explaining physical principles clearly",
+        "chemistry": "continue applying chemical ideas accurately to unfamiliar questions",
+    }
+
+    return [
+        subject_defaults.get(
+            subject_key,
+            "continue to review class notes and practise applying knowledge",
+        ),
+    ]
+
+
+def infer_next_step_from_topics(topics: list[str], subject_key: str) -> str:
+    if subject_key == "chemistry":
+        if "chemical calculations" in topics:
+            return "show clear working in calculations and check units carefully"
+
+        if "rates of reaction" in topics:
+            return (
+                "practise explaining how changes in conditions affect reaction "
+                "rate using precise scientific language"
+            )
+
+    if subject_key == "english":
+        return (
+            "continue developing clear paragraph structure and support ideas "
+            "with precise textual evidence"
+        )
+
+    if subject_key == "geography":
+        return (
+            "continue using accurate geographical terminology and evidence "
+            "when explaining processes"
+        )
+
+    if subject_key == "computer science":
+        return "continue practising programming problems and explaining algorithms clearly"
+
+    if subject_key == "art":
+        return (
+            "continue refining observational detail and recording development "
+            "clearly in the sketchbook"
+        )
+
+    if subject_key == "religious studies":
+        return (
+            "continue using evidence and examples to explain different beliefs "
+            "and viewpoints"
+        )
+
+    if subject_key == "history":
+        return "continue supporting judgements with precise evidence and clear explanation"
+
+    if subject_key == "mathematics":
+        return "continue practising multi-step problems and checking working carefully"
+
+    if subject_key == "biology":
+        return "continue using key terminology accurately when explaining biological processes"
+
+    if subject_key == "physics":
+        return "continue applying equations carefully and explaining physical principles clearly"
+
+    return "continue to review class notes and practise applying knowledge"
+
+
+def select_opening_sentence(
+    *,
+    first_name: str,
+    subject_name: str,
+    year_group_name: str,
+) -> str:
+    if first_name == "The student":
+        return (
+            f"The student has made good progress in {subject_name} during "
+            f"{year_group_name}."
+        )
+
+    template = random.choice(REPORT_OPENINGS)
+
+    return template.format(
+        name=first_name,
+        subject=subject_name,
+        year_group=year_group_name,
+    )
+
+
+def generate_report_comment(
+    *,
+    notes: str,
+    student_name: str,
+    subject: str | None,
+    year_group: str | None,
+) -> str:
+    if len(notes.split()) < 4:
+        raise ValueError(
+            "Please enter more detailed teacher notes before generating a report.",
+        )
+
+    work_covered_text, teacher_notes_text = split_generation_notes(notes)
+
+    first_name = get_first_name(student_name)
+    subject_name = subject.strip() if subject and subject.strip() else "the subject"
+    year_group_name = (
+        year_group.strip() if year_group and year_group.strip() else "this year"
+    )
+
+    subject_key = normalise_subject(subject_name)
+
+    work_lower = work_covered_text.lower()
+    teacher_lower = teacher_notes_text.lower()
+    combined_lower = notes.lower()
+
+    topics = detect_topics(
+        work_lower,
+        subject_key,
+    ) or detect_topics(
+        combined_lower,
+        subject_key,
+    )
+
+    next_steps = detect_next_steps(
+        teacher_lower,
+        subject_key,
+    ) or detect_next_steps(
+        combined_lower,
+        subject_key,
+    )
+
+    if not next_steps:
+        next_steps.append(
+            infer_next_step_from_topics(
+                topics,
+                subject_key,
+            ),
+        )
+
+    learner = "the student" if first_name == "The student" else first_name
+
+    opening_sentence = select_opening_sentence(
+        first_name=first_name,
+        subject_name=subject_name,
+        year_group_name=year_group_name,
+    )
+
+    topic_sentence = build_topic_sentence(
+        topics=topics,
+        learner=learner,
+        subject_key=subject_key,
+    )
+
+    attitude_sentence = detect_attitude_sentence(
+        first_name,
+        teacher_lower,
+    )
+
+    if attitude_sentence is None:
+        attitude_sentence = detect_attitude_sentence(
+            first_name,
+            combined_lower,
+        )
+
+    achievement_sentence = detect_achievement_sentence(
+        first_name,
+        teacher_lower,
+    )
+
+    if achievement_sentence is None:
+        achievement_sentence = detect_achievement_sentence(
+            first_name,
+            combined_lower,
+        )
+
+    if achievement_sentence is None and not topic_sentence:
+        achievement_sentence = (
+            f"{first_name if first_name != 'The student' else 'The student'} "
+            "has made positive progress in lessons."
+        )
+
+    next_step_sentence = (
+        f"To build on this progress, {learner} should {next_steps[0]}."
+    )
+
+    parts = [
+        opening_sentence,
+        topic_sentence,
+        attitude_sentence,
+        achievement_sentence,
+        next_step_sentence,
+    ]
+
+    return " ".join(
+        part.strip()
+        for part in parts
+        if part
+    ).strip()
