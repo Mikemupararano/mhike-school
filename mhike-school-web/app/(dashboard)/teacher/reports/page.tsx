@@ -123,6 +123,8 @@ export default function TeacherReportsPage() {
     const [students, setStudents] = useState<ReportStudent[]>([]);
 
     const [form, setForm] = useState<ReportFormState>(initialFormState);
+    const [editingReportId, setEditingReportId] = useState<number | null>(null);
+
     const [loading, setLoading] = useState(true);
     const [loadingClasses, setLoadingClasses] = useState(false);
     const [loadingStudents, setLoadingStudents] = useState(false);
@@ -202,6 +204,19 @@ export default function TeacherReportsPage() {
             ...current,
             [field]: value,
         }));
+    }
+
+    function resetFormForActiveSession() {
+        setForm({
+            ...initialFormState,
+            report_session_id: activeSession ? String(activeSession.id) : "",
+            academic_year: activeSession?.academic_year ?? "2026/27",
+            term: activeSession?.term ?? "",
+            title: activeSession?.title ?? "",
+        });
+
+        setEditingReportId(null);
+        setQualityResult(null);
     }
 
     function handleSessionChange(sessionId: string) {
@@ -395,6 +410,34 @@ export default function TeacherReportsPage() {
         );
     }
 
+    function handleEditReport(report: StudentReport) {
+        setForm((current) => ({
+            ...current,
+            student_id: String(report.student_id),
+            report_session_id: report.report_session_id
+                ? String(report.report_session_id)
+                : current.report_session_id,
+            title: report.title,
+            work_covered: report.work_covered ?? "",
+            teacher_notes: report.teacher_notes ?? "",
+            generated_report_text: report.generated_report_text ?? "",
+            report_text: report.report_text,
+            attainment_grade: report.grade ?? "",
+            academic_year: report.academic_year,
+            term: report.term ?? "",
+        }));
+
+        setEditingReportId(report.id);
+        setQualityResult(null);
+        setError(null);
+        setSuccessMessage(`Editing report #${report.id}`);
+
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth",
+        });
+    }
+
     async function saveReport(action: SaveAction) {
         const studentId = Number(form.student_id);
 
@@ -447,7 +490,10 @@ export default function TeacherReportsPage() {
             setError(null);
             setSuccessMessage(null);
 
-            const saved = await createStudentReport(payload);
+            const saved =
+                editingReportId !== null
+                    ? await updateStudentReport(editingReportId, payload)
+                    : await createStudentReport(payload);
 
             if (action === "submit") {
                 const submitted = await updateStudentReport(saved.id, {
@@ -455,6 +501,7 @@ export default function TeacherReportsPage() {
                 });
 
                 setReports((current) => upsertReport(current, submitted));
+                setEditingReportId(null);
                 setSuccessMessage("Report submitted for review.");
                 return;
             }
@@ -462,26 +509,23 @@ export default function TeacherReportsPage() {
             setReports((current) => upsertReport(current, saved));
 
             if (action === "next") {
+                setEditingReportId(null);
                 moveToNextStudent();
                 return;
             }
 
             if (action === "close") {
-                setForm({
-                    ...initialFormState,
-                    report_session_id: String(activeSession.id),
-                    academic_year: activeSession.academic_year,
-                    term: activeSession.term ?? "",
-                    title: activeSession.title,
-                });
-
+                resetFormForActiveSession();
                 setStudents([]);
-                setQualityResult(null);
                 setSuccessMessage("Draft saved and closed.");
                 return;
             }
 
-            setSuccessMessage("Draft saved.");
+            setSuccessMessage(
+                editingReportId !== null
+                    ? "Report changes saved."
+                    : "Draft saved.",
+            );
         } catch (err) {
             setError(
                 err instanceof Error
@@ -517,6 +561,10 @@ export default function TeacherReportsPage() {
                 current.filter((report) => report.id !== reportId),
             );
 
+            if (editingReportId === reportId) {
+                resetFormForActiveSession();
+            }
+
             setSuccessMessage("Report deleted.");
         } catch (err) {
             setError(
@@ -538,6 +586,7 @@ export default function TeacherReportsPage() {
                     <h1 className="text-3xl font-extrabold text-slate-950">
                         Student Reports
                     </h1>
+
 
                     <p className="mt-2 text-slate-500">
                         Write student draft reports using the active report
@@ -568,7 +617,9 @@ export default function TeacherReportsPage() {
 
             <section className="rounded-2xl border bg-white p-6">
                 <h2 className="text-xl font-bold text-slate-950">
-                    Write Draft Report
+                    {editingReportId === null
+                        ? "Write Draft Report"
+                        : `Edit Draft Report #${editingReportId}`}
                 </h2>
 
                 <form onSubmit={handleCreateReport} className="mt-6 grid gap-5">
@@ -1018,7 +1069,11 @@ export default function TeacherReportsPage() {
                             disabled={saving}
                             className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            {saving ? "Saving..." : "Save Draft"}
+                            {saving
+                                ? "Saving..."
+                                : editingReportId === null
+                                    ? "Save Draft"
+                                    : "Save Changes"}
                         </button>
 
                         <button
@@ -1047,6 +1102,20 @@ export default function TeacherReportsPage() {
                         >
                             Save & Close
                         </button>
+
+                        {editingReportId !== null && (
+                            <button
+                                type="button"
+                                disabled={saving}
+                                onClick={() => {
+                                    resetFormForActiveSession();
+                                    setSuccessMessage("Editing cancelled.");
+                                }}
+                                className="rounded-xl border border-red-300 px-5 py-2 text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Cancel Editing
+                            </button>
+                        )}
                     </div>
                 </form>
             </section>
@@ -1142,15 +1211,29 @@ export default function TeacherReportsPage() {
                                         Created {formatDate(report.created_at)}
                                     </span>
 
-                                    <button
-                                        type="button"
-                                        onClick={() =>
-                                            void handleDeleteReport(report.id)
-                                        }
-                                        className="w-fit font-semibold text-red-600 hover:text-red-700"
-                                    >
-                                        Delete
-                                    </button>
+                                    <div className="flex gap-4">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                handleEditReport(report)
+                                            }
+                                            className="w-fit font-semibold text-blue-600 hover:text-blue-700"
+                                        >
+                                            Edit
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                void handleDeleteReport(
+                                                    report.id,
+                                                )
+                                            }
+                                            className="w-fit font-semibold text-red-600 hover:text-red-700"
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
                                 </div>
                             </article>
                         ))}
