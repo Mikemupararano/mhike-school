@@ -267,25 +267,39 @@ def join_items(items: list[str]) -> str:
 
 
 def split_generation_notes(notes: str) -> tuple[str, str]:
-    lower_notes = notes.lower()
+    """Split combined frontend notes into work-covered and teacher-note sections.
 
-    teacher_marker = "teacher notes:"
-    work_marker = "work covered:"
+    The frontend may send either order, for example:
+    - Teacher notes: ...\n\nWork covered: ...
+    - Work covered: ...\n\nTeacher notes: ...
 
-    if teacher_marker in lower_notes:
-        marker_index = lower_notes.index(teacher_marker)
-        work_covered = notes[:marker_index]
-        teacher_notes = notes[marker_index + len(teacher_marker) :]
+    This parser keeps the two sections separate so curriculum context is not
+    mistaken for pupil-specific evidence.
+    """
 
-        if work_marker in work_covered.lower():
-            work_covered = work_covered.split(":", maxsplit=1)[-1]
+    markers = list(
+        re.finditer(
+            r"(?im)^(work covered|teacher notes):\s*",
+            notes,
+        ),
+    )
 
-        return work_covered.strip(), teacher_notes.strip()
+    if not markers:
+        cleaned = notes.strip()
+        return "", cleaned
 
-    if work_marker in lower_notes:
-        return notes.split(":", maxsplit=1)[-1].strip(), ""
+    sections: dict[str, str] = {}
 
-    return notes.strip(), notes.strip()
+    for index, marker in enumerate(markers):
+        label = marker.group(1).lower()
+        start = marker.end()
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(notes)
+        sections[label] = notes[start:end].strip()
+
+    return (
+        sections.get("work covered", "").strip(),
+        sections.get("teacher notes", "").strip(),
+    )
 
 
 def clean_work_covered_text(text: str) -> str:
@@ -364,6 +378,97 @@ def build_topic_sentence(
         topics=join_items(topics[:5]),
         learner=learner,
     )
+
+
+def clean_teacher_notes_text(text: str, first_name: str) -> str:
+    cleaned = text.strip()
+
+    if not cleaned:
+        return ""
+
+    if first_name != "The student":
+        cleaned = re.sub(
+            rf"^\s*{re.escape(first_name)}\s*[:.,-]*\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+
+    cleaned = cleaned.strip(" .")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    return cleaned
+
+
+def build_teacher_evidence_sentence(
+    *,
+    first_name: str,
+    teacher_notes: str,
+) -> str:
+    """Create a pupil-specific evidence sentence from the teacher's notes.
+
+    This deliberately uses the teacher notes directly, because these are the
+    most reliable evidence for the individual pupil. It avoids copying frontend
+    labels such as "Teacher notes:" into the report.
+    """
+
+    cleaned = clean_teacher_notes_text(
+        teacher_notes,
+        first_name,
+    )
+
+    if not cleaned:
+        return ""
+
+    learner = "The student" if first_name == "The student" else first_name
+    lower_cleaned = cleaned.lower()
+
+    strengths: list[str] = []
+
+    if "hardworking" in lower_cleaned or "hard working" in lower_cleaned:
+        strengths.append("is hardworking")
+
+    if "well behaved" in lower_cleaned or "well-behaved" in lower_cleaned:
+        strengths.append("is well behaved")
+
+    if "punctual" in lower_cleaned:
+        strengths.append("is punctual")
+
+    if "homework" in lower_cleaned and (
+        "on time" in lower_cleaned
+        or "completed" in lower_cleaned
+        or "completes" in lower_cleaned
+    ):
+        strengths.append("completes homework on time")
+
+    if "engaged" in lower_cleaned or "class discussion" in lower_cleaned:
+        strengths.append("engages positively in class")
+
+    if "practical" in lower_cleaned:
+        strengths.append("contributes well to practical work")
+
+    assessment_sentence = ""
+    percentage_match = re.search(
+        r"(\d{1,3})\s*%\s*(?:in|on)?\s*([^.,;]*)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    if percentage_match:
+        percentage = percentage_match.group(1)
+        assessment_context = percentage_match.group(2).strip()
+        assessment_context = assessment_context or "recent assessment work"
+        assessment_sentence = (
+            f" {learner} achieved {percentage}% in {assessment_context}."
+        )
+
+    if strengths:
+        return f"{learner} {join_items(strengths)}.{assessment_sentence}".strip()
+
+    if cleaned.endswith((".", "!", "?")):
+        return f"{learner} has shown that {cleaned}"
+
+    return f"{learner} has shown that {cleaned}."
 
 
 def detect_attitude_sentence(first_name: str, lower_notes: str) -> str | None:
@@ -772,16 +877,21 @@ def generate_report_comment(
             combined_lower,
         )
 
-    memory_sentence = choose_memory_sentence(
-        similar_reports,
-        teacher_notes=teacher_notes_text,
+    teacher_evidence_sentence = build_teacher_evidence_sentence(
         first_name=first_name,
-        student_name=student_name,
-        learner=learner,
-        used_phrases=used_phrases,
+        teacher_notes=teacher_notes_text,
     )
 
-    if achievement_sentence is None and not topic_sentence and memory_sentence is None:
+    # Keep report-memory phrasing disabled for now. It can make reports sound
+    # generic or repetitive before the core teacher-note workflow is stable.
+    memory_sentence = None
+
+    if (
+        achievement_sentence is None
+        and not topic_sentence
+        and not teacher_evidence_sentence
+        and memory_sentence is None
+    ):
         achievement_sentence = (
             f"{first_name if first_name != 'The student' else 'The student'} "
             "has made positive progress in lessons."
@@ -791,8 +901,8 @@ def generate_report_comment(
 
     parts = [
         opening_sentence,
+        teacher_evidence_sentence,
         topic_sentence,
-        attitude_sentence,
         achievement_sentence,
         memory_sentence,
         next_step_sentence,
