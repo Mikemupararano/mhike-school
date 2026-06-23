@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import "@/styles/dashboard-theme.css";
 
 import Navbar from "@/components/layout/Navbar";
 import Sidebar from "@/components/layout/Sidebar";
@@ -42,7 +43,7 @@ export default function DashboardShell({
     const resolvedSidebarTitle = sidebarTitle || schoolName || "Mhike School";
 
     return (
-        <div className="min-h-screen bg-[#F8FAFC] text-slate-900">
+        <div className="dashboard-theme min-h-screen antialiased">
             <Navbar
                 userId={userId}
                 schoolId={schoolId}
@@ -54,20 +55,22 @@ export default function DashboardShell({
                 showLogout={showLogout}
             />
 
-            <div className="flex min-h-[calc(100vh-76px)]">
+            <div className="flex min-h-[calc(100vh-56px)]">
                 {showSidebar ? (
                     <Sidebar
                         title={resolvedSidebarTitle}
                         sections={sidebarSections}
                         collapsed={sidebarCollapsed}
-                        className="hidden lg:block"
+                        className="hidden shrink-0 border-r border-white/10 lg:block"
                     />
                 ) : null}
 
                 <main
-                    className={`flex-1 p-6 sm:p-8 lg:p-10 xl:p-12 ${contentClassName}`}
+                    className={`flex-1 overflow-x-hidden px-6 py-8 lg:px-10 xl:px-12 ${contentClassName}`}
                 >
-                    <div className="w-full">{children}</div>
+                    <div className="w-full">
+                        {children}
+                    </div>
                 </main>
             </div>
         </div>

@@ -185,15 +185,29 @@ export default function TeacherReportsPage() {
         void loadPageData();
     }, []);
 
-    const sortedReports = useMemo(
-        () =>
-            [...reports].sort(
+    const selectedStudentReports = useMemo(() => {
+        if (!form.student_id) {
+            return [];
+        }
+
+        return reports
+            .filter((report) => String(report.student_id) === form.student_id)
+            .filter((report) =>
+                form.report_session_id
+                    ? String(report.report_session_id ?? "") ===
+                    form.report_session_id
+                    : true,
+            )
+            .sort(
                 (first, second) =>
                     new Date(second.created_at).getTime() -
                     new Date(first.created_at).getTime(),
-            ),
-        [reports],
-    );
+            );
+    }, [
+        reports,
+        form.student_id,
+        form.report_session_id,
+    ]);
 
     function updateFormField(field: keyof ReportFormState, value: string) {
         if (field === "report_text") {
@@ -295,6 +309,42 @@ export default function TeacherReportsPage() {
         }
     }
 
+
+    function handleStudentChange(studentId: string) {
+        const existingReport = reports.find(
+            (report) =>
+                String(report.student_id) === studentId &&
+                (form.report_session_id
+                    ? String(report.report_session_id ?? "") ===
+                    form.report_session_id
+                    : true),
+        );
+
+        if (existingReport) {
+            handleEditReport(existingReport);
+            return;
+        }
+
+        setEditingReportId(null);
+        setQualityResult(null);
+        setError(null);
+        setSuccessMessage(null);
+
+        setForm((current) => ({
+            ...current,
+            student_id: studentId,
+            teacher_notes: "",
+            generated_report_text: "",
+            report_text: "",
+            exam_mark: "",
+            attainment_grade: "",
+            effort_grade: "",
+            target_grade: "",
+            next_steps: "",
+            tutor_comment: "",
+        }));
+    }
+
     async function handleCheckQuality() {
         if (!form.report_text.trim()) {
             setError("Enter a final student comment first.");
@@ -325,6 +375,20 @@ export default function TeacherReportsPage() {
             setError("Enter work covered and/or teacher notes first.");
             return;
         }
+        if (!form.teacher_id) {
+            setError("Select a teacher first.");
+            return;
+        }
+
+        if (!form.class_id) {
+            setError("Select a class first.");
+            return;
+        }
+
+        if (!form.student_id) {
+            setError("Select a pupil first.");
+            return;
+        }
 
         try {
             setGeneratingFromNotes(true);
@@ -341,11 +405,11 @@ export default function TeacherReportsPage() {
             );
 
             const notesForGeneration = [
-                form.work_covered.trim()
-                    ? `Work covered: ${form.work_covered.trim()}`
-                    : "",
                 form.teacher_notes.trim()
-                    ? `Teacher notes: ${form.teacher_notes.trim()}`
+                    ? `Use these teacher notes as the main evidence for the pupil report. Prioritise these details when writing the student comment: ${form.teacher_notes.trim()}`
+                    : "",
+                form.work_covered.trim()
+                    ? `Use this only as brief curriculum context. Do not make it the main focus of the student comment: ${form.work_covered.trim()}`
                     : "",
             ]
                 .filter(Boolean)
@@ -587,7 +651,6 @@ export default function TeacherReportsPage() {
                         Student Reports
                     </h1>
 
-
                     <p className="mt-2 text-slate-500">
                         Write student draft reports using the active report
                         session.
@@ -597,20 +660,20 @@ export default function TeacherReportsPage() {
                 <button
                     type="button"
                     onClick={() => router.back()}
-                    className="w-fit rounded-xl border px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    className="w-fit rounded-xl border px-4 py-2 text-base font-bold text-slate-700 hover:bg-slate-50"
                 >
                     ← Back
                 </button>
             </div>
 
             {error && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-base font-medium text-red-700">
                     {error}
                 </div>
             )}
 
             {successMessage && (
-                <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm font-medium text-green-700">
+                <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-base font-medium text-green-700">
                     {successMessage}
                 </div>
             )}
@@ -625,7 +688,7 @@ export default function TeacherReportsPage() {
                 <form onSubmit={handleCreateReport} className="mt-6 grid gap-5">
                     <div className="grid gap-4 md:grid-cols-3">
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Teacher
                             </span>
 
@@ -636,10 +699,10 @@ export default function TeacherReportsPage() {
                                         event.target.value,
                                     )
                                 }
-                                className="rounded-xl border px-3 py-2 text-sm"
+                                className="rounded-xl border px-3 py-2 text-base"
                             >
                                 <option value="">
-                                    Current teacher / all classes
+                                    Select teacher
                                 </option>
 
                                 {teachers.map((teacher) => (
@@ -654,7 +717,7 @@ export default function TeacherReportsPage() {
                         </label>
 
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Class
                             </span>
 
@@ -663,7 +726,7 @@ export default function TeacherReportsPage() {
                                 onChange={(event) =>
                                     void handleClassChange(event.target.value)
                                 }
-                                className="rounded-xl border px-3 py-2 text-sm"
+                                className="rounded-xl border px-3 py-2 text-base"
                             >
                                 <option value="">
                                     {loadingClasses
@@ -686,19 +749,16 @@ export default function TeacherReportsPage() {
                         </label>
 
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Student
                             </span>
 
                             <select
                                 value={form.student_id}
                                 onChange={(event) =>
-                                    updateFormField(
-                                        "student_id",
-                                        event.target.value,
-                                    )
+                                    handleStudentChange(event.target.value)
                                 }
-                                className="rounded-xl border px-3 py-2 text-sm"
+                                className="rounded-xl border px-3 py-2 text-base"
                             >
                                 <option value="">
                                     {loadingStudents
@@ -722,7 +782,7 @@ export default function TeacherReportsPage() {
 
                     <div className="grid gap-4 md:grid-cols-3">
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Report Session
                             </span>
 
@@ -731,7 +791,7 @@ export default function TeacherReportsPage() {
                                 onChange={(event) =>
                                     handleSessionChange(event.target.value)
                                 }
-                                className="rounded-xl border px-3 py-2 text-sm"
+                                className="rounded-xl border px-3 py-2 text-base"
                             >
                                 <option value="">
                                     {reportSessions.length === 0
@@ -752,7 +812,7 @@ export default function TeacherReportsPage() {
                         </label>
 
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Academic Year
                             </span>
 
@@ -764,13 +824,13 @@ export default function TeacherReportsPage() {
                                         event.target.value,
                                     )
                                 }
-                                className="rounded-xl border px-3 py-2 text-sm"
+                                className="rounded-xl border px-3 py-2 text-base"
                                 placeholder="2026/27"
                             />
                         </label>
 
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Term
                             </span>
 
@@ -779,14 +839,14 @@ export default function TeacherReportsPage() {
                                 onChange={(event) =>
                                     updateFormField("term", event.target.value)
                                 }
-                                className="rounded-xl border px-3 py-2 text-sm"
+                                className="rounded-xl border px-3 py-2 text-base"
                                 placeholder="Autumn"
                             />
                         </label>
                     </div>
 
                     <label className="grid gap-2">
-                        <span className="text-sm font-semibold text-slate-700">
+                        <span className="text-base font-semibold text-slate-700">
                             Report Title
                         </span>
 
@@ -795,14 +855,14 @@ export default function TeacherReportsPage() {
                             onChange={(event) =>
                                 updateFormField("title", event.target.value)
                             }
-                            className="rounded-xl border px-3 py-2 text-sm"
+                            className="rounded-xl border px-3 py-2 text-base"
                             placeholder="Autumn Progress Report"
                         />
                     </label>
 
                     {activeSession?.include_work_covered && (
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Work Covered
                             </span>
 
@@ -814,7 +874,7 @@ export default function TeacherReportsPage() {
                                         event.target.value,
                                     )
                                 }
-                                className="min-h-24 rounded-xl border px-3 py-2 text-sm"
+                                className="min-h-24 rounded-xl border px-3 py-2 text-base"
                                 placeholder="Write one or two lines about the work covered by the whole class."
                             />
                         </label>
@@ -824,7 +884,7 @@ export default function TeacherReportsPage() {
                         activeSession.include_student_comment) && (
                             <div className="grid gap-4">
                                 <label className="grid gap-2">
-                                    <span className="text-sm font-semibold text-slate-700">
+                                    <span className="text-base font-semibold text-slate-700">
                                         Teacher Notes
                                     </span>
 
@@ -836,7 +896,7 @@ export default function TeacherReportsPage() {
                                                 event.target.value,
                                             )
                                         }
-                                        className="min-h-28 rounded-xl border px-3 py-2 text-sm"
+                                        className="min-h-28 rounded-xl border px-3 py-2 text-base"
                                         placeholder="Write brief teacher notes here, then click Generate From Notes."
                                     />
                                 </label>
@@ -848,7 +908,7 @@ export default function TeacherReportsPage() {
                                             void handleGenerateFromNotes()
                                         }
                                         disabled={generationDisabled}
-                                        className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                        className="rounded-xl bg-purple-600 px-4 py-2 text-base font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         {generatingFromNotes
                                             ? "Generating..."
@@ -862,7 +922,7 @@ export default function TeacherReportsPage() {
                                             checkingQuality ||
                                             !form.report_text.trim()
                                         }
-                                        className="rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                        className="rounded-xl border px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         {checkingQuality
                                             ? "Checking..."
@@ -872,18 +932,18 @@ export default function TeacherReportsPage() {
 
                                 {form.generated_report_text && (
                                     <div className="rounded-xl border bg-slate-50 p-4">
-                                        <h3 className="text-sm font-bold text-slate-900">
+                                        <h3 className="text-base font-bold text-slate-900">
                                             Generated Draft
                                         </h3>
 
-                                        <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
+                                        <p className="mt-2 whitespace-pre-line text-base leading-7 text-slate-600">
                                             {form.generated_report_text}
                                         </p>
                                     </div>
                                 )}
 
                                 <label className="grid gap-2">
-                                    <span className="text-sm font-semibold text-slate-700">
+                                    <span className="text-base font-semibold text-slate-700">
                                         Final Student Comment
                                     </span>
 
@@ -895,7 +955,7 @@ export default function TeacherReportsPage() {
                                                 event.target.value,
                                             )
                                         }
-                                        className="min-h-40 rounded-xl border px-3 py-2 text-sm"
+                                        className="min-h-40 rounded-xl border px-3 py-2 text-base"
                                         placeholder="The generated report will appear here. Edit it before saving."
                                     />
                                 </label>
@@ -906,12 +966,12 @@ export default function TeacherReportsPage() {
                                             Report Quality Review
                                         </h3>
 
-                                        <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                        <p className="mt-3 whitespace-pre-line text-base leading-7 text-slate-700">
                                             {qualityResult.corrected_comment}
                                         </p>
 
                                         {qualityResult.issues.length > 0 && (
-                                            <ul className="mt-3 list-disc pl-5 text-sm text-slate-600">
+                                            <ul className="mt-3 list-disc pl-5 text-base text-slate-600">
                                                 {qualityResult.issues.map(
                                                     (issue, index) => (
                                                         <li key={index}>
@@ -930,7 +990,7 @@ export default function TeacherReportsPage() {
                                                     qualityResult.corrected_comment,
                                                 )
                                             }
-                                            className="mt-4 rounded-xl bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                                            className="mt-4 rounded-xl bg-green-600 px-4 py-2 text-base font-semibold text-white hover:bg-green-700"
                                         >
                                             Apply Suggestions
                                         </button>
@@ -942,7 +1002,7 @@ export default function TeacherReportsPage() {
                     <div className="grid gap-4 md:grid-cols-3">
                         {activeSession?.include_exam_mark && (
                             <label className="grid gap-2">
-                                <span className="text-sm font-semibold text-slate-700">
+                                <span className="text-base font-semibold text-slate-700">
                                     Exam Mark
                                 </span>
 
@@ -954,7 +1014,7 @@ export default function TeacherReportsPage() {
                                             event.target.value,
                                         )
                                     }
-                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    className="rounded-xl border px-3 py-2 text-base"
                                     placeholder="e.g. 72%"
                                 />
                             </label>
@@ -962,7 +1022,7 @@ export default function TeacherReportsPage() {
 
                         {activeSession?.include_attainment_grade && (
                             <label className="grid gap-2">
-                                <span className="text-sm font-semibold text-slate-700">
+                                <span className="text-base font-semibold text-slate-700">
                                     Attainment Grade
                                 </span>
 
@@ -974,7 +1034,7 @@ export default function TeacherReportsPage() {
                                             event.target.value,
                                         )
                                     }
-                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    className="rounded-xl border px-3 py-2 text-base"
                                     placeholder="e.g. A"
                                 />
                             </label>
@@ -982,7 +1042,7 @@ export default function TeacherReportsPage() {
 
                         {activeSession?.include_effort_grade && (
                             <label className="grid gap-2">
-                                <span className="text-sm font-semibold text-slate-700">
+                                <span className="text-base font-semibold text-slate-700">
                                     Effort Grade
                                 </span>
 
@@ -994,7 +1054,7 @@ export default function TeacherReportsPage() {
                                             event.target.value,
                                         )
                                     }
-                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    className="rounded-xl border px-3 py-2 text-base"
                                     placeholder="e.g. Excellent"
                                 />
                             </label>
@@ -1004,7 +1064,7 @@ export default function TeacherReportsPage() {
                     <div className="grid gap-4 md:grid-cols-2">
                         {activeSession?.include_target_grade && (
                             <label className="grid gap-2">
-                                <span className="text-sm font-semibold text-slate-700">
+                                <span className="text-base font-semibold text-slate-700">
                                     Target Grade
                                 </span>
 
@@ -1016,7 +1076,7 @@ export default function TeacherReportsPage() {
                                             event.target.value,
                                         )
                                     }
-                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    className="rounded-xl border px-3 py-2 text-base"
                                     placeholder="e.g. A*"
                                 />
                             </label>
@@ -1024,7 +1084,7 @@ export default function TeacherReportsPage() {
 
                         {activeSession?.include_next_steps && (
                             <label className="grid gap-2">
-                                <span className="text-sm font-semibold text-slate-700">
+                                <span className="text-base font-semibold text-slate-700">
                                     Next Steps
                                 </span>
 
@@ -1036,7 +1096,7 @@ export default function TeacherReportsPage() {
                                             event.target.value,
                                         )
                                     }
-                                    className="rounded-xl border px-3 py-2 text-sm"
+                                    className="rounded-xl border px-3 py-2 text-base"
                                     placeholder="What should the student focus on next?"
                                 />
                             </label>
@@ -1045,7 +1105,7 @@ export default function TeacherReportsPage() {
 
                     {activeSession?.include_tutor_comment && (
                         <label className="grid gap-2">
-                            <span className="text-sm font-semibold text-slate-700">
+                            <span className="text-base font-semibold text-slate-700">
                                 Tutor Comment
                             </span>
 
@@ -1057,7 +1117,7 @@ export default function TeacherReportsPage() {
                                         event.target.value,
                                     )
                                 }
-                                className="min-h-28 rounded-xl border px-3 py-2 text-sm"
+                                className="min-h-28 rounded-xl border px-3 py-2 text-base"
                                 placeholder="Write tutor comment..."
                             />
                         </label>
@@ -1067,7 +1127,7 @@ export default function TeacherReportsPage() {
                         <button
                             type="submit"
                             disabled={saving}
-                            className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="rounded-xl bg-blue-600 px-5 py-2 text-base font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {saving
                                 ? "Saving..."
@@ -1080,7 +1140,7 @@ export default function TeacherReportsPage() {
                             type="button"
                             disabled={saving}
                             onClick={() => void saveReport("submit")}
-                            className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="rounded-xl bg-purple-600 px-5 py-2 text-base font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             Submit For Review
                         </button>
@@ -1089,7 +1149,7 @@ export default function TeacherReportsPage() {
                             type="button"
                             disabled={saving}
                             onClick={() => void saveReport("next")}
-                            className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="rounded-xl bg-slate-900 px-5 py-2 text-base font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             Save & Next Student
                         </button>
@@ -1098,7 +1158,7 @@ export default function TeacherReportsPage() {
                             type="button"
                             disabled={saving}
                             onClick={() => void saveReport("close")}
-                            className="rounded-xl border px-5 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="rounded-xl border px-5 py-2 text-base font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             Save & Close
                         </button>
@@ -1111,7 +1171,7 @@ export default function TeacherReportsPage() {
                                     resetFormForActiveSession();
                                     setSuccessMessage("Editing cancelled.");
                                 }}
-                                className="rounded-xl border border-red-300 px-5 py-2 text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="rounded-xl border border-red-300 px-5 py-2 text-base font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 Cancel Editing
                             </button>
@@ -1126,16 +1186,20 @@ export default function TeacherReportsPage() {
                 </h2>
 
                 {loading ? (
-                    <p className="mt-4 text-sm text-slate-500">
+                    <p className="mt-4 text-base text-slate-500">
                         Loading reports...
                     </p>
-                ) : sortedReports.length === 0 ? (
+                ) : !form.student_id ? (
                     <div className="mt-6 rounded-2xl border border-dashed bg-slate-50 p-6 text-slate-500">
-                        No reports have been created yet.
+                        Select a class and pupil to view or edit reports.
+                    </div>
+                ) : selectedStudentReports.length === 0 ? (
+                    <div className="mt-6 rounded-2xl border border-dashed bg-slate-50 p-6 text-slate-500">
+                        No reports have been created for this pupil in the selected session.
                     </div>
                 ) : (
                     <div className="mt-6 grid gap-4">
-                        {sortedReports.map((report) => (
+                        {selectedStudentReports.map((report) => (
                             <article
                                 key={report.id}
                                 className="rounded-2xl border bg-slate-50 p-5"
@@ -1146,8 +1210,8 @@ export default function TeacherReportsPage() {
                                             {report.title}
                                         </h3>
 
-                                        <p className="mt-1 text-sm text-slate-500">
-                                            Student {report.student_id} ·{" "}
+                                        <p className="mt-1 text-base text-slate-500">
+                                            Student ID: {report.student_id} ·{" "}
                                             {report.academic_year}
                                             {report.term
                                                 ? ` · ${report.term}`
@@ -1156,7 +1220,7 @@ export default function TeacherReportsPage() {
                                     </div>
 
                                     <span
-                                        className={`rounded-full px-3 py-1 text-sm font-bold ${getStatusBadgeClass(
+                                        className={`rounded-full px-3 py-1 text-base font-bold ${getStatusBadgeClass(
                                             report.status,
                                         )}`}
                                     >
@@ -1166,10 +1230,10 @@ export default function TeacherReportsPage() {
 
                                 {report.work_covered && (
                                     <div className="mt-4">
-                                        <p className="text-xs font-bold uppercase text-slate-500">
+                                        <p className="text-sm font-bold uppercase text-slate-500">
                                             Work Covered
                                         </p>
-                                        <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                        <p className="mt-1 whitespace-pre-line text-base leading-7 text-slate-700">
                                             {report.work_covered}
                                         </p>
                                     </div>
@@ -1177,10 +1241,10 @@ export default function TeacherReportsPage() {
 
                                 {report.teacher_notes && (
                                     <div className="mt-4">
-                                        <p className="text-xs font-bold uppercase text-slate-500">
+                                        <p className="text-sm font-bold uppercase text-slate-500">
                                             Teacher Notes
                                         </p>
-                                        <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                        <p className="mt-1 whitespace-pre-line text-base leading-7 text-slate-700">
                                             {report.teacher_notes}
                                         </p>
                                     </div>
@@ -1188,25 +1252,25 @@ export default function TeacherReportsPage() {
 
                                 {report.generated_report_text && (
                                     <div className="mt-4 rounded-xl border bg-white p-4">
-                                        <p className="text-xs font-bold uppercase text-slate-500">
+                                        <p className="text-sm font-bold uppercase text-slate-500">
                                             Generated Draft
                                         </p>
-                                        <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-600">
+                                        <p className="mt-1 whitespace-pre-line text-base leading-7 text-slate-600">
                                             {report.generated_report_text}
                                         </p>
                                     </div>
                                 )}
 
                                 <div className="mt-4">
-                                    <p className="text-xs font-bold uppercase text-slate-500">
+                                    <p className="text-sm font-bold uppercase text-slate-500">
                                         Final Student Comment
                                     </p>
-                                    <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                    <p className="mt-1 whitespace-pre-line text-base leading-7 text-slate-700">
                                         {report.report_text}
                                     </p>
                                 </div>
 
-                                <div className="mt-4 flex flex-col gap-3 border-t pt-4 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
+                                <div className="mt-4 flex flex-col gap-3 border-t pt-4 text-base text-slate-500 md:flex-row md:items-center md:justify-between">
                                     <span>
                                         Created {formatDate(report.created_at)}
                                     </span>
