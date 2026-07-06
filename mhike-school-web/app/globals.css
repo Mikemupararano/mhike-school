@@ -4,11 +4,7 @@
   font-size: 16px;
 }
 
-html {
-  font-size: 16px;
-  min-height: 100%;
-}
-
+html,
 body {
   margin: 0;
   min-height: 100%;
@@ -35,4 +31,25 @@ select {
 
 ::placeholder {
   color: #64748b;
+}
+
+/* Auth page only */
+[data-auth-page="true"] [data-auth-button="tab"] {
+  font-size: 42px !important;
+  font-weight: 900 !important;
+  line-height: 1.1 !important;
+}
+
+[data-auth-page="true"] [data-auth-button="tab"] span {
+  display: block;
+  margin-top: 12px;
+  font-size: 28px !important;
+  font-weight: 800 !important;
+  line-height: 1.2 !important;
+}
+
+[data-auth-page="true"] [data-auth-button="submit"] {
+  font-size: 64px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
 }

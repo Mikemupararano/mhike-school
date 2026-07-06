@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { apiPost, saveToken } from "@/lib/api";
 import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
@@ -10,6 +10,8 @@ type LoginResponse = {
   access_token: string;
   token_type?: string;
 };
+
+type LoginMode = "school_user" | "platform_admin";
 
 function resolveRedirectPath(user: CurrentUser): string {
   const roles = Array.from(
@@ -39,6 +41,7 @@ function getErrorMessage(err: unknown): string {
 
     if (typeof maybeError.detail === "string") return maybeError.detail;
     if (typeof maybeError.message === "string") return maybeError.message;
+    if (typeof maybeError.error === "string") return maybeError.error;
 
     return JSON.stringify(maybeError, null, 2);
   }
@@ -47,9 +50,7 @@ function getErrorMessage(err: unknown): string {
 }
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<"school_user" | "platform_admin">(
-    "school_user",
-  );
+  const [mode, setMode] = useState<LoginMode>("school_user");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [schoolId, setSchoolId] = useState("");
@@ -58,32 +59,27 @@ export default function LoginPage() {
 
   const needsSchoolId = mode === "school_user";
 
-  const subtitle = useMemo(
-    () =>
-      needsSchoolId
-        ? "Students, teachers and school administrators sign in using the school ID provided by their administrator."
-        : "Platform administrators sign in without a school ID.",
-    [needsSchoolId],
-  );
-
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
 
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPassword = password.trim();
+    const trimmedSchoolId = schoolId.trim();
 
     if (!trimmedEmail || !trimmedPassword) {
       setError("Please enter your email and password.");
       return;
     }
 
-    if (needsSchoolId && !schoolId.trim()) {
+    if (needsSchoolId && !trimmedSchoolId) {
       setError("Please enter your school ID.");
       return;
     }
 
-    if (needsSchoolId && Number.isNaN(Number(schoolId))) {
+    const parsedSchoolId = Number(trimmedSchoolId);
+
+    if (needsSchoolId && Number.isNaN(parsedSchoolId)) {
       setError("School ID must be a valid number.");
       return;
     }
@@ -91,14 +87,16 @@ export default function LoginPage() {
     try {
       setLoading(true);
 
-      const payload =
-        mode === "platform_admin"
-          ? { email: trimmedEmail, password: trimmedPassword }
-          : {
-            email: trimmedEmail,
-            password: trimmedPassword,
-            school_id: Number(schoolId),
-          };
+      const payload = needsSchoolId
+        ? {
+          email: trimmedEmail,
+          password: trimmedPassword,
+          school_id: parsedSchoolId,
+        }
+        : {
+          email: trimmedEmail,
+          password: trimmedPassword,
+        };
 
       const res = await apiPost<LoginResponse>("/auth/login", payload);
 
@@ -116,202 +114,126 @@ export default function LoginPage() {
   }
 
   const inputClass =
-    "h-24 w-full rounded-2xl border-2 border-slate-300 bg-white px-10 text-[2rem] font-semibold text-slate-950 outline-none transition placeholder:text-[1.75rem] placeholder:font-medium placeholder:text-slate-500 focus:border-blue-700 focus:ring-4 focus:ring-blue-100";
+    "h-14 w-full rounded-2xl border-2 border-slate-300 bg-white px-6 text-xl font-bold text-slate-950 outline-none placeholder:text-xl placeholder:font-bold placeholder:text-slate-500 focus:border-[#6F1A07] focus:ring-4 focus:ring-[#6F1A07]/20 xl:h-16 xl:text-2xl xl:placeholder:text-2xl";
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 pb-28 text-slate-950">
-      <div className="flex min-h-screen items-center justify-center px-10 py-10">
-        <section className="w-[90vw] max-w-[1900px] rounded-[3rem] bg-white px-32 py-16 shadow-2xl ring-1 ring-slate-200">
-          <div className="mb-8 text-center">
-            <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-blue-700 text-4xl font-black text-white shadow-xl shadow-blue-700/25">
-              M
-            </div>
+    <main
+      data-auth-page="true"
+      className="min-h-screen bg-[#F4FAFF] text-slate-950"
+    >
+      <div className="flex min-h-screen flex-col items-center justify-start px-6 py-4 xl:px-12">
+        <h1 className="mb-5 text-center text-4xl font-black leading-none tracking-tight text-[#111827] md:text-5xl xl:text-6xl">
+          Welcome to MHike School
+        </h1>
 
-            <h1 className="text-[5.5rem] font-black leading-none tracking-tight text-slate-950">
-              MHike <span className="text-blue-700">School</span>
-            </h1>
+        <section className="w-[90vw] max-w-[1450px] rounded-[36px] bg-white px-8 py-7 shadow-2xl ring-1 ring-slate-200 md:px-16 md:py-8 xl:px-24 xl:py-9">
+          <div className="mb-6 grid grid-cols-1 gap-5 rounded-[28px] bg-[#EAF5FF] p-4 md:grid-cols-2 xl:gap-6">
+            <button
+              type="button"
+              data-custom-button="true"
+              data-auth-button="tab"
+              onClick={() => {
+                setMode("school_user");
+                setError("");
+              }}
+              className={`min-h-[92px] rounded-[22px] px-6 py-4 text-center text-3xl font-black leading-none transition xl:min-h-[105px] xl:text-4xl ${mode === "school_user"
+                ? "bg-[#6F1A07] text-white shadow-xl"
+                : "bg-white text-[#6F1A07] hover:bg-[#F9FCFF]"
+                }`}
+            >
+              School User
+              <span className="mt-2 block text-xl font-bold leading-tight xl:text-2xl">
+                Students • Teachers • Admins
+              </span>
+            </button>
 
-            <p className="mt-4 text-[2.1rem] font-bold text-slate-700">
-              Modern school management platform
-            </p>
+            <button
+              type="button"
+              data-custom-button="true"
+              data-auth-button="tab"
+              onClick={() => {
+                setMode("platform_admin");
+                setError("");
+              }}
+              className={`min-h-[92px] rounded-[22px] px-6 py-4 text-center text-3xl font-black leading-none transition xl:min-h-[105px] xl:text-4xl ${mode === "platform_admin"
+                ? "bg-[#6F1A07] text-white shadow-xl"
+                : "bg-white text-[#6F1A07] hover:bg-[#F9FCFF]"
+                }`}
+            >
+              Platform Admin
+              <span className="mt-2 block text-xl font-bold leading-tight xl:text-2xl">
+                Global administration
+              </span>
+            </button>
           </div>
 
-          <div className="mx-auto max-w-[1650px]">
-            <div className="text-center">
-              <p className="text-[1.8rem] font-black uppercase tracking-wide text-blue-700">
-                Sign in
-              </p>
+          <form onSubmit={handleSubmit} className="space-y-4 xl:space-y-5">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email address"
+              autoComplete="email"
+              className={inputClass}
+            />
 
-              <h2 className="mt-2 text-[6rem] font-black leading-none tracking-tight text-slate-950">
-                Welcome back
-              </h2>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              autoComplete="current-password"
+              className={inputClass}
+            />
 
-              <p className="mt-4 text-[2.2rem] font-semibold leading-[2.8rem] text-slate-700">
-                Sign in to access your MHike School workspace.
-              </p>
-            </div>
+            {needsSchoolId ? (
+              <input
+                type="number"
+                value={schoolId}
+                onChange={(e) => setSchoolId(e.target.value)}
+                placeholder="School ID"
+                inputMode="numeric"
+                className={inputClass}
+              />
+            ) : null}
 
-            <div className="mt-8 grid grid-cols-2 gap-5 rounded-2xl bg-slate-100 p-4">
+            <div className="flex flex-col gap-3 text-xl font-black text-[#111827] md:flex-row md:items-center md:justify-between xl:text-2xl">
+              <label className="flex items-center gap-4">
+                <input
+                  type="checkbox"
+                  className="h-7 w-7 rounded border-slate-400 text-[#6F1A07] focus:ring-[#6F1A07] xl:h-8 xl:w-8"
+                />
+                Remember me
+              </label>
+
               <button
                 type="button"
-                onClick={() => {
-                  setMode("school_user");
-                  setError("");
-                }}
-                className={`h-24 rounded-2xl px-8 transition ${mode === "school_user"
-                  ? "bg-blue-700 text-white shadow-lg shadow-blue-700/25"
-                  : "bg-white text-slate-950 hover:text-blue-800"
-                  }`}
+                data-custom-button="true"
+                data-auth-button="link"
+                className="bg-transparent text-left text-[#6F1A07] underline underline-offset-4 hover:text-[#8A220A] md:text-right"
               >
-                <span className="block text-[3.2rem] font-black leading-none">
-                  School User
-                </span>
-                <span className="mt-2 block text-[1.8rem] font-semibold leading-7">
-                  Students, teachers & school admins
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("platform_admin");
-                  setError("");
-                }}
-                className={`h-24 rounded-2xl px-8 transition ${mode === "platform_admin"
-                  ? "bg-blue-700 text-white shadow-lg shadow-blue-700/25"
-                  : "bg-white text-slate-950 hover:text-blue-800"
-                  }`}
-              >
-                <span className="block text-[3.2rem] font-black leading-none">
-                  Platform Admin
-                </span>
-                <span className="mt-2 block text-[1.8rem] font-semibold leading-7">
-                  Global platform administration
-                </span>
+                Forgotten password?
               </button>
             </div>
 
-            <div className="mt-7 rounded-2xl bg-blue-50 px-8 py-6 text-[2rem] font-bold leading-[2.7rem] text-blue-950 ring-1 ring-blue-100">
-              {subtitle}
-            </div>
-
-            <form onSubmit={handleSubmit} className="mt-8 space-y-6">
-              <label className="grid grid-cols-[330px_1fr] items-center gap-8">
-                <span className="text-[2rem] font-black text-slate-950">
-                  Email address
-                </span>
-
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Enter your email address e.g. john.doe@school.com"
-                  autoComplete="email"
-                  className={inputClass}
-                />
-              </label>
-
-              <label className="grid grid-cols-[330px_1fr] items-center gap-8">
-                <span className="text-[2rem] font-black text-slate-950">
-                  Password
-                </span>
-
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  className={inputClass}
-                />
-              </label>
-
-              {needsSchoolId ? (
-                <div>
-                  <label className="grid grid-cols-[330px_1fr] items-center gap-8">
-                    <span className="text-[2rem] font-black text-slate-950">
-                      School ID
-                    </span>
-
-                    <input
-                      type="number"
-                      value={schoolId}
-                      onChange={(e) => setSchoolId(e.target.value)}
-                      placeholder="Enter your school ID provided by your administrator"
-                      inputMode="numeric"
-                      className={inputClass}
-                    />
-                  </label>
-
-                  <p className="ml-[362px] mt-2 text-[1.45rem] font-bold leading-7 text-slate-700">
-                    You can find your school ID in the welcome email from your
-                    school, or ask your administrator.
-                  </p>
-                </div>
-              ) : null}
-
-              <div className="flex items-center justify-between gap-8 text-[1.8rem]">
-                <label className="flex items-center gap-4 font-bold text-slate-800">
-                  <input
-                    type="checkbox"
-                    className="h-8 w-8 rounded border-slate-400 text-blue-700 focus:ring-blue-600"
-                  />
-                  Remember me on this device
-                </label>
-
-                <button
-                  type="button"
-                  className="font-black text-blue-700 hover:text-blue-800"
-                >
-                  Forgot your password?
-                </button>
+            {error ? (
+              <div className="rounded-[22px] border-2 border-red-200 bg-red-50 px-6 py-4 text-xl font-black leading-tight text-red-800 xl:text-2xl">
+                {error}
               </div>
+            ) : null}
 
-              {error ? (
-                <div className="rounded-2xl border-2 border-red-200 bg-red-50 px-8 py-5 text-[1.6rem] font-bold leading-8 text-red-800">
-                  {error}
-                </div>
-              ) : null}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="h-24 w-full rounded-2xl bg-blue-700 px-12 text-[2.2rem] font-black tracking-tight text-white shadow-xl shadow-blue-700/25 transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {loading ? "Signing in..." : "Sign in to your account"}
-              </button>
-            </form>
-
-            <p className="mt-7 text-center text-[1.5rem] font-bold leading-7 text-slate-700">
-              Secure and encrypted access for authorised MHike School users.
-            </p>
-          </div>
+            <button
+              type="submit"
+              data-custom-button="true"
+              data-auth-button="submit"
+              disabled={loading}
+              className="flex h-20 w-full items-center justify-center rounded-[24px] bg-[#6F1A07] px-10 text-5xl font-black text-white shadow-xl transition hover:bg-[#8A220A] disabled:cursor-not-allowed disabled:opacity-70 xl:h-24 xl:text-6xl"
+            >
+              {loading ? "Signing in..." : "Sign in"}
+            </button>
+          </form>
         </section>
       </div>
-
-      <footer className="fixed bottom-0 left-0 right-0 z-50 border-t border-blue-800 bg-blue-700">
-        <div className="flex h-20 w-full items-center justify-between px-12">
-          <div className="text-xl font-semibold text-white">
-            © {new Date().getFullYear()} MHike School. All Rights Reserved.
-          </div>
-
-          <div className="flex items-center gap-12">
-            <a
-              href="/privacy-policy"
-              className="text-xl font-semibold text-white hover:underline"
-            >
-              Privacy Policy
-            </a>
-
-            <a
-              href="/contact-support"
-              className="text-xl font-semibold text-white hover:underline"
-            >
-              Contact Support
-            </a>
-          </div>
-        </div>
-      </footer>
     </main>
   );
 }

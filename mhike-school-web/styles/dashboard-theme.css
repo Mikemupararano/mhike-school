@@ -1,302 +1,68 @@
-/* ==========================================
-   MHike School Dashboard Theme
-   Professional SaaS light theme
-   ========================================== */
+/* ==========================================================
+   Dashboard Buttons
+   Only style normal dashboard buttons.
+   Login/auth pages use their own Tailwind styling.
+   ========================================================== */
 
-:root {
-    --mhike-bg: #eef2f7;
-    --mhike-card: #ffffff;
-
-    --mhike-text: #0f172a;
-    --mhike-muted: #334155;
-    --mhike-soft: #475569;
-
-    --mhike-border: #cbd5e1;
-    --mhike-border-strong: #94a3b8;
-
-    --mhike-sidebar: #0f2942;
-    --mhike-button: #2563eb;
-    --mhike-button-hover: #1d4ed8;
-
-    --mhike-shadow:
-        0 1px 2px rgba(15, 23, 42, 0.06),
-        0 10px 28px rgba(15, 23, 42, 0.1);
-}
-
-/* Base */
-
-.dashboard-theme,
-.dashboard-theme main,
-.dashboard-theme main>div {
-    min-height: 100vh;
-    background: var(--mhike-bg) !important;
-    color: var(--mhike-text) !important;
-    font-size: 18px;
-}
-
-/* Typography */
-
-.dashboard-theme main h1 {
-    color: var(--mhike-text) !important;
-    font-size: 3rem !important;
-    font-weight: 850 !important;
-    line-height: 1.1;
-}
-
-.dashboard-theme main h2,
-.dashboard-theme main h3 {
-    color: var(--mhike-text) !important;
-    font-size: 1.5rem !important;
-    font-weight: 800 !important;
-}
-
-.dashboard-theme main h4 {
-    color: var(--mhike-text) !important;
-    font-size: 1.2rem !important;
-    font-weight: 750 !important;
-}
-
-.dashboard-theme main p,
-.dashboard-theme main span,
-.dashboard-theme main label,
-.dashboard-theme main small {
-    color: var(--mhike-muted) !important;
-    opacity: 1 !important;
-}
-
-/* Cards */
-
-.dashboard-card,
-.metric-card {
-    background: var(--mhike-card) !important;
-    color: var(--mhike-text) !important;
-    border: 1px solid var(--mhike-border) !important;
-    box-shadow: var(--mhike-shadow) !important;
-    padding: 1.25rem !important;
-}
-
-/* Only convert obvious white dashboard cards, not sidebar items */
-
-.dashboard-theme main .bg-white,
-.dashboard-theme main [class*="bg-white"] {
-    background: var(--mhike-card) !important;
-    color: var(--mhike-text) !important;
-    border-color: var(--mhike-border) !important;
-}
-
-/* Small text correction */
-
-.dashboard-theme main .text-xs,
-.dashboard-theme main .text-\[10px\],
-.dashboard-theme main .text-\[11px\],
-.dashboard-theme main .text-\[12px\] {
-    font-size: 0.95rem !important;
-    line-height: 1.4rem !important;
-}
-
-.dashboard-theme main .text-sm,
-.dashboard-theme main .text-\[13px\] {
-    font-size: 1rem !important;
-    line-height: 1.5rem !important;
-}
-
-.dashboard-theme main .text-slate-300,
-.dashboard-theme main .text-slate-400,
-.dashboard-theme main .text-slate-500,
-.dashboard-theme main .text-slate-600,
-.dashboard-theme main .text-gray-300,
-.dashboard-theme main .text-gray-400,
-.dashboard-theme main .text-gray-500,
-.dashboard-theme main .text-gray-600 {
-    color: var(--mhike-muted) !important;
-}
-
-/* Remove faded appearance */
-
-.dashboard-theme main .opacity-40,
-.dashboard-theme main .opacity-50,
-.dashboard-theme main .opacity-60,
-.dashboard-theme main .opacity-70,
-.dashboard-theme main .opacity-75 {
-    opacity: 1 !important;
-}
-
-/* Metrics */
-
-.metric-title,
-.dashboard-card-title {
-    color: var(--mhike-muted) !important;
-    font-size: 0.95rem !important;
-    font-weight: 700 !important;
-    text-transform: none;
-    letter-spacing: 0;
-}
-
-.metric-value,
-.dashboard-card-value {
-    color: var(--mhike-text) !important;
-    font-size: 2.5rem !important;
-    font-weight: 850 !important;
-    line-height: 1;
-}
-
-.metric-description,
-.dashboard-card-subtitle {
-    color: var(--mhike-soft) !important;
-    font-size: 0.95rem !important;
-    font-weight: 600 !important;
-}
-
-/* Tables */
-
-.dashboard-theme main table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.dashboard-theme main thead {
-    background: #f1f5f9 !important;
-}
-
-.dashboard-theme main th {
-    color: var(--mhike-muted) !important;
-    font-size: 0.9rem !important;
-    font-weight: 700 !important;
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--mhike-border-strong);
-}
-
-.dashboard-theme main td {
-    color: var(--mhike-text) !important;
-    font-size: 0.95rem !important;
-    font-weight: 600 !important;
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--mhike-border);
-}
-
-.dashboard-theme main tbody tr:hover {
-    background: #f8fafc !important;
-}
-
-/* Inner rows */
-
-.dashboard-theme main [class*="bg-slate-50"],
-.dashboard-theme main [class*="bg-slate-100"],
-.dashboard-theme main [class*="bg-gray-50"],
-.dashboard-theme main [class*="bg-gray-100"] {
-    background: #f1f5f9 !important;
-    color: var(--mhike-text) !important;
-}
-
-/* Buttons in main only */
-
-.dashboard-theme main button {
+.dashboard-theme main button:not([data-custom-button="true"]) {
     background: var(--mhike-button) !important;
     color: #ffffff !important;
     font-weight: 700 !important;
     border: 1px solid var(--mhike-button) !important;
+    transition: background-color .2s ease;
 }
 
-.dashboard-theme main button:hover {
+.dashboard-theme main button:not([data-custom-button="true"]):hover {
     background: var(--mhike-button-hover) !important;
 }
 
-/* Badges */
+/* ==========================================================
+   Authentication Page Protection
+   Prevent dashboard theme overriding login page styles.
+   ========================================================== */
 
-.dashboard-theme main .bg-green-100,
-.dashboard-theme main [class*="bg-green-100"] {
-    background: #dcfce7 !important;
-    color: #166534 !important;
-    font-weight: 800 !important;
+.dashboard-theme main [data-auth-page="true"] {
+    font-size: initial !important;
 }
 
-.dashboard-theme main .bg-blue-100,
-.dashboard-theme main [class*="bg-blue-100"] {
-    background: #dbeafe !important;
-    color: #1e40af !important;
-    font-weight: 800 !important;
+.dashboard-theme main [data-auth-page="true"] h1 {
+    font-size: 82px !important;
+    line-height: 1 !important;
+    font-weight: 900 !important;
+    color: #111827 !important;
 }
 
-/* Sidebar and top navbar protection */
-
-.dashboard-theme header,
-.dashboard-theme aside,
-.dashboard-theme nav {
-    background: var(--mhike-sidebar) !important;
-    color: #ffffff !important;
-}
-
-.dashboard-theme header *,
-.dashboard-theme aside *,
-.dashboard-theme nav * {
-    color: #ffffff !important;
-    opacity: 1 !important;
-}
-
-/* Keep sidebar compact and readable */
-
-.dashboard-theme aside,
-.dashboard-theme nav {
-    font-size: 0.95rem !important;
-}
-
-.dashboard-theme aside a,
-.dashboard-theme nav a,
-.dashboard-theme aside button,
-.dashboard-theme nav button {
-    font-size: 0.9rem !important;
-    font-weight: 650 !important;
-}
-
-/* ==========================================
-   Sidebar width and readability
-   ========================================== */
-
-.dashboard-theme aside {
-    width: 260px !important;
-    min-width: 260px !important;
-    max-width: 260px !important;
-}
-
-.dashboard-theme aside nav {
-    width: 100% !important;
-}
-
-.dashboard-theme aside a,
-.dashboard-theme aside button {
-    width: calc(100% - 1rem) !important;
-    min-height: 48px !important;
-    padding: 0.75rem 1rem !important;
-    font-size: 1rem !important;
+.dashboard-theme main [data-auth-page="true"] input {
+    font-size: 42px !important;
     font-weight: 700 !important;
-    line-height: 1.35 !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 0.75rem !important;
 }
 
-.dashboard-theme aside svg {
-    width: 1.25rem !important;
-    height: 1.25rem !important;
-    flex-shrink: 0 !important;
+.dashboard-theme main [data-auth-page="true"] input::placeholder {
+    font-size: 36px !important;
+    font-weight: 700 !important;
 }
 
-.dashboard-theme aside h1,
-.dashboard-theme aside h2,
-.dashboard-theme aside h3,
-.dashboard-theme aside p,
-.dashboard-theme aside span {
-    white-space: nowrap !important;
+.dashboard-theme main [data-auth-page="true"] label,
+.dashboard-theme main [data-auth-page="true"] span,
+.dashboard-theme main [data-auth-page="true"] p {
+    font-size: 36px !important;
+    font-weight: 700 !important;
+    color: #111827 !important;
 }
 
-.dashboard-theme aside [class*="uppercase"],
-.dashboard-theme aside [class*="tracking"] {
-    font-size: 0.8rem !important;
-    font-weight: 800 !important;
-    letter-spacing: 0.12em !important;
+.dashboard-theme main [data-auth-page="true"] button[data-custom-button="true"] {
+    background: unset !important;
+    color: unset !important;
+    border: none !important;
+    font-size: unset !important;
+    font-weight: unset !important;
+    line-height: unset !important;
+    letter-spacing: unset !important;
+    padding: unset !important;
+    min-height: unset !important;
+    transform: none !important;
 }
 
-/* Keep main area aligned after widening sidebar */
-.dashboard-theme main {
-    width: calc(100vw - 260px) !important;
+.dashboard-theme main [data-auth-page="true"] button[data-custom-button="true"]:hover {
+    background: unset !important;
 }
