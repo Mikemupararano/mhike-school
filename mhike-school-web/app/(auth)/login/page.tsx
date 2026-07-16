@@ -39,11 +39,23 @@ function getErrorMessage(err: unknown): string {
       error?: unknown;
     };
 
-    if (typeof maybeError.detail === "string") return maybeError.detail;
-    if (typeof maybeError.message === "string") return maybeError.message;
-    if (typeof maybeError.error === "string") return maybeError.error;
+    if (typeof maybeError.detail === "string") {
+      return maybeError.detail;
+    }
 
-    return JSON.stringify(maybeError, null, 2);
+    if (typeof maybeError.message === "string") {
+      return maybeError.message;
+    }
+
+    if (typeof maybeError.error === "string") {
+      return maybeError.error;
+    }
+
+    try {
+      return JSON.stringify(maybeError, null, 2);
+    } catch {
+      return "Login failed.";
+    }
   }
 
   return "Login failed.";
@@ -59,15 +71,23 @@ export default function LoginPage() {
 
   const needsSchoolId = mode === "school_user";
 
+  function changeMode(nextMode: LoginMode) {
+    setMode(nextMode);
+    setError("");
+
+    if (nextMode === "platform_admin") {
+      setSchoolId("");
+    }
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
 
     const trimmedEmail = email.trim().toLowerCase();
-    const trimmedPassword = password.trim();
     const trimmedSchoolId = schoolId.trim();
 
-    if (!trimmedEmail || !trimmedPassword) {
+    if (!trimmedEmail || password.length === 0) {
       setError("Please enter your email and password.");
       return;
     }
@@ -79,8 +99,11 @@ export default function LoginPage() {
 
     const parsedSchoolId = Number(trimmedSchoolId);
 
-    if (needsSchoolId && Number.isNaN(parsedSchoolId)) {
-      setError("School ID must be a valid number.");
+    if (
+      needsSchoolId &&
+      (!Number.isInteger(parsedSchoolId) || parsedSchoolId <= 0)
+    ) {
+      setError("School ID must be a valid positive whole number.");
       return;
     }
 
@@ -90,19 +113,23 @@ export default function LoginPage() {
       const payload = needsSchoolId
         ? {
           email: trimmedEmail,
-          password: trimmedPassword,
+          password,
           school_id: parsedSchoolId,
         }
         : {
           email: trimmedEmail,
-          password: trimmedPassword,
+          password,
         };
 
-      const res = await apiPost<LoginResponse>("/auth/login", payload);
+      const response = await apiPost<LoginResponse>("/auth/login", payload);
 
-      saveToken(res.access_token);
+      if (!response.access_token) {
+        throw new Error("The server did not return an access token.");
+      }
 
-      const user = await getCurrentUser(res.access_token);
+      saveToken(response.access_token);
+
+      const user = await getCurrentUser(response.access_token);
 
       window.location.replace(resolveRedirectPath(user));
     } catch (err) {
@@ -114,34 +141,39 @@ export default function LoginPage() {
   }
 
   const inputClass =
-    "h-14 w-full rounded-2xl border-2 border-slate-300 bg-white px-6 text-xl font-bold text-slate-950 outline-none placeholder:text-xl placeholder:font-bold placeholder:text-slate-500 focus:border-[#6F1A07] focus:ring-4 focus:ring-[#6F1A07]/20 xl:h-16 xl:text-2xl xl:placeholder:text-2xl";
+    "h-14 w-full rounded-2xl border border-[#D7E0EA] bg-white px-6 text-xl font-bold text-[#0F172A] outline-none transition placeholder:text-xl placeholder:font-semibold placeholder:text-[#64748B] hover:border-[#94A3B8] focus:border-[#2563EB] focus:ring-4 focus:ring-[#2563EB]/15 disabled:cursor-not-allowed disabled:bg-slate-100 xl:h-16 xl:text-2xl xl:placeholder:text-2xl";
+
+  const activeTabClass =
+    "border-[#163A5F] bg-[#163A5F] text-white shadow-lg shadow-[#163A5F]/20";
+
+  const inactiveTabClass =
+    "border-[#D7E0EA] bg-white text-[#163A5F] hover:border-[#2563EB] hover:bg-[#F4F7FB]";
 
   return (
     <main
       data-auth-page="true"
-      className="min-h-screen bg-[#F4FAFF] text-slate-950"
+      className="overflow-x-hidden bg-[#F4F7FB] text-[#0F172A]"
     >
-      <div className="flex min-h-screen flex-col items-center justify-start px-6 py-4 xl:px-12">
-        <h1 className="mb-5 text-center text-4xl font-black leading-none tracking-tight text-[#111827] md:text-5xl xl:text-6xl">
+      <div className="flex h-[calc(100dvh-5rem)] flex-col items-center justify-center overflow-y-auto px-4 py-3 sm:h-[calc(100dvh-6rem)] sm:px-6 xl:px-12">
+        <h1 className="mb-3 text-center text-4xl font-black leading-none tracking-tight text-[#071126] md:text-5xl xl:text-[3.4rem]">
           Welcome to MHike School
         </h1>
 
-        <section className="w-[90vw] max-w-[1450px] rounded-[36px] bg-white px-8 py-7 shadow-2xl ring-1 ring-slate-200 md:px-16 md:py-8 xl:px-24 xl:py-9">
-          <div className="mb-6 grid grid-cols-1 gap-5 rounded-[28px] bg-[#EAF5FF] p-4 md:grid-cols-2 xl:gap-6">
+        <section className="w-full max-w-[1280px] rounded-[32px] border border-[#DCE4EC] bg-white px-6 py-5 shadow-[0_20px_50px_rgba(15,23,42,0.12)] sm:w-[90vw] md:px-14 md:py-6 xl:px-20 xl:py-7">
+          <div className="mb-5 grid grid-cols-1 gap-4 rounded-[26px] border border-[#DCE4EC] bg-[#F4F7FB] p-4 md:grid-cols-2 xl:gap-6">
             <button
               type="button"
               data-custom-button="true"
               data-auth-button="tab"
-              onClick={() => {
-                setMode("school_user");
-                setError("");
-              }}
-              className={`min-h-[92px] rounded-[22px] px-6 py-4 text-center text-3xl font-black leading-none transition xl:min-h-[105px] xl:text-4xl ${mode === "school_user"
-                ? "bg-[#6F1A07] text-white shadow-xl"
-                : "bg-white text-[#6F1A07] hover:bg-[#F9FCFF]"
+              aria-pressed={mode === "school_user"}
+              onClick={() => changeMode("school_user")}
+              className={`min-h-[92px] rounded-[20px] border px-6 py-4 text-center text-3xl font-black leading-none transition duration-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/30 xl:min-h-[100px] xl:text-4xl ${mode === "school_user"
+                ? activeTabClass
+                : inactiveTabClass
                 }`}
             >
               School User
+
               <span className="mt-2 block text-xl font-bold leading-tight xl:text-2xl">
                 Students • Teachers • Admins
               </span>
@@ -151,73 +183,117 @@ export default function LoginPage() {
               type="button"
               data-custom-button="true"
               data-auth-button="tab"
-              onClick={() => {
-                setMode("platform_admin");
-                setError("");
-              }}
-              className={`min-h-[92px] rounded-[22px] px-6 py-4 text-center text-3xl font-black leading-none transition xl:min-h-[105px] xl:text-4xl ${mode === "platform_admin"
-                ? "bg-[#6F1A07] text-white shadow-xl"
-                : "bg-white text-[#6F1A07] hover:bg-[#F9FCFF]"
+              aria-pressed={mode === "platform_admin"}
+              onClick={() => changeMode("platform_admin")}
+              className={`min-h-[92px] rounded-[20px] border px-6 py-4 text-center text-3xl font-black leading-none transition duration-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/30 xl:min-h-[100px] xl:text-4xl ${mode === "platform_admin"
+                ? activeTabClass
+                : inactiveTabClass
                 }`}
             >
               Platform Admin
+
               <span className="mt-2 block text-xl font-bold leading-tight xl:text-2xl">
                 Global administration
               </span>
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4 xl:space-y-5">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email address"
-              autoComplete="email"
-              className={inputClass}
-            />
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <div>
+              <label htmlFor="email" className="sr-only">
+                Email address
+              </label>
 
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-              autoComplete="current-password"
-              className={inputClass}
-            />
-
-            {needsSchoolId ? (
               <input
-                type="number"
-                value={schoolId}
-                onChange={(e) => setSchoolId(e.target.value)}
-                placeholder="School ID"
-                inputMode="numeric"
+                id="email"
+                name="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email address"
+                autoComplete="email"
+                disabled={loading}
+                required
                 className={inputClass}
               />
+            </div>
+
+            <div>
+              <label htmlFor="password" className="sr-only">
+                Password
+              </label>
+
+              <input
+                id="password"
+                name="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                autoComplete="current-password"
+                disabled={loading}
+                required
+                className={inputClass}
+              />
+            </div>
+
+            {needsSchoolId ? (
+              <div>
+                <label htmlFor="school-id" className="sr-only">
+                  School ID
+                </label>
+
+                <input
+                  id="school-id"
+                  name="schoolId"
+                  type="number"
+                  value={schoolId}
+                  onChange={(e) => setSchoolId(e.target.value)}
+                  placeholder="School ID"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  min={1}
+                  step={1}
+                  disabled={loading}
+                  required
+                  className={inputClass}
+                />
+              </div>
             ) : null}
 
-            <div className="flex flex-col gap-3 text-xl font-black text-[#111827] md:flex-row md:items-center md:justify-between xl:text-2xl">
-              <label className="flex items-center gap-4">
+            <div className="flex flex-col gap-3 text-xl font-black text-[#0F172A] md:flex-row md:items-center md:justify-between xl:text-2xl">
+              <label
+                htmlFor="remember-me"
+                className="flex cursor-pointer items-center gap-4"
+              >
                 <input
+                  id="remember-me"
+                  name="rememberMe"
                   type="checkbox"
-                  className="h-7 w-7 rounded border-slate-400 text-[#6F1A07] focus:ring-[#6F1A07] xl:h-8 xl:w-8"
+                  disabled={loading}
+                  className="h-7 w-7 cursor-pointer rounded-md border-[#94A3B8] accent-[#2563EB] focus:ring-4 focus:ring-[#2563EB]/20 disabled:cursor-not-allowed xl:h-8 xl:w-8"
                 />
-                Remember me
+
+                <span>Remember me</span>
               </label>
 
               <button
                 type="button"
                 data-custom-button="true"
                 data-auth-button="link"
-                className="bg-transparent text-left text-[#6F1A07] underline underline-offset-4 hover:text-[#8A220A] md:text-right"
+                disabled={loading}
+                className="rounded-md bg-transparent text-left font-black text-[#175CD3] underline decoration-2 underline-offset-4 transition hover:text-[#0B4AA2] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/20 disabled:cursor-not-allowed disabled:opacity-60 md:text-right"
               >
                 Forgotten password?
               </button>
             </div>
 
             {error ? (
-              <div className="rounded-[22px] border-2 border-red-200 bg-red-50 px-6 py-4 text-xl font-black leading-tight text-red-800 xl:text-2xl">
+              <div
+                role="alert"
+                aria-live="polite"
+                className="rounded-[18px] border border-red-300 bg-red-50 px-6 py-4 text-xl font-bold leading-tight text-red-800 xl:text-2xl"
+              >
                 {error}
               </div>
             ) : null}
@@ -227,7 +303,7 @@ export default function LoginPage() {
               data-custom-button="true"
               data-auth-button="submit"
               disabled={loading}
-              className="flex h-20 w-full items-center justify-center rounded-[24px] bg-[#6F1A07] px-10 text-5xl font-black text-white shadow-xl transition hover:bg-[#8A220A] disabled:cursor-not-allowed disabled:opacity-70 xl:h-24 xl:text-6xl"
+              className="flex h-20 w-full items-center justify-center rounded-[22px] bg-[#163A5F] px-10 text-4xl font-black text-white shadow-lg shadow-[#163A5F]/20 transition duration-200 hover:bg-[#1D4D78] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/35 disabled:cursor-not-allowed disabled:opacity-70 sm:text-5xl xl:h-[5.5rem] xl:text-[3.5rem]"
             >
               {loading ? "Signing in..." : "Sign in"}
             </button>
