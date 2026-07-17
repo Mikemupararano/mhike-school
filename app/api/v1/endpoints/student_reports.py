@@ -9,18 +9,22 @@ from app.models.user_role import UserRole
 from app.repositories.parent_student import ParentStudentRepository
 from app.repositories.student_reports import (
     REPORT_STATUS_DRAFT,
+    REPORT_STATUS_SUBMITTED,
+    approve_student_report,
     create_student_report,
     delete_student_report,
     get_student_report,
     list_reports_for_student,
     list_student_reports,
     publish_reports_for_session,
+    return_student_report,
     submit_student_report,
     update_student_report,
 )
 from app.schemas.student_report import (
     StudentReportCreate,
     StudentReportRead,
+    StudentReportReviewDecision,
     StudentReportUpdate,
 )
 
@@ -72,6 +76,16 @@ def _is_school_staff(user: User) -> bool:
     )
 
 
+def _can_review_reports(user: User) -> bool:
+    return any(
+        _user_has_role(user, role)
+        for role in (
+            UserRole.SCHOOL_ADMIN,
+            UserRole.PLATFORM_ADMIN,
+        )
+    )
+
+
 def _can_publish_reports(user: User) -> bool:
     return any(
         _user_has_role(user, role)
@@ -87,6 +101,14 @@ def _require_school_staff(user: User) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school staff can access student reports.",
+        )
+
+
+def _require_report_reviewer(user: User) -> None:
+    if not _can_review_reports(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school admins can review student reports.",
         )
 
 
@@ -268,7 +290,7 @@ async def submit_report_endpoint(
 
     if not report.report_text or not report.report_text.strip():
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The report text must be completed before submission.",
         )
 
@@ -277,6 +299,96 @@ async def submit_report_endpoint(
             db,
             report=report,
             submitted_by_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/{report_id}/approve",
+    response_model=StudentReportRead,
+)
+async def approve_report_endpoint(
+    report_id: int,
+    payload: StudentReportReviewDecision,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StudentReportRead:
+    school_id = _require_school_id(current_user)
+    _require_report_reviewer(current_user)
+
+    report = await get_student_report(
+        db,
+        report_id=report_id,
+        school_id=school_id,
+    )
+
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student report not found.",
+        )
+
+    if report.status != REPORT_STATUS_SUBMITTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only submitted reports can be approved.",
+        )
+
+    try:
+        return await approve_student_report(
+            db,
+            report=report,
+            reviewed_by_id=current_user.id,
+            review_comments=payload.review_comments,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/{report_id}/return",
+    response_model=StudentReportRead,
+)
+async def return_report_endpoint(
+    report_id: int,
+    payload: StudentReportReviewDecision,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StudentReportRead:
+    school_id = _require_school_id(current_user)
+    _require_report_reviewer(current_user)
+
+    report = await get_student_report(
+        db,
+        report_id=report_id,
+        school_id=school_id,
+    )
+
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student report not found.",
+        )
+
+    if report.status != REPORT_STATUS_SUBMITTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only submitted reports can be returned for correction.",
+        )
+
+    try:
+        return await return_student_report(
+            db,
+            report=report,
+            reviewed_by_id=current_user.id,
+            review_comments=payload.review_comments,
         )
     except ValueError as exc:
         raise HTTPException(

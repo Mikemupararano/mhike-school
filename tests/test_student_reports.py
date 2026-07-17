@@ -668,3 +668,379 @@ async def test_parent_can_see_published_report(
     assert data[0]["title"] == "Published Parent Visible Report"
     assert data[0]["status"] == "published"
     assert data[0]["published"] is True
+
+
+@pytest.mark.asyncio
+async def test_school_admin_can_approve_submitted_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Report Awaiting Approval",
+        report_text="This report is ready for approval.",
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/approve",
+        json={
+            "review_comments": "Approved for publication.",
+        },
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == report.id
+    assert data["status"] == "approved"
+    assert data["reviewed_at"] is not None
+    assert data["reviewed_by_id"] == school_admin_user.id
+    assert data["review_comments"] == "Approved for publication."
+
+    assert data["published"] is False
+    assert data["published_at"] is None
+    assert data["published_by_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_school_admin_can_approve_without_review_comments(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Approval Without Comments",
+        report_text="This report can be approved without comments.",
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/approve",
+        json={},
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["status"] == "approved"
+    assert data["reviewed_at"] is not None
+    assert data["reviewed_by_id"] == school_admin_user.id
+    assert data["review_comments"] is None
+    assert data["published"] is False
+
+
+@pytest.mark.asyncio
+async def test_school_admin_can_return_submitted_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Report Requiring Correction",
+        report_text="This report requires a small correction.",
+        grade="B",
+        academic_year="2026/27",
+        term="Summer",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/return",
+        json={
+            "review_comments": (
+                "Please correct the final sentence before resubmitting."
+            ),
+        },
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == report.id
+    assert data["status"] == "draft"
+
+    assert data["submitted_at"] is None
+    assert data["submitted_by_id"] is None
+
+    assert data["reviewed_at"] is not None
+    assert data["reviewed_by_id"] == school_admin_user.id
+    assert data["review_comments"] == (
+        "Please correct the final sentence before resubmitting."
+    )
+
+    assert data["published"] is False
+    assert data["published_at"] is None
+    assert data["published_by_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_returning_report_requires_review_comments(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Return Without Comments",
+        report_text="This report should not be returned without comments.",
+        grade="B",
+        academic_year="2026/27",
+        term="Summer",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/return",
+        json={
+            "review_comments": "",
+        },
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 409
+
+    await db_session.refresh(report)
+
+    assert report.status == "submitted"
+    assert report.reviewed_at is None
+    assert report.reviewed_by_id is None
+    assert report.review_comments is None
+    assert report.published is False
+
+
+@pytest.mark.asyncio
+async def test_teacher_cannot_approve_submitted_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Teacher Approval Attempt",
+        report_text="Teachers must not approve reports.",
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/approve",
+        json={
+            "review_comments": "Attempted teacher approval.",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 403
+
+    await db_session.refresh(report)
+
+    assert report.status == "submitted"
+    assert report.reviewed_at is None
+    assert report.reviewed_by_id is None
+    assert report.review_comments is None
+    assert report.published is False
+
+
+@pytest.mark.asyncio
+async def test_teacher_cannot_return_submitted_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Teacher Return Attempt",
+        report_text="Teachers must not return submitted reports.",
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/return",
+        json={
+            "review_comments": "Attempted teacher return.",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 403
+
+    await db_session.refresh(report)
+
+    assert report.status == "submitted"
+    assert report.reviewed_at is None
+    assert report.reviewed_by_id is None
+    assert report.review_comments is None
+    assert report.published is False
+
+
+@pytest.mark.asyncio
+async def test_draft_report_cannot_be_approved(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Draft Approval Attempt",
+        report_text="A draft report cannot be approved.",
+        grade="B",
+        academic_year="2026/27",
+        term="Summer",
+        status="draft",
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/approve",
+        json={},
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 409
+
+    await db_session.refresh(report)
+
+    assert report.status == "draft"
+    assert report.reviewed_at is None
+    assert report.reviewed_by_id is None
+    assert report.review_comments is None
+    assert report.published is False
+
+
+@pytest.mark.asyncio
+async def test_approved_report_cannot_be_returned(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Approved Return Attempt",
+        report_text="An approved report cannot use the submitted return route.",
+        grade="A",
+        academic_year="2026/27",
+        term="Summer",
+        status="approved",
+        submitted_by_id=teacher_user.id,
+        reviewed_by_id=school_admin_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.post(
+        f"/api/v1/student-reports/{report.id}/return",
+        json={
+            "review_comments": "Attempting to return an approved report.",
+        },
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 409
+
+    await db_session.refresh(report)
+
+    assert report.status == "approved"
+    assert report.reviewed_by_id == school_admin_user.id
+    assert report.published is False

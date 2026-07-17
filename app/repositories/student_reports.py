@@ -70,11 +70,14 @@ async def create_student_report(
         academic_year=payload.academic_year,
         term=payload.term,
         status=REPORT_STATUS_DRAFT,
+        submitted_at=None,
+        submitted_by_id=None,
+        reviewed_at=None,
+        reviewed_by_id=None,
+        review_comments=None,
         published=False,
         published_at=None,
         published_by_id=None,
-        reviewed_at=None,
-        reviewed_by_id=None,
     )
 
     db.add(report)
@@ -135,7 +138,9 @@ async def list_student_reports(
             StudentReport.status == status,
         )
 
-    statement = statement.order_by(StudentReport.created_at.desc())
+    statement = statement.order_by(
+        StudentReport.created_at.desc(),
+    )
     statement = statement.offset(offset).limit(limit)
 
     result = await db.execute(statement)
@@ -184,48 +189,6 @@ def _get_user_display_name(user: User | None) -> str | None:
         return email.strip()
 
     return None
-
-
-def _apply_status_change(
-    report: StudentReport,
-    *,
-    status: str,
-    current_user: User | None,
-) -> None:
-    now = datetime.now(timezone.utc)
-
-    report.status = status
-
-    if status == REPORT_STATUS_DRAFT:
-        report.reviewed_at = None
-        report.reviewed_by_id = None
-        report.published = False
-        report.published_at = None
-        report.published_by_id = None
-
-    elif status == REPORT_STATUS_SUBMITTED:
-        report.reviewed_at = None
-        report.reviewed_by_id = None
-        report.published = False
-        report.published_at = None
-        report.published_by_id = None
-
-    elif status == REPORT_STATUS_APPROVED:
-        report.reviewed_at = now
-
-        if current_user is not None:
-            report.reviewed_by_id = current_user.id
-
-        report.published = False
-        report.published_at = None
-        report.published_by_id = None
-
-    elif status == REPORT_STATUS_PUBLISHED:
-        report.published = True
-        report.published_at = now
-
-        if current_user is not None:
-            report.published_by_id = current_user.id
 
 
 async def _get_teacher_for_report(
@@ -325,6 +288,71 @@ async def submit_student_report(
     return report
 
 
+async def approve_student_report(
+    db: AsyncSession,
+    *,
+    report: StudentReport,
+    reviewed_by_id: int,
+    review_comments: str | None = None,
+) -> StudentReport:
+    if report.status != REPORT_STATUS_SUBMITTED:
+        raise ValueError("Only submitted reports can be approved.")
+
+    now = datetime.now(timezone.utc)
+    cleaned_comments = (
+        review_comments.strip() if review_comments and review_comments.strip() else None
+    )
+
+    report.status = REPORT_STATUS_APPROVED
+    report.reviewed_at = now
+    report.reviewed_by_id = reviewed_by_id
+    report.review_comments = cleaned_comments
+
+    report.published = False
+    report.published_at = None
+    report.published_by_id = None
+
+    await db.commit()
+    await db.refresh(report)
+
+    return report
+
+
+async def return_student_report(
+    db: AsyncSession,
+    *,
+    report: StudentReport,
+    reviewed_by_id: int,
+    review_comments: str | None,
+) -> StudentReport:
+    if report.status != REPORT_STATUS_SUBMITTED:
+        raise ValueError("Only submitted reports can be returned for correction.")
+
+    if not review_comments or not review_comments.strip():
+        raise ValueError(
+            "Review comments are required when returning " "a report for correction."
+        )
+
+    now = datetime.now(timezone.utc)
+
+    report.status = REPORT_STATUS_DRAFT
+    report.reviewed_at = now
+    report.reviewed_by_id = reviewed_by_id
+    report.review_comments = review_comments.strip()
+
+    report.submitted_at = None
+    report.submitted_by_id = None
+
+    report.published = False
+    report.published_at = None
+    report.published_by_id = None
+
+    await db.commit()
+    await db.refresh(report)
+
+    return report
+
+
 async def publish_reports_for_session(
     db: AsyncSession,
     *,
@@ -353,6 +381,8 @@ async def publish_reports_for_session(
     await db.commit()
 
     for report in reports:
+        await db.refresh(report)
+
         await _store_report_memory_for_published_report(
             db,
             report=report,
