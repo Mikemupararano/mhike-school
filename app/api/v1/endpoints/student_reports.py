@@ -8,16 +8,14 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.repositories.parent_student import ParentStudentRepository
 from app.repositories.student_reports import (
-    REPORT_STATUS_APPROVED,
     REPORT_STATUS_DRAFT,
-    REPORT_STATUS_PUBLISHED,
-    REPORT_STATUS_SUBMITTED,
     create_student_report,
     delete_student_report,
     get_student_report,
     list_reports_for_student,
     list_student_reports,
     publish_reports_for_session,
+    submit_student_report,
     update_student_report,
 )
 from app.schemas.student_report import (
@@ -92,14 +90,6 @@ def _require_school_staff(user: User) -> None:
         )
 
 
-def _require_report_reviewer(user: User) -> None:
-    if not _can_publish_reports(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school admins can review student reports.",
-        )
-
-
 def _require_report_publisher(user: User) -> None:
     if not _can_publish_reports(user):
         raise HTTPException(
@@ -108,35 +98,23 @@ def _require_report_publisher(user: User) -> None:
         )
 
 
-def _validate_requested_status_change(
+def _require_teacher_report_ownership(
     *,
-    payload: StudentReportUpdate,
-    current_user: User,
+    user: User,
+    report_teacher_id: int | None,
+    action: str,
 ) -> None:
-    requested_status = getattr(payload, "status", None)
-    publishing_requested = getattr(payload, "published", None)
-
-    if requested_status is None and publishing_requested is None:
-        return
-
-    if publishing_requested is True:
-        _require_report_publisher(current_user)
-        return
-
-    if requested_status in {
-        REPORT_STATUS_APPROVED,
-        REPORT_STATUS_PUBLISHED,
-    }:
-        _require_report_reviewer(current_user)
-
-    if requested_status == REPORT_STATUS_DRAFT:
-        _require_school_staff(current_user)
-
-    if requested_status == REPORT_STATUS_SUBMITTED:
-        _require_school_staff(current_user)
+    if _user_has_role(user, UserRole.TEACHER) and report_teacher_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Teachers can only {action} their own reports.",
+        )
 
 
-@router.get("/", response_model=list[StudentReportRead])
+@router.get(
+    "/",
+    response_model=list[StudentReportRead],
+)
 async def list_reports_endpoint(
     teacher_id: int | None = None,
     report_session_id: int | None = None,
@@ -179,14 +157,15 @@ async def create_report_endpoint(
     )
 
 
-@router.post("/publish-session/{report_session_id}")
+@router.post(
+    "/publish-session/{report_session_id}",
+)
 async def publish_report_session_endpoint(
     report_session_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, int]:
     school_id = _require_school_id(current_user)
-    _require_school_staff(current_user)
     _require_report_publisher(current_user)
 
     published_count = await publish_reports_for_session(
@@ -211,6 +190,7 @@ async def list_student_reports_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> list[StudentReportRead]:
     school_id = _require_school_id(current_user)
+    _require_school_staff(current_user)
 
     return await list_reports_for_student(
         db,
@@ -250,6 +230,61 @@ async def list_parent_reports_endpoint(
     return reports
 
 
+@router.post(
+    "/{report_id}/submit",
+    response_model=StudentReportRead,
+)
+async def submit_report_endpoint(
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StudentReportRead:
+    school_id = _require_school_id(current_user)
+    _require_school_staff(current_user)
+
+    report = await get_student_report(
+        db,
+        report_id=report_id,
+        school_id=school_id,
+    )
+
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student report not found.",
+        )
+
+    _require_teacher_report_ownership(
+        user=current_user,
+        report_teacher_id=report.teacher_id,
+        action="submit",
+    )
+
+    if report.status != REPORT_STATUS_DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only draft reports can be submitted for review.",
+        )
+
+    if not report.report_text or not report.report_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The report text must be completed before submission.",
+        )
+
+    try:
+        return await submit_student_report(
+            db,
+            report=report,
+            submitted_by_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
 @router.get(
     "/{report_id}",
     response_model=StudentReportRead,
@@ -260,6 +295,7 @@ async def get_report_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> StudentReportRead:
     school_id = _require_school_id(current_user)
+    _require_school_staff(current_user)
 
     report = await get_student_report(
         db,
@@ -288,10 +324,6 @@ async def update_report_endpoint(
 ) -> StudentReportRead:
     school_id = _require_school_id(current_user)
     _require_school_staff(current_user)
-    _validate_requested_status_change(
-        payload=payload,
-        current_user=current_user,
-    )
 
     report = await get_student_report(
         db,
@@ -303,6 +335,18 @@ async def update_report_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student report not found.",
+        )
+
+    _require_teacher_report_ownership(
+        user=current_user,
+        report_teacher_id=report.teacher_id,
+        action="edit",
+    )
+
+    if report.status != REPORT_STATUS_DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only draft reports can be edited.",
         )
 
     return await update_student_report(
@@ -335,6 +379,18 @@ async def delete_report_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student report not found.",
+        )
+
+    _require_teacher_report_ownership(
+        user=current_user,
+        report_teacher_id=report.teacher_id,
+        action="delete",
+    )
+
+    if report.status != REPORT_STATUS_DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only draft reports can be deleted.",
         )
 
     await delete_student_report(

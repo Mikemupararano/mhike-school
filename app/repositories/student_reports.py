@@ -287,48 +287,40 @@ async def update_student_report(
 ) -> StudentReport:
     update_data = payload.model_dump(exclude_unset=True)
 
-    publishing_requested = update_data.pop(
-        "published",
-        None,
-    )
-
-    requested_status = update_data.pop(
-        "status",
-        None,
-    )
-
-    if publishing_requested is True:
-        _apply_status_change(
-            report,
-            status=REPORT_STATUS_PUBLISHED,
-            current_user=current_user,
-        )
-
-    elif publishing_requested is False:
-        _apply_status_change(
-            report,
-            status=REPORT_STATUS_DRAFT,
-            current_user=current_user,
-        )
-
-    if requested_status is not None:
-        _apply_status_change(
-            report,
-            status=requested_status,
-            current_user=current_user,
-        )
-
     for key, value in update_data.items():
         setattr(report, key, value)
 
     await db.commit()
     await db.refresh(report)
 
-    if report.published:
-        await _store_report_memory_for_published_report(
-            db,
-            report=report,
-        )
+    return report
+
+
+async def submit_student_report(
+    db: AsyncSession,
+    *,
+    report: StudentReport,
+    submitted_by_id: int,
+) -> StudentReport:
+    if report.status != REPORT_STATUS_DRAFT:
+        raise ValueError("Only draft reports can be submitted for review.")
+
+    now = datetime.now(timezone.utc)
+
+    report.status = REPORT_STATUS_SUBMITTED
+    report.submitted_at = now
+    report.submitted_by_id = submitted_by_id
+
+    report.reviewed_at = None
+    report.reviewed_by_id = None
+    report.review_comments = None
+
+    report.published = False
+    report.published_at = None
+    report.published_by_id = None
+
+    await db.commit()
+    await db.refresh(report)
 
     return report
 

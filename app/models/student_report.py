@@ -48,13 +48,35 @@ class StudentReport(Base):
         nullable=True,
     )
 
-    title: Mapped[str] = mapped_column(String(200), nullable=False)
-    report_text: Mapped[str] = mapped_column(Text, nullable=False)
-    grade: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    title: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
 
-    work_covered: Mapped[str | None] = mapped_column(Text, nullable=True)
-    teacher_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    generated_report_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    report_text: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    grade: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    work_covered: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    teacher_notes: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    generated_report_text: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
 
     academic_year: Mapped[str] = mapped_column(
         String(20),
@@ -62,7 +84,10 @@ class StudentReport(Base):
         nullable=False,
     )
 
-    term: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    term: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
 
     status: Mapped[str] = mapped_column(
         String(50),
@@ -70,6 +95,33 @@ class StudentReport(Base):
         server_default="draft",
         nullable=False,
         index=True,
+    )
+
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    submitted_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    reviewed_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
+    review_comments: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
     )
 
     published: Mapped[bool] = mapped_column(
@@ -91,17 +143,6 @@ class StudentReport(Base):
         nullable=True,
     )
 
-    reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
-    reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
-        index=True,
-        nullable=True,
-    )
-
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -115,11 +156,36 @@ class StudentReport(Base):
         nullable=False,
     )
 
-    school = relationship("School", lazy="selectin")
-    student = relationship("User", foreign_keys=[student_id])
-    teacher = relationship("User", foreign_keys=[teacher_id])
-    published_by = relationship("User", foreign_keys=[published_by_id])
-    reviewed_by = relationship("User", foreign_keys=[reviewed_by_id])
+    school = relationship(
+        "School",
+        lazy="selectin",
+    )
+
+    student = relationship(
+        "User",
+        foreign_keys=[student_id],
+    )
+
+    teacher = relationship(
+        "User",
+        foreign_keys=[teacher_id],
+    )
+
+    submitted_by = relationship(
+        "User",
+        foreign_keys=[submitted_by_id],
+    )
+
+    reviewed_by = relationship(
+        "User",
+        foreign_keys=[reviewed_by_id],
+    )
+
+    published_by = relationship(
+        "User",
+        foreign_keys=[published_by_id],
+    )
+
     report_session = relationship(
         "ReportSession",
         foreign_keys=[report_session_id],
