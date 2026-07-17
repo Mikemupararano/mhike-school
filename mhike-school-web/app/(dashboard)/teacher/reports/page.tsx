@@ -406,10 +406,10 @@ export default function TeacherReportsPage() {
 
             const notesForGeneration = [
                 form.teacher_notes.trim()
-                    ? `Use these teacher notes as the main evidence for the pupil report. Prioritise these details when writing the student comment: ${form.teacher_notes.trim()}`
+                    ? `Teacher notes:\n${form.teacher_notes.trim()}`
                     : "",
                 form.work_covered.trim()
-                    ? `Use this only as brief curriculum context. Do not make it the main focus of the student comment: ${form.work_covered.trim()}`
+                    ? `Work covered:\n${form.work_covered.trim()}`
                     : "",
             ]
                 .filter(Boolean)
@@ -658,7 +658,7 @@ export default function TeacherReportsPage() {
                 <button
                     type="button"
                     onClick={() => router.back()}
-                    className="w-fit rounded-xl border px-4 py-2 text-base font-bold text-slate-700 hover:bg-slate-50"
+                    className="w-fit rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-bold text-slate-700 hover:bg-slate-50"
                 >
                     ← Back
                 </button>
@@ -880,87 +880,158 @@ export default function TeacherReportsPage() {
 
                     {(!activeSession ||
                         activeSession.include_student_comment) && (
-                            <div className="grid gap-4">
-                                <label className="grid gap-2">
-                                    <span className="text-base font-semibold text-slate-700">
-                                        Teacher Notes
-                                    </span>
+                            <div className="grid gap-5">
+                                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                    <div className="flex items-start gap-3">
+                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-base font-bold text-white">
+                                            1
+                                        </span>
 
-                                    <textarea
-                                        value={form.teacher_notes}
-                                        onChange={(event) =>
-                                            updateFormField(
-                                                "teacher_notes",
-                                                event.target.value,
-                                            )
-                                        }
-                                        className="min-h-28 rounded-xl border px-3 py-2 text-base"
-                                        placeholder="Write brief teacher notes here, then click Generate From Notes."
-                                    />
-                                </label>
+                                        <div>
+                                            <h3 className="text-xl font-bold text-slate-950">
+                                                Add Teacher Notes
+                                            </h3>
 
-                                <div className="flex flex-wrap gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() =>
-                                            void handleGenerateFromNotes()
-                                        }
-                                        disabled={generationDisabled}
-                                        className="rounded-xl bg-purple-600 px-4 py-2 text-base font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        {generatingFromNotes
-                                            ? "Generating..."
-                                            : "Generate From Notes"}
-                                    </button>
+                                            <p className="mt-1 text-base text-slate-600">
+                                                Enter concise, student-specific evidence such as strengths,
+                                                progress, participation and areas for improvement.
+                                            </p>
+                                        </div>
+                                    </div>
 
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleCheckQuality()}
-                                        disabled={
-                                            checkingQuality ||
-                                            !form.report_text.trim()
-                                        }
-                                        className="rounded-xl border px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        {checkingQuality
-                                            ? "Checking..."
-                                            : "Check UK Grammar & Spelling"}
-                                    </button>
-                                </div>
+                                    <label className="mt-4 grid gap-2">
+                                        <span className="text-base font-semibold text-slate-700">
+                                            Teacher Notes
+                                        </span>
+
+                                        <textarea
+                                            value={form.teacher_notes}
+                                            onChange={(event) =>
+                                                updateFormField(
+                                                    "teacher_notes",
+                                                    event.target.value,
+                                                )
+                                            }
+                                            className="min-h-36 rounded-xl border border-slate-300 bg-white px-4 py-3 text-base leading-7"
+                                            placeholder="Example: Amy contributes confidently in practical work, completes tasks carefully and should now include more precise scientific detail in written explanations."
+                                        />
+                                    </label>
+                                </section>
+
+                                <section className="rounded-2xl border-2 border-purple-200 bg-purple-50 p-5">
+                                    <div className="flex items-start gap-3">
+                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-600 text-base font-bold text-white">
+                                            2
+                                        </span>
+
+                                        <div>
+                                            <h3 className="text-xl font-bold text-slate-950">
+                                                Generate or Write the Report
+                                            </h3>
+
+                                            <p className="mt-1 text-base text-slate-600">
+                                                Generate a draft from the teacher notes, or skip generation
+                                                and write the report directly in the editor below.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-5 flex flex-wrap gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                void handleGenerateFromNotes()
+                                            }
+                                            disabled={generationDisabled}
+                                            className="rounded-xl bg-purple-600 px-5 py-3 text-base font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                            {generatingFromNotes
+                                                ? "Generating Report..."
+                                                : "Generate Report From Notes"}
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                void handleCheckQuality()
+                                            }
+                                            disabled={
+                                                checkingQuality ||
+                                                !form.report_text.trim()
+                                            }
+                                            className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-base font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                            {checkingQuality
+                                                ? "Checking Report..."
+                                                : "Check UK Grammar & Spelling"}
+                                        </button>
+                                    </div>
+                                </section>
 
                                 {form.generated_report_text && (
-                                    <div className="rounded-xl border bg-slate-50 p-4">
-                                        <h3 className="text-base font-bold text-slate-900">
-                                            Generated Draft
-                                        </h3>
+                                    <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
+                                        <div className="flex items-start gap-3">
+                                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-base font-bold text-white">
+                                                3
+                                            </span>
 
-                                        <p className="mt-2 whitespace-pre-line text-base leading-7 text-slate-600">
+                                            <div className="min-w-0">
+                                                <h3 className="text-xl font-bold text-slate-950">
+                                                    Generated Draft
+                                                </h3>
+
+                                                <p className="mt-1 text-base text-slate-600">
+                                                    Review the generated wording, then edit the final report
+                                                    below before saving.
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <p className="mt-4 whitespace-pre-line rounded-xl border border-blue-200 bg-white p-4 text-base leading-7 text-slate-700">
                                             {form.generated_report_text}
                                         </p>
-                                    </div>
+                                    </section>
                                 )}
 
-                                <label className="grid gap-2">
-                                    <span className="text-base font-semibold text-slate-700">
-                                        Final Student Comment
-                                    </span>
+                                <section className="rounded-2xl border-2 border-blue-300 bg-white p-5">
+                                    <div className="flex items-start gap-3">
+                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-base font-bold text-white">
+                                            {form.generated_report_text ? "4" : "3"}
+                                        </span>
 
-                                    <textarea
-                                        value={form.report_text}
-                                        onChange={(event) =>
-                                            updateFormField(
-                                                "report_text",
-                                                event.target.value,
-                                            )
-                                        }
-                                        className="min-h-40 rounded-xl border px-3 py-2 text-base"
-                                        placeholder="The generated report will appear here. Edit it before saving."
-                                    />
-                                </label>
+                                        <div>
+                                            <h3 className="text-xl font-bold text-slate-950">
+                                                Write or Edit Final Student Report
+                                            </h3>
+
+                                            <p className="mt-1 text-base text-slate-600">
+                                                This is the report that will be saved and submitted for review.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <label className="mt-4 grid gap-2">
+                                        <span className="text-base font-semibold text-slate-700">
+                                            Final Student Report
+                                        </span>
+
+                                        <textarea
+                                            value={form.report_text}
+                                            onChange={(event) =>
+                                                updateFormField(
+                                                    "report_text",
+                                                    event.target.value,
+                                                )
+                                            }
+                                            className="min-h-72 rounded-xl border-2 border-blue-300 bg-white px-4 py-3 text-base leading-7 focus:border-blue-600 focus:outline-none"
+                                            placeholder="Generate a draft using the button above, or write the final student report directly here."
+                                        />
+                                    </label>
+                                </section>
 
                                 {qualityResult && (
-                                    <div className="rounded-xl border bg-slate-50 p-4">
-                                        <h3 className="font-bold text-slate-900">
+                                    <section className="rounded-2xl border border-green-200 bg-green-50 p-5">
+                                        <h3 className="text-xl font-bold text-slate-950">
                                             Report Quality Review
                                         </h3>
 
@@ -988,11 +1059,11 @@ export default function TeacherReportsPage() {
                                                     qualityResult.corrected_comment,
                                                 )
                                             }
-                                            className="mt-4 rounded-xl bg-green-600 px-4 py-2 text-base font-semibold text-white hover:bg-green-700"
+                                            className="mt-4 rounded-xl bg-green-600 px-5 py-3 text-base font-bold text-white hover:bg-green-700"
                                         >
                                             Apply Suggestions
                                         </button>
-                                    </div>
+                                    </section>
                                 )}
                             </div>
                         )}
@@ -1121,60 +1192,78 @@ export default function TeacherReportsPage() {
                         </label>
                     )}
 
-                    <div className="flex flex-wrap gap-3 border-t pt-5">
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className="rounded-xl bg-blue-600 px-5 py-2 text-base font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {saving
-                                ? "Saving..."
-                                : editingReportId === null
-                                    ? "Save Draft"
-                                    : "Save Changes"}
-                        </button>
+                    <section className="sticky bottom-0 z-20 -mx-6 rounded-t-2xl border-t border-slate-200 bg-white/95 px-6 py-4 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur">
+                        <div className="mb-3 flex items-center gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-base font-bold text-white">
+                                {form.generated_report_text ? "5" : "4"}
+                            </span>
 
-                        <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void saveReport("submit")}
-                            className="rounded-xl bg-purple-600 px-5 py-2 text-base font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            Submit For Review
-                        </button>
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-950">
+                                    Save or Submit
+                                </h3>
 
-                        <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void saveReport("next")}
-                            className="rounded-xl bg-slate-900 px-5 py-2 text-base font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            Save & Next Student
-                        </button>
+                                <p className="text-sm text-slate-600">
+                                    Save your progress, move to the next student, or submit the finished report for review.
+                                </p>
+                            </div>
+                        </div>
 
-                        <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void saveReport("close")}
-                            className="rounded-xl border px-5 py-2 text-base font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            Save & Close
-                        </button>
+                        <div className="flex flex-wrap gap-3">
+                            <button
+                                type="submit"
+                                disabled={saving}
+                                className="rounded-xl bg-blue-600 px-5 py-2 text-base font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {saving
+                                    ? "Saving..."
+                                    : editingReportId === null
+                                        ? "Save Draft"
+                                        : "Save Changes"}
+                            </button>
 
-                        {editingReportId !== null && (
                             <button
                                 type="button"
                                 disabled={saving}
-                                onClick={() => {
-                                    resetFormForActiveSession();
-                                    setSuccessMessage("Editing cancelled.");
-                                }}
-                                className="rounded-xl border border-red-300 px-5 py-2 text-base font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => void saveReport("submit")}
+                                className="rounded-xl bg-purple-600 px-5 py-2 text-base font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                                Cancel Editing
+                                Submit For Review
                             </button>
-                        )}
-                    </div>
+
+                            <button
+                                type="button"
+                                disabled={saving}
+                                onClick={() => void saveReport("next")}
+                                className="rounded-xl bg-slate-900 px-5 py-2 text-base font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Save & Next Student
+                            </button>
+
+                            <button
+                                type="button"
+                                disabled={saving}
+                                onClick={() => void saveReport("close")}
+                                className="rounded-xl border border-slate-300 bg-white px-5 py-2 text-base font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Save & Close
+                            </button>
+
+                            {editingReportId !== null && (
+                                <button
+                                    type="button"
+                                    disabled={saving}
+                                    onClick={() => {
+                                        resetFormForActiveSession();
+                                        setSuccessMessage("Editing cancelled.");
+                                    }}
+                                    className="rounded-xl border border-red-300 px-5 py-2 text-base font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    Cancel Editing
+                                </button>
+                            )}
+                        </div>
+                    </section>
                 </form>
             </section>
 

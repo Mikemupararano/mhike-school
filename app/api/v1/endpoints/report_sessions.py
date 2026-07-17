@@ -22,6 +22,11 @@ from app.schemas.report_session import (
 router = APIRouter()
 
 
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+
+
 def _require_school_id(user: User) -> int:
     if user.school_id is None:
         raise HTTPException(
@@ -51,9 +56,9 @@ def _normalise_role(value: object) -> str:
 
 
 def _user_has_role(user: User, role: UserRole) -> bool:
-    expected_role = _normalise_role(role)
+    expected = _normalise_role(role)
 
-    return any(_normalise_role(user_role) == expected_role for user_role in user.roles)
+    return any(_normalise_role(r) == expected for r in user.roles)
 
 
 def _require_report_session_admin(user: User) -> None:
@@ -66,15 +71,23 @@ def _require_report_session_admin(user: User) -> None:
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school admins can manage report sessions.",
+            detail="Only school administrators can manage report sessions.",
         )
 
 
-@router.get("/", response_model=list[ReportSessionRead])
+# ----------------------------------------------------------------------
+# Endpoints
+# ----------------------------------------------------------------------
+
+
+@router.get(
+    "/",
+    response_model=list[ReportSessionRead],
+)
 async def list_report_sessions_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[ReportSessionRead]:
+):
     school_id = _require_school_id(current_user)
 
     return await list_report_sessions(
@@ -92,15 +105,23 @@ async def create_report_session_endpoint(
     payload: ReportSessionCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> ReportSessionRead:
+):
     school_id = _require_school_id(current_user)
+
     _require_report_session_admin(current_user)
 
-    return await create_report_session(
-        db,
-        school_id=school_id,
-        payload=payload,
-    )
+    try:
+        return await create_report_session(
+            db,
+            school_id=school_id,
+            payload=payload,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(
@@ -111,7 +132,7 @@ async def get_report_session_endpoint(
     report_session_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> ReportSessionRead:
+):
     school_id = _require_school_id(current_user)
 
     session = await get_report_session(
@@ -138,8 +159,9 @@ async def update_report_session_endpoint(
     payload: ReportSessionUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> ReportSessionRead:
+):
     school_id = _require_school_id(current_user)
+
     _require_report_session_admin(current_user)
 
     session = await get_report_session(
@@ -154,11 +176,18 @@ async def update_report_session_endpoint(
             detail="Report session not found.",
         )
 
-    return await update_report_session(
-        db,
-        session=session,
-        payload=payload,
-    )
+    try:
+        return await update_report_session(
+            db,
+            session=session,
+            payload=payload,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete(
@@ -169,8 +198,9 @@ async def delete_report_session_endpoint(
     report_session_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> None:
+):
     school_id = _require_school_id(current_user)
+
     _require_report_session_admin(current_user)
 
     session = await get_report_session(
