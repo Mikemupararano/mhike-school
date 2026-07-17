@@ -24,6 +24,7 @@ import {
     createStudentReport,
     deleteStudentReport,
     listStudentReports,
+    submitStudentReport,
     updateStudentReport,
     type StudentReport,
     type StudentReportCreateInput,
@@ -71,7 +72,6 @@ const initialFormState: ReportFormState = {
     term: "",
 };
 
-const REPORT_STATUS_SUBMITTED = "submitted";
 
 function formatDate(value: string): string {
     return new Date(value).toLocaleDateString("en-GB", {
@@ -560,9 +560,7 @@ export default function TeacherReportsPage() {
                     : await createStudentReport(payload);
 
             if (action === "submit") {
-                const submitted = await updateStudentReport(saved.id, {
-                    status: REPORT_STATUS_SUBMITTED,
-                });
+                const submitted = await submitStudentReport(saved.id);
 
                 setReports((current) => upsertReport(current, submitted));
                 setEditingReportId(null);
@@ -1270,34 +1268,55 @@ export default function TeacherReportsPage() {
                                     </p>
                                 </div>
 
+                                {report.review_comments && (
+                                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                        <p className="text-sm font-bold uppercase text-amber-800">
+                                            Review Feedback
+                                        </p>
+                                        <p className="mt-1 whitespace-pre-line text-base leading-7 text-amber-900">
+                                            {report.review_comments}
+                                        </p>
+                                    </div>
+                                )}
+
                                 <div className="mt-4 flex flex-col gap-3 border-t pt-4 text-base text-slate-500 md:flex-row md:items-center md:justify-between">
                                     <span>
                                         Created {formatDate(report.created_at)}
                                     </span>
 
-                                    <div className="flex gap-4">
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                handleEditReport(report)
-                                            }
-                                            className="w-fit font-semibold text-blue-600 hover:text-blue-700"
-                                        >
-                                            Edit
-                                        </button>
+                                    {report.status === "draft" ? (
+                                        <div className="flex gap-4">
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    handleEditReport(report)
+                                                }
+                                                className="w-fit font-semibold text-blue-600 hover:text-blue-700"
+                                            >
+                                                Edit
+                                            </button>
 
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                void handleDeleteReport(
-                                                    report.id,
-                                                )
-                                            }
-                                            className="w-fit font-semibold text-red-600 hover:text-red-700"
-                                        >
-                                            Delete
-                                        </button>
-                                    </div>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    void handleDeleteReport(
+                                                        report.id,
+                                                    )
+                                                }
+                                                className="w-fit font-semibold text-red-600 hover:text-red-700"
+                                            >
+                                                Delete
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <span className="font-medium text-slate-600">
+                                            {report.status === "submitted"
+                                                ? "Awaiting review"
+                                                : report.status === "approved"
+                                                    ? "Approved and awaiting publication"
+                                                    : "Published"}
+                                        </span>
+                                    )}
                                 </div>
                             </article>
                         ))}
