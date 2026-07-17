@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.student_report import StudentReport
@@ -146,6 +146,93 @@ async def list_student_reports(
     result = await db.execute(statement)
 
     return list(result.scalars().all())
+
+
+async def list_student_report_review_queue(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    teacher_id: int | None = None,
+    report_session_id: int | None = None,
+    student_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[StudentReport]:
+    statement = select(StudentReport).where(
+        StudentReport.school_id == school_id,
+        StudentReport.status == REPORT_STATUS_SUBMITTED,
+        StudentReport.published.is_(False),
+    )
+
+    if teacher_id is not None:
+        statement = statement.where(
+            StudentReport.teacher_id == teacher_id,
+        )
+
+    if report_session_id is not None:
+        statement = statement.where(
+            StudentReport.report_session_id == report_session_id,
+        )
+
+    if student_id is not None:
+        statement = statement.where(
+            StudentReport.student_id == student_id,
+        )
+
+    statement = statement.order_by(
+        StudentReport.submitted_at.asc(),
+        StudentReport.created_at.asc(),
+    )
+
+    statement = statement.offset(offset).limit(limit)
+
+    result = await db.execute(statement)
+
+    return list(result.scalars().all())
+
+
+async def get_student_report_dashboard_counts(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    teacher_id: int | None = None,
+    report_session_id: int | None = None,
+) -> dict[str, int]:
+    statement = (
+        select(
+            StudentReport.status,
+            func.count(StudentReport.id),
+        )
+        .where(
+            StudentReport.school_id == school_id,
+        )
+        .group_by(StudentReport.status)
+    )
+
+    if teacher_id is not None:
+        statement = statement.where(
+            StudentReport.teacher_id == teacher_id,
+        )
+
+    if report_session_id is not None:
+        statement = statement.where(
+            StudentReport.report_session_id == report_session_id,
+        )
+
+    result = await db.execute(statement)
+
+    counts = {
+        REPORT_STATUS_DRAFT: 0,
+        REPORT_STATUS_SUBMITTED: 0,
+        REPORT_STATUS_APPROVED: 0,
+        REPORT_STATUS_PUBLISHED: 0,
+    }
+
+    for report_status, report_count in result.all():
+        if report_status in counts:
+            counts[report_status] = int(report_count)
+
+    return counts
 
 
 async def list_reports_for_student(

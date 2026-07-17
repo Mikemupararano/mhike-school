@@ -1044,3 +1044,236 @@ async def test_approved_report_cannot_be_returned(
     assert report.status == "approved"
     assert report.reviewed_by_id == school_admin_user.id
     assert report.published is False
+
+
+@pytest.mark.asyncio
+async def test_review_queue_returns_submitted_reports(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    draft = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Draft",
+        report_text="Draft report",
+        grade="B",
+        academic_year="2026/27",
+        term="Autumn",
+        status="draft",
+        published=False,
+    )
+
+    submitted = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Submitted",
+        report_text="Submitted report",
+        grade="A",
+        academic_year="2026/27",
+        term="Autumn",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    approved = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Approved",
+        report_text="Approved report",
+        grade="A",
+        academic_year="2026/27",
+        term="Autumn",
+        status="approved",
+        reviewed_by_id=school_admin_user.id,
+        published=False,
+    )
+
+    db_session.add_all([draft, submitted, approved])
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/student-reports/review-queue",
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+    assert data[0]["title"] == "Submitted"
+    assert data[0]["status"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_review_queue_filters_by_teacher(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Teacher Queue",
+        report_text="Teacher queue report",
+        grade="A",
+        academic_year="2026/27",
+        term="Autumn",
+        status="submitted",
+        submitted_by_id=teacher_user.id,
+        published=False,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/v1/student-reports/review-queue?teacher_id={teacher_user.id}",
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+    assert data[0]["teacher_id"] == teacher_user.id
+
+
+@pytest.mark.asyncio
+async def test_review_dashboard_returns_correct_counts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    db_session.add_all(
+        [
+            StudentReport(
+                school_id=student_user.school_id,
+                student_id=student_user.id,
+                teacher_id=teacher_user.id,
+                title="Draft",
+                report_text="x",
+                grade="A",
+                academic_year="2026/27",
+                term="Autumn",
+                status="draft",
+                published=False,
+            ),
+            StudentReport(
+                school_id=student_user.school_id,
+                student_id=student_user.id,
+                teacher_id=teacher_user.id,
+                title="Submitted",
+                report_text="x",
+                grade="A",
+                academic_year="2026/27",
+                term="Autumn",
+                status="submitted",
+                submitted_by_id=teacher_user.id,
+                published=False,
+            ),
+            StudentReport(
+                school_id=student_user.school_id,
+                student_id=student_user.id,
+                teacher_id=teacher_user.id,
+                title="Approved",
+                report_text="x",
+                grade="A",
+                academic_year="2026/27",
+                term="Autumn",
+                status="approved",
+                reviewed_by_id=school_admin_user.id,
+                published=False,
+            ),
+            StudentReport(
+                school_id=student_user.school_id,
+                student_id=student_user.id,
+                teacher_id=teacher_user.id,
+                title="Published",
+                report_text="x",
+                grade="A",
+                academic_year="2026/27",
+                term="Autumn",
+                status="published",
+                published=True,
+                reviewed_by_id=school_admin_user.id,
+                published_by_id=school_admin_user.id,
+            ),
+        ]
+    )
+
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/student-reports/review-dashboard",
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data == {
+        "draft": 1,
+        "submitted": 1,
+        "approved": 1,
+        "published": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_teacher_cannot_access_review_queue(
+    client: AsyncClient,
+    teacher_user,
+    auth_headers,
+):
+    response = await client.get(
+        "/api/v1/student-reports/review-queue",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_teacher_cannot_access_review_dashboard(
+    client: AsyncClient,
+    teacher_user,
+    auth_headers,
+):
+    response = await client.get(
+        "/api/v1/student-reports/review-dashboard",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_without_school_cannot_access_review_dashboard(
+    client: AsyncClient,
+    platform_admin_user,
+    auth_headers,
+):
+    response = await client.get(
+        "/api/v1/student-reports/review-dashboard",
+        headers=auth_headers(platform_admin_user),
+    )
+
+    assert response.status_code == 400

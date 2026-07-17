@@ -64,6 +64,13 @@ class StudentReportReviewDecision(BaseModel):
     )
 
 
+class StudentReportReviewDashboard(BaseModel):
+    draft: int = 0
+    submitted: int = 0
+    approved: int = 0
+    published: int = 0
+
+
 class StudentReportRead(StudentReportBase):
     id: int
     school_id: int

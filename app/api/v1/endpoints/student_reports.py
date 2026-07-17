@@ -14,7 +14,9 @@ from app.repositories.student_reports import (
     create_student_report,
     delete_student_report,
     get_student_report,
+    get_student_report_dashboard_counts,
     list_reports_for_student,
+    list_student_report_review_queue,
     list_student_reports,
     publish_reports_for_session,
     return_student_report,
@@ -24,6 +26,7 @@ from app.repositories.student_reports import (
 from app.schemas.student_report import (
     StudentReportCreate,
     StudentReportRead,
+    StudentReportReviewDashboard,
     StudentReportReviewDecision,
     StudentReportUpdate,
 )
@@ -156,6 +159,68 @@ async def list_reports_endpoint(
         published=published,
         status=status,
     )
+
+
+@router.get(
+    "/review-queue",
+    response_model=list[StudentReportRead],
+)
+async def list_review_queue_endpoint(
+    teacher_id: int | None = None,
+    report_session_id: int | None = None,
+    student_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[StudentReportRead]:
+    school_id = _require_school_id(current_user)
+    _require_report_reviewer(current_user)
+
+    if limit < 1 or limit > 500:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Limit must be between 1 and 500.",
+        )
+
+    if offset < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Offset cannot be negative.",
+        )
+
+    return await list_student_report_review_queue(
+        db,
+        school_id=school_id,
+        teacher_id=teacher_id,
+        report_session_id=report_session_id,
+        student_id=student_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/review-dashboard",
+    response_model=StudentReportReviewDashboard,
+)
+async def review_dashboard_endpoint(
+    teacher_id: int | None = None,
+    report_session_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StudentReportReviewDashboard:
+    school_id = _require_school_id(current_user)
+    _require_report_reviewer(current_user)
+
+    counts = await get_student_report_dashboard_counts(
+        db,
+        school_id=school_id,
+        teacher_id=teacher_id,
+        report_session_id=report_session_id,
+    )
+
+    return StudentReportReviewDashboard(**counts)
 
 
 @router.post(
