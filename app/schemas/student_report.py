@@ -448,6 +448,11 @@ class StudentReportReviewDashboard(BaseModel):
 class StudentReportCompletionRow(BaseModel):
     """One pupil within a report completion overview."""
 
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
     student_id: int = Field(ge=1)
     student_name: str
     report_id: int | None = None
@@ -458,7 +463,10 @@ class StudentReportCompletionRow(BaseModel):
 class StudentReportCompletionOverview(BaseModel):
     """Teacher completion dashboard for a class/report session."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
     class_id: int = Field(ge=1)
     report_session_id: int = Field(ge=1)

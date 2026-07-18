@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Final
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,27 +11,29 @@ from app.schemas.report_session import (
     ReportSessionUpdate,
 )
 
-# Fields copied when an administrator creates a report session from
-# an existing session. Identity, academic-year and checkpoint fields
-# are deliberately excluded.
-REPORT_CONFIGURATION_FIELDS = {
-    "reporting_mode",
-    "include_work_covered",
-    "include_student_comment",
-    "include_exam_mark",
-    "include_exam_grade",
-    "include_attainment_grade",
-    "include_effort_grade",
-    "include_target_grade",
-    "include_ucas_predicted_grade",
-    "include_next_steps",
-    "include_tutor_comment",
-    "include_head_of_year_comment",
-    "include_headteacher_comment",
-    "show_previous_grades",
-    "show_previous_tutor_comments",
-    "show_progress_journey",
-}
+# Fields copied when an administrator creates a report session from an
+# existing session. Identity, academic-year and checkpoint fields are
+# deliberately excluded.
+REPORT_CONFIGURATION_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "reporting_mode",
+        "include_work_covered",
+        "include_student_comment",
+        "include_exam_mark",
+        "include_exam_grade",
+        "include_attainment_grade",
+        "include_effort_grade",
+        "include_target_grade",
+        "include_ucas_predicted_grade",
+        "include_next_steps",
+        "include_tutor_comment",
+        "include_head_of_year_comment",
+        "include_headteacher_comment",
+        "show_previous_grades",
+        "show_previous_tutor_comments",
+        "show_progress_journey",
+    }
+)
 
 
 def _normalise_checkpoint_fields(
@@ -191,9 +195,7 @@ async def get_report_session(
     school_id: int,
     report_session_id: int,
 ) -> ReportSession | None:
-    """
-    Retrieve one report session while enforcing school isolation.
-    """
+    """Retrieve one report session while enforcing school isolation."""
 
     result = await db.execute(
         select(ReportSession).where(
@@ -225,7 +227,6 @@ async def update_report_session(
     update_data = payload.model_dump(
         exclude_unset=True,
     )
-
     update_data = _normalise_checkpoint_fields(
         update_data,
         supplied_fields=supplied_fields,
@@ -243,8 +244,8 @@ async def update_report_session(
             source_session_id=copied_from_session_id,
         )
 
-    for key, value in update_data.items():
-        setattr(session, key, value)
+    for field_name, value in update_data.items():
+        setattr(session, field_name, value)
 
     await db.commit()
     await db.refresh(session)

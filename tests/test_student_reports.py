@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.parent_student import ParentStudent
 from app.models.student_report import StudentReport
 
+from io import BytesIO
+from zipfile import ZipFile
 
 @pytest.mark.asyncio
 async def test_can_create_student_report(
@@ -683,13 +687,14 @@ async def test_school_admin_can_approve_submitted_report(
         school_id=student_user.school_id,
         student_id=student_user.id,
         teacher_id=teacher_user.id,
-        title="Report Awaiting Approval",
-        report_text="This report is ready for approval.",
-        grade="A",
+        title="Report Requiring Correction",
+        report_text="This report requires a small correction.",
+        grade="B",
         academic_year="2026/27",
         term="Summer",
         status="submitted",
         submitted_by_id=teacher_user.id,
+        submitted_at=datetime.now(timezone.utc),
         published=False,
     )
 
@@ -784,6 +789,7 @@ async def test_school_admin_can_return_submitted_report(
         term="Summer",
         status="submitted",
         submitted_by_id=teacher_user.id,
+        submitted_at=datetime.now(timezone.utc),
         published=False,
     )
 
@@ -806,17 +812,22 @@ async def test_school_admin_can_return_submitted_report(
     data = response.json()
 
     assert data["id"] == report.id
-    assert data["status"] == "draft"
 
-    assert data["submitted_at"] is None
-    assert data["submitted_by_id"] is None
+    # Updated workflow
+    assert data["status"] == "returned_by_smt"
 
+    # Preserve original submission audit
+    assert data["submitted_at"] is not None
+    assert data["submitted_by_id"] == teacher_user.id
+
+    # SMT review audit
     assert data["reviewed_at"] is not None
     assert data["reviewed_by_id"] == school_admin_user.id
     assert data["review_comments"] == (
         "Please correct the final sentence before resubmitting."
     )
 
+    # Not yet published
     assert data["published"] is False
     assert data["published_at"] is None
     assert data["published_by_id"] is None
@@ -1277,3 +1288,250 @@ async def test_platform_admin_without_school_cannot_access_review_dashboard(
     )
 
     assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# PDF download endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_staff_can_download_published_report_pdf(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="PDF Report",
+        report_text="PDF body.",
+        academic_year="2026/27",
+        term="Summer",
+        status="published",
+        published=True,
+        published_by_id=school_admin_user.id,
+    )
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.get(
+        f"/api/v1/student-reports/{report.id}/pdf",
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+
+
+@pytest.mark.asyncio
+async def test_draft_report_pdf_download_is_rejected(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Draft",
+        report_text="Draft",
+        academic_year="2026/27",
+        term="Summer",
+        status="draft",
+        published=False,
+    )
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.get(
+        f"/api/v1/student-reports/{report.id}/pdf",
+        headers=auth_headers(school_admin_user),
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_linked_parent_can_download_published_report_pdf(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    parent_user,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    db_session.add(ParentStudent(parent_id=parent_user.id, student_id=student_user.id))
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Parent PDF",
+        report_text="Visible",
+        academic_year="2026/27",
+        term="Summer",
+        status="published",
+        published=True,
+        published_by_id=school_admin_user.id,
+    )
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.get(
+        f"/api/v1/student-reports/{report.id}/pdf",
+        headers=auth_headers(parent_user),
+    )
+    assert response.status_code == 200
+    assert response.content.startswith(b"%PDF")
+
+
+@pytest.mark.asyncio
+async def test_unlinked_parent_cannot_download_published_report_pdf(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    parent_user,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Private PDF",
+        report_text="Hidden",
+        academic_year="2026/27",
+        term="Summer",
+        status="published",
+        published=True,
+        published_by_id=school_admin_user.id,
+    )
+    db_session.add(report)
+    await db_session.commit()
+    await db_session.refresh(report)
+
+    response = await client.get(
+        f"/api/v1/student-reports/{report.id}/pdf",
+        headers=auth_headers(parent_user),
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_school_admin_can_export_published_session_zip(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="ZIP Export",
+        report_text="Report included in ZIP.",
+        academic_year="2026/27",
+        term="Summer",
+        report_session_id=1,
+        status="published",
+        published=True,
+        published_by_id=school_admin_user.id,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/student-reports/export-session/1",
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/zip")
+    assert response.content.startswith(b"PK")
+
+
+@pytest.mark.asyncio
+async def test_teacher_cannot_export_published_session_zip(
+    client: AsyncClient,
+    teacher_user,
+    auth_headers,
+):
+    response = await client.get(
+        "/api/v1/student-reports/export-session/1",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_export_session_zip_returns_404_when_no_published_reports(
+    client: AsyncClient,
+    school_admin_user,
+    auth_headers,
+):
+    response = await client.get(
+        "/api/v1/student-reports/export-session/999999",
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_exported_session_zip_contains_valid_pdf(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    student_user,
+    teacher_user,
+    school_admin_user,
+    auth_headers,
+):
+    report = StudentReport(
+        school_id=student_user.school_id,
+        student_id=student_user.id,
+        teacher_id=teacher_user.id,
+        title="Archive PDF",
+        report_text="This report should be generated inside the archive.",
+        academic_year="2026/27",
+        term="Summer",
+        report_session_id=2,
+        status="published",
+        published=True,
+        published_by_id=school_admin_user.id,
+    )
+
+    db_session.add(report)
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/student-reports/export-session/2",
+        headers=auth_headers(school_admin_user),
+    )
+
+    assert response.status_code == 200
+
+    with ZipFile(BytesIO(response.content)) as archive:
+        filenames = archive.namelist()
+
+        assert len(filenames) == 1
+        assert filenames[0].lower().endswith(".pdf")
+
+        pdf_bytes = archive.read(filenames[0])
+
+    assert pdf_bytes.startswith(b"%PDF")

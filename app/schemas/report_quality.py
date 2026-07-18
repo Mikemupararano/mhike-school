@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from pydantic import BaseModel, Field
 
 
 class ReportQualityCheckRequest(BaseModel):
-    comment: str = Field(min_length=1)
+    comment: str = Field(
+        min_length=1,
+        description="The report comment to check and improve.",
+    )
 
 
 class ReportQualityIssue(BaseModel):
@@ -17,9 +22,9 @@ class ReportQualityCheckResponse(BaseModel):
     issues: list[ReportQualityIssue]
 
 
-# -------------------------
-# Generate Report From Notes
-# -------------------------
+# ---------------------------------------------------------------------------
+# Generate report from teacher notes
+# ---------------------------------------------------------------------------
 
 
 class ReportNotesGenerateRequest(BaseModel):

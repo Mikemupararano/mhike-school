@@ -11,14 +11,12 @@ from app.models.enrollment import Enrollment
 from app.models.report_session import ReportSession
 from app.models.student_report import StudentReport
 from app.models.user import User
-from app.schemas.report_memory import ReportMemoryCreate
 from app.schemas.student_report import (
     StudentReportCompletionOverview,
     StudentReportCompletionRow,
     StudentReportCreate,
     StudentReportUpdate,
 )
-from app.services.report_memory import create_report_memory
 
 # ---------------------------------------------------------------------------
 # Workflow statuses
@@ -32,6 +30,18 @@ REPORT_STATUS_READY_FOR_SMT = "ready_for_smt"
 REPORT_STATUS_RETURNED_BY_SMT = "returned_by_smt"
 REPORT_STATUS_APPROVED = "approved"
 REPORT_STATUS_PUBLISHED = "published"
+
+
+ALL_REPORT_STATUSES = {
+    REPORT_STATUS_DRAFT,
+    REPORT_STATUS_SUBMITTED,
+    REPORT_STATUS_TUTOR_REVIEW,
+    REPORT_STATUS_RETURNED_BY_TUTOR,
+    REPORT_STATUS_READY_FOR_SMT,
+    REPORT_STATUS_RETURNED_BY_SMT,
+    REPORT_STATUS_APPROVED,
+    REPORT_STATUS_PUBLISHED,
+}
 
 
 TEACHER_EDITABLE_STATUSES = {
@@ -84,6 +94,33 @@ STUDENT_REPORT_EDITABLE_FIELDS = {
     # Ownership/session fields currently supported by the update schema
     "teacher_id",
     "report_session_id",
+}
+
+
+REVIEWER_EDITABLE_FIELDS = {
+    # Identification and display fields
+    "title",
+    "academic_year",
+    "term",
+    "checkpoint_name",
+    "subject_name",
+    # Final report content
+    "report_text",
+    "work_covered",
+    "next_steps",
+    # Legacy and structured grades
+    "grade",
+    "attainment_grade",
+    "effort_grade",
+    "target_grade",
+    "exam_grade",
+    "exam_mark",
+    "exam_max_mark",
+    "ucas_predicted_grade",
+    # Review-stage comments
+    "tutor_comment",
+    "head_of_year_comment",
+    "headteacher_comment",
 }
 
 
@@ -875,12 +912,7 @@ async def list_tutor_student_report_review_queue(
 ) -> list[StudentReport]:
     statement = select(StudentReport).where(
         StudentReport.school_id == school_id,
-        StudentReport.status.in_(
-            {
-                REPORT_STATUS_SUBMITTED,
-                REPORT_STATUS_TUTOR_REVIEW,
-            }
-        ),
+        StudentReport.status.in_(TUTOR_REVIEWABLE_STATUSES),
         StudentReport.published.is_(False),
     )
 
@@ -963,21 +995,10 @@ async def get_student_report_dashboard_counts(
 
     result = await db.execute(statement)
 
-    valid_statuses = {
-        REPORT_STATUS_DRAFT,
-        REPORT_STATUS_SUBMITTED,
-        REPORT_STATUS_TUTOR_REVIEW,
-        REPORT_STATUS_RETURNED_BY_TUTOR,
-        REPORT_STATUS_READY_FOR_SMT,
-        REPORT_STATUS_RETURNED_BY_SMT,
-        REPORT_STATUS_APPROVED,
-        REPORT_STATUS_PUBLISHED,
-    }
-
     counts: dict[str, int] = {}
 
     for report_status, report_count in result.all():
-        if report_status in valid_statuses:
+        if report_status in ALL_REPORT_STATUSES:
             counts[report_status] = int(report_count)
 
     return counts
@@ -1067,97 +1088,6 @@ async def get_student_report_completion_overview(
 
 
 # ---------------------------------------------------------------------------
-# Report-memory helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_user_display_name(
-    user: User | None,
-) -> str | None:
-    if user is None:
-        return None
-
-    full_name = getattr(
-        user,
-        "full_name",
-        None,
-    )
-
-    if isinstance(full_name, str) and full_name.strip():
-        return full_name.strip()
-
-    email = getattr(
-        user,
-        "email",
-        None,
-    )
-
-    if isinstance(email, str) and email.strip():
-        return email.strip()
-
-    return None
-
-
-async def _get_teacher_for_report(
-    db: AsyncSession,
-    report: StudentReport,
-) -> User | None:
-    if report.teacher_id is None:
-        return None
-
-    result = await db.execute(
-        select(User).where(
-            User.id == report.teacher_id,
-            User.school_id == report.school_id,
-        ),
-    )
-
-    return result.scalar_one_or_none()
-
-
-async def _store_report_memory_for_published_report(
-    db: AsyncSession,
-    *,
-    report: StudentReport,
-) -> None:
-    if not report.published:
-        return
-
-    if not report.report_text or not report.report_text.strip():
-        return
-
-    teacher = await _get_teacher_for_report(
-        db,
-        report,
-    )
-
-    subject = (
-        _get_model_value(
-            report,
-            "subject_name",
-        )
-        or report.title
-        or "General"
-    )
-
-    await create_report_memory(
-        db,
-        ReportMemoryCreate(
-            school_id=report.school_id,
-            teacher_id=report.teacher_id,
-            teacher_name=_get_user_display_name(teacher),
-            subject=subject,
-            year_group=report.academic_year,
-            topics_studied=report.work_covered,
-            teacher_notes=report.teacher_notes,
-            generated_report=(report.generated_report_text),
-            final_report=report.report_text.strip(),
-            source_report_id=report.id,
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Update
 # ---------------------------------------------------------------------------
 
@@ -1171,7 +1101,7 @@ async def update_student_report(
 ) -> StudentReport:
     if report.status not in TEACHER_EDITABLE_STATUSES:
         raise ValueError(
-            "Only draft reports or reports returned for correction " "can be edited."
+            "Only draft reports or reports returned for correction can be edited."
         )
 
     update_data = payload.model_dump(
@@ -1209,6 +1139,89 @@ async def update_student_report(
     return report
 
 
+async def update_student_report_as_reviewer(
+    db: AsyncSession,
+    *,
+    report: StudentReport,
+    payload: StudentReportUpdate,
+    reviewer_id: int,
+    reviewer_role: str | None = None,
+) -> StudentReport:
+    """
+    Save SMT reviewer corrections without changing the workflow status.
+
+    Reviewers may correct final report content and configured grades, but
+    cannot change ownership, session assignment, student identity, workflow
+    status, publication state, teacher notes, or generated draft content.
+    """
+
+    if report.status not in {
+        REPORT_STATUS_SUBMITTED,
+        REPORT_STATUS_TUTOR_REVIEW,
+        REPORT_STATUS_READY_FOR_SMT,
+        REPORT_STATUS_APPROVED,
+    }:
+        raise ValueError(
+            "Reviewer corrections can only be saved while a report is "
+            "submitted, under tutor review, ready for SMT, or approved."
+        )
+
+    if report.published or report.status == REPORT_STATUS_PUBLISHED:
+        raise ValueError("Published reports cannot be edited.")
+
+    update_data = payload.model_dump(
+        exclude_unset=True,
+    )
+
+    disallowed_fields = sorted(
+        field_name
+        for field_name in update_data
+        if field_name not in REVIEWER_EDITABLE_FIELDS
+    )
+
+    if disallowed_fields:
+        raise ValueError(
+            "Reviewers cannot change these fields: " + ", ".join(disallowed_fields)
+        )
+
+    for field_name, value in update_data.items():
+        if isinstance(value, str):
+            value = value.strip()
+
+        _set_model_value(
+            report,
+            field_name,
+            value,
+        )
+
+    _synchronise_legacy_fields(report)
+    _validate_exam_values(report)
+
+    if not report.report_text or not report.report_text.strip():
+        raise ValueError("The report text cannot be empty.")
+
+    _set_model_value(
+        report,
+        "last_edited_at",
+        _utc_now(),
+    )
+    _set_model_value(
+        report,
+        "last_edited_by_id",
+        reviewer_id,
+    )
+    _set_model_value(
+        report,
+        "last_edited_role",
+        _clean_optional_text(reviewer_role),
+    )
+
+    await db.commit()
+    await db.refresh(report)
+
+    return report
+
+
 # ---------------------------------------------------------------------------
 # Teacher submission
 # ---------------------------------------------------------------------------
@@ -1222,7 +1235,7 @@ async def submit_student_report(
 ) -> StudentReport:
     if report.status not in TEACHER_EDITABLE_STATUSES:
         raise ValueError(
-            "Only draft reports or reports returned for correction " "can be submitted."
+            "Only draft reports or reports returned for correction can be submitted."
         )
 
     report_session = await _validate_report_for_submission(
@@ -1293,7 +1306,7 @@ async def correct_student_report_as_tutor(
 ) -> StudentReport:
     if report.status not in TUTOR_REVIEWABLE_STATUSES:
         raise ValueError(
-            "Tutor corrections can only be made during the " "tutor-review stage."
+            "Tutor corrections can only be made during the tutor-review stage."
         )
 
     cleaned_report_text = report_text.strip()
@@ -1458,14 +1471,12 @@ async def return_student_report(
 
     if cleaned_comments is None:
         raise ValueError(
-            "Review comments are required when returning a report " "for correction."
+            "Review comments are required when returning a report for correction."
         )
 
-    # Backward-compatible behaviour: an SMT return reopens the report as a
-    # draft while preserving the SMT audit trail below.
-    report.status = REPORT_STATUS_DRAFT
-    report.submitted_at = None
-    report.submitted_by_id = None
+    # Return the report to the subject teacher while preserving the
+    # submission and SMT audit trail.
+    report.status = REPORT_STATUS_RETURNED_BY_SMT
 
     report.reviewed_at = _utc_now()
     report.reviewed_by_id = reviewed_by_id
@@ -1559,11 +1570,6 @@ async def publish_reports_for_session(
 
     for report in reports:
         await db.refresh(report)
-
-        await _store_report_memory_for_published_report(
-            db,
-            report=report,
-        )
 
     return len(reports)
 

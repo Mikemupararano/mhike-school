@@ -24,6 +24,10 @@ class ReportSessionBase(BaseModel):
         str_strip_whitespace=True,
     )
 
+    # ------------------------------------------------------------------
+    # Session identification
+    # ------------------------------------------------------------------
+
     title: str = Field(
         min_length=1,
         max_length=200,
@@ -87,6 +91,10 @@ class ReportSessionBase(BaseModel):
     show_previous_tutor_comments: bool = False
     show_progress_journey: bool = False
 
+    # ------------------------------------------------------------------
+    # Configuration-copy support
+    # ------------------------------------------------------------------
+
     # Records the source session when the administrator copies
     # configuration from an earlier checkpoint.
     copied_from_session_id: int | None = Field(
@@ -97,8 +105,6 @@ class ReportSessionBase(BaseModel):
 
 class ReportSessionCreate(ReportSessionBase):
     """Payload used when creating a reporting checkpoint."""
-
-    pass
 
 
 class ReportSessionUpdate(BaseModel):
@@ -113,6 +119,10 @@ class ReportSessionUpdate(BaseModel):
         extra="forbid",
         str_strip_whitespace=True,
     )
+
+    # ------------------------------------------------------------------
+    # Session identification
+    # ------------------------------------------------------------------
 
     title: str | None = Field(
         default=None,
@@ -175,6 +185,10 @@ class ReportSessionUpdate(BaseModel):
     show_previous_tutor_comments: bool | None = None
     show_progress_journey: bool | None = None
 
+    # ------------------------------------------------------------------
+    # Configuration-copy support
+    # ------------------------------------------------------------------
+
     copied_from_session_id: int | None = Field(
         default=None,
         ge=1,
@@ -184,8 +198,8 @@ class ReportSessionUpdate(BaseModel):
 class ReportSessionRead(ReportSessionBase):
     """Reporting checkpoint returned by the API."""
 
-    id: int
-    school_id: int
+    id: int = Field(ge=1)
+    school_id: int = Field(ge=1)
 
     published_at: datetime | None
 

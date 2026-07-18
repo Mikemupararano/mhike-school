@@ -79,7 +79,6 @@ async def test_school_staff_can_list_report_sessions(
     client: AsyncClient,
     db_session: AsyncSession,
     teacher_user,
-    school_admin_user,
     auth_headers,
 ):
     report_session = ReportSession(
@@ -100,6 +99,7 @@ async def test_school_staff_can_list_report_sessions(
 
     db_session.add(report_session)
     await db_session.commit()
+    await db_session.refresh(report_session)
 
     response = await client.get(
         "/api/v1/report-sessions/",
@@ -111,8 +111,9 @@ async def test_school_staff_can_list_report_sessions(
     data = response.json()
 
     assert len(data) == 1
+    assert data[0]["id"] == report_session.id
     assert data[0]["title"] == "Year 9 Spring Reports"
-    assert data[0]["school_id"] == school_admin_user.school_id
+    assert data[0]["school_id"] == teacher_user.school_id
 
 
 @pytest.mark.asyncio

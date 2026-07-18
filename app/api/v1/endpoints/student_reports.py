@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -8,7 +11,9 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.repositories.parent_student import ParentStudentRepository
 from app.repositories.student_reports import (
+    REPORT_STATUS_APPROVED,
     REPORT_STATUS_DRAFT,
+    REPORT_STATUS_PUBLISHED,
     REPORT_STATUS_READY_FOR_SMT,
     REPORT_STATUS_RETURNED_BY_SMT,
     REPORT_STATUS_RETURNED_BY_TUTOR,
@@ -32,7 +37,19 @@ from app.repositories.student_reports import (
     return_student_report_to_teacher,
     submit_student_report,
     update_student_report,
+    update_student_report_as_reviewer,
     user_can_tutor_review_student,
+)
+from app.services.report_pdf import (
+    ReportPdfData,
+    ReportPdfField,
+    ReportPdfSection,
+    build_report_pdf_filename,
+    generate_report_pdf_bytes,
+)
+from app.services.report_zip import (
+    ReportZipItem,
+    generate_report_zip_bytes,
 )
 from app.schemas.student_report import (
     StudentReportCompletionOverview,
@@ -250,6 +267,162 @@ async def _get_report_or_404(
         )
 
     return report
+
+
+def _display_name(value: object | None, *, fallback: str) -> str:
+    """Return a human-readable name from a school or user model."""
+
+    if value is None:
+        return fallback
+
+    for attribute in ("full_name", "display_name", "name"):
+        candidate = getattr(value, attribute, None)
+
+        if isinstance(candidate, str) and candidate.strip():
+            return " ".join(candidate.strip().split())
+
+    first_name = getattr(value, "first_name", None)
+    last_name = getattr(value, "last_name", None)
+
+    combined = " ".join(
+        part.strip()
+        for part in (first_name, last_name)
+        if isinstance(part, str) and part.strip()
+    )
+
+    if combined:
+        return combined
+
+    email = getattr(value, "email", None)
+
+    if isinstance(email, str) and email.strip():
+        return email.strip()
+
+    return fallback
+
+
+async def _user_can_download_published_report(
+    *,
+    db: AsyncSession,
+    user: User,
+    report,
+) -> bool:
+    """
+    Staff may download published reports from their school.
+
+    Non-staff users may download a published report only when they are linked
+    to the report pupil through the parent-student relationship.
+    """
+
+    if _is_school_staff(user):
+        return True
+
+    parent_repository = ParentStudentRepository(db)
+    children = await parent_repository.list_children_for_parent(
+        parent_id=user.id,
+    )
+
+    return any(child.student_id == report.student_id for child in children)
+
+
+def _build_report_pdf_data(report) -> ReportPdfData:
+    """Map a StudentReport model into the model-independent PDF structure."""
+
+    exam_result = None
+
+    if report.exam_mark is not None:
+        exam_result = str(report.exam_mark)
+
+        if report.exam_max_mark is not None:
+            exam_result = f"{report.exam_mark}/{report.exam_max_mark}"
+
+    fields = tuple(
+        field
+        for field in (
+            ReportPdfField("Attainment grade", report.attainment_grade),
+            ReportPdfField("Effort grade", report.effort_grade),
+            ReportPdfField("Target grade", report.target_grade),
+            ReportPdfField("Exam grade", report.exam_grade),
+            ReportPdfField("Exam mark", exam_result),
+            ReportPdfField("UCAS predicted grade", report.ucas_predicted_grade),
+        )
+        if field.value not in (None, "")
+    )
+
+    sections = tuple(
+        section
+        for section in (
+            ReportPdfSection("Work Covered", report.work_covered or ""),
+            ReportPdfSection("Next Steps", report.next_steps or ""),
+            ReportPdfSection("Tutor Comment", report.tutor_comment or ""),
+            ReportPdfSection(
+                "Head of Year Comment",
+                report.head_of_year_comment or "",
+            ),
+            ReportPdfSection(
+                "Headteacher Comment",
+                report.headteacher_comment or "",
+            ),
+        )
+        if section.content.strip()
+    )
+
+    return ReportPdfData(
+        school_name=_display_name(
+            report.school,
+            fallback="School Report",
+        ),
+        student_name=_display_name(
+            report.student,
+            fallback=f"Student {report.student_id}",
+        ),
+        report_title=report.title,
+        academic_year=report.academic_year,
+        term=report.checkpoint_name or report.term,
+        subject=report.subject_name,
+        teacher_name=(
+            _display_name(
+                report.teacher,
+                fallback="",
+            )
+            if report.teacher is not None
+            else None
+        ),
+        grade=report.grade,
+        report_text=report.report_text,
+        published_at=report.published_at,
+        fields=fields,
+        sections=sections,
+        footer_text="Confidential student report",
+    )
+
+
+async def _get_published_reports_for_session(
+    *,
+    db: AsyncSession,
+    school_id: int,
+    report_session_id: int,
+):
+    """
+    Return all published reports for one reporting session.
+
+    The repository query remains school-scoped so reports from another
+    school can never be included in the export.
+    """
+
+    reports = await list_student_reports(
+        db,
+        school_id=school_id,
+        report_session_id=report_session_id,
+        published=True,
+        status=REPORT_STATUS_PUBLISHED,
+    )
+
+    return [
+        report
+        for report in reports
+        if report.published and report.status == REPORT_STATUS_PUBLISHED
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -577,6 +750,7 @@ async def tutor_correct_report_endpoint(
             tutor_id=current_user.id,
             report_text=payload.report_text,
             tutor_review_comments=payload.tutor_review_comments,
+            tutor_comment=getattr(payload, "tutor_comment", None),
         )
     except ValueError as exc:
         raise HTTPException(
@@ -768,6 +942,73 @@ async def review_dashboard_endpoint(
     return StudentReportReviewDashboard(**counts)
 
 
+@router.patch(
+    "/{report_id}/reviewer-edit",
+    response_model=StudentReportRead,
+)
+async def reviewer_edit_report_endpoint(
+    report_id: int,
+    payload: StudentReportUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StudentReportRead:
+    """
+    Allow SMT reviewers to correct a report directly without returning it.
+
+    Saving corrections does not advance or reverse the workflow status.
+    Published reports remain locked.
+    """
+
+    school_id = _require_school_id(current_user)
+    _require_report_reviewer(current_user)
+
+    report = await _get_report_or_404(
+        db=db,
+        report_id=report_id,
+        school_id=school_id,
+    )
+
+    if report.status == REPORT_STATUS_PUBLISHED or report.published:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Published reports cannot be edited.",
+        )
+
+    editable_statuses = {
+        REPORT_STATUS_SUBMITTED,
+        REPORT_STATUS_TUTOR_REVIEW,
+        REPORT_STATUS_READY_FOR_SMT,
+        REPORT_STATUS_APPROVED,
+    }
+
+    if report.status not in editable_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Reviewer corrections can only be saved while a report is "
+                "submitted, under tutor review, ready for SMT, or approved."
+            ),
+        )
+
+    try:
+        return await update_student_report_as_reviewer(
+            db,
+            report=report,
+            payload=payload,
+            reviewer_id=current_user.id,
+            reviewer_role=(
+                "platform_admin"
+                if _user_has_role(current_user, UserRole.PLATFORM_ADMIN)
+                else "school_admin"
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+
 @router.post(
     "/{report_id}/approve",
     response_model=StudentReportRead,
@@ -955,6 +1196,143 @@ async def publish_report_session_endpoint(
     return {
         "published_count": published_count,
     }
+
+
+@router.get(
+    "/export-session/{report_session_id}",
+    response_class=StreamingResponse,
+)
+async def export_report_session_zip_endpoint(
+    report_session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """
+    Download all published reports for one reporting session as a ZIP file.
+
+    Only School Admin and Platform Admin users may export a complete session.
+    """
+
+    school_id = _require_school_id(current_user)
+    _require_report_publisher(current_user)
+
+    if report_session_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Report session ID must be a positive integer.",
+        )
+
+    reports = await _get_published_reports_for_session(
+        db=db,
+        school_id=school_id,
+        report_session_id=report_session_id,
+    )
+
+    if not reports:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No published reports were found for this reporting session.",
+        )
+
+    zip_items = [
+        ReportZipItem(
+            report=_build_report_pdf_data(report),
+        )
+        for report in reports
+    ]
+
+    try:
+        zip_bytes = generate_report_zip_bytes(zip_items)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The report ZIP archive could not be generated.",
+        ) from exc
+
+    filename = f"student_reports_session_{report_session_id}.zip"
+
+    return StreamingResponse(
+        BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(zip_bytes)),
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.get(
+    "/{report_id}/pdf",
+    response_class=StreamingResponse,
+)
+async def download_report_pdf_endpoint(
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """
+    Download one published student report as a PDF.
+
+    School staff may download published reports within their school. Parents
+    may download only published reports belonging to linked children.
+    """
+
+    school_id = _require_school_id(current_user)
+
+    report = await _get_report_or_404(
+        db=db,
+        report_id=report_id,
+        school_id=school_id,
+    )
+
+    if report.status != REPORT_STATUS_PUBLISHED or not report.published:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only published reports can be downloaded as PDF.",
+        )
+
+    if not await _user_can_download_published_report(
+        db=db,
+        user=current_user,
+        report=report,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to download this report.",
+        )
+
+    pdf_data = _build_report_pdf_data(report)
+
+    try:
+        pdf_bytes = generate_report_pdf_bytes(pdf_data)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The report PDF could not be generated.",
+        ) from exc
+
+    filename = build_report_pdf_filename(pdf_data)
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(pdf_bytes)),
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

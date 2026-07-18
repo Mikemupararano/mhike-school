@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.models.user import User
-from app.models.user_role import UserRole
 from app.repositories.report_sessions import (
     create_report_session,
     delete_report_session,
@@ -28,6 +27,8 @@ router = APIRouter()
 
 
 def _require_school_id(user: User) -> int:
+    """Return the user's school ID or reject unlinked users."""
+
     if user.school_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -37,42 +38,23 @@ def _require_school_id(user: User) -> int:
     return user.school_id
 
 
-def _normalise_role(value: object) -> str:
-    if isinstance(value, str):
-        return value
-
-    role = getattr(value, "role", None)
-
-    if isinstance(role, str):
-        return role
-
-    if hasattr(role, "value"):
-        return str(role.value)
-
-    if hasattr(value, "value"):
-        return str(value.value)
-
-    return str(value)
-
-
-def _user_has_role(user: User, role: UserRole) -> bool:
-    expected = _normalise_role(role)
-
-    return any(_normalise_role(r) == expected for r in user.roles)
-
-
 def _require_report_session_admin(user: User) -> None:
-    if not any(
-        _user_has_role(user, role)
-        for role in (
-            UserRole.SCHOOL_ADMIN,
-            UserRole.PLATFORM_ADMIN,
-        )
-    ):
+    """Restrict report-session management to school/platform admins."""
+
+    if not (user.is_school_admin or user.is_platform_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school administrators can manage report sessions.",
         )
+
+
+def _report_session_not_found() -> HTTPException:
+    """Create the standard report-session 404 response."""
+
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Report session not found.",
+    )
 
 
 # ----------------------------------------------------------------------
@@ -107,7 +89,6 @@ async def create_report_session_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     school_id = _require_school_id(current_user)
-
     _require_report_session_admin(current_user)
 
     try:
@@ -116,7 +97,6 @@ async def create_report_session_endpoint(
             school_id=school_id,
             payload=payload,
         )
-
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -135,19 +115,16 @@ async def get_report_session_endpoint(
 ):
     school_id = _require_school_id(current_user)
 
-    session = await get_report_session(
+    report_session = await get_report_session(
         db,
         school_id=school_id,
         report_session_id=report_session_id,
     )
 
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report session not found.",
-        )
+    if report_session is None:
+        raise _report_session_not_found()
 
-    return session
+    return report_session
 
 
 @router.patch(
@@ -161,28 +138,23 @@ async def update_report_session_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     school_id = _require_school_id(current_user)
-
     _require_report_session_admin(current_user)
 
-    session = await get_report_session(
+    report_session = await get_report_session(
         db,
         school_id=school_id,
         report_session_id=report_session_id,
     )
 
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report session not found.",
-        )
+    if report_session is None:
+        raise _report_session_not_found()
 
     try:
         return await update_report_session(
             db,
-            session=session,
+            session=report_session,
             payload=payload,
         )
-
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -200,22 +172,18 @@ async def delete_report_session_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     school_id = _require_school_id(current_user)
-
     _require_report_session_admin(current_user)
 
-    session = await get_report_session(
+    report_session = await get_report_session(
         db,
         school_id=school_id,
         report_session_id=report_session_id,
     )
 
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report session not found.",
-        )
+    if report_session is None:
+        raise _report_session_not_found()
 
     await delete_report_session(
         db,
-        session=session,
+        session=report_session,
     )

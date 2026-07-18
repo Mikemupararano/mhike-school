@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from enum import Enum
 
@@ -43,12 +44,14 @@ class User(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+    )
 
     email: Mapped[str] = mapped_column(
         String(255),
-        index=True,
         nullable=False,
+        index=True,
     )
 
     hashed_password: Mapped[str | None] = mapped_column(
@@ -82,9 +85,16 @@ class User(Base):
         index=True,
     )
 
-    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
 
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
 
     school_id: Mapped[int | None] = mapped_column(
         ForeignKey("schools.id"),
@@ -144,37 +154,48 @@ class User(Base):
 
     @property
     def roles(self) -> list[str]:
-        if self.user_roles:
-            return sorted(
-                {
-                    (
-                        assignment.role.value
-                        if isinstance(assignment.role, UserRole)
-                        else str(assignment.role)
-                    )
-                    for assignment in self.user_roles
-                }
+        role_values: set[str] = set()
+
+        if self.role:
+            role_values.add(
+                self.role.value if isinstance(self.role, UserRole) else str(self.role)
             )
 
-        return [self.role.value] if self.role else []
+        for assignment in self.user_roles or []:
+            role_values.add(
+                assignment.role.value
+                if isinstance(assignment.role, UserRole)
+                else str(assignment.role)
+            )
+
+        return sorted(role_values)
 
     @property
     def primary_role(self) -> str | None:
         if self.role:
-            return self.role.value
+            return (
+                self.role.value if isinstance(self.role, UserRole) else str(self.role)
+            )
 
         return self.roles[0] if self.roles else None
 
-    def has_role(self, role: UserRole | str) -> bool:
-        role_value = role.value if isinstance(role, UserRole) else role
+    def has_role(
+        self,
+        role: UserRole | str,
+    ) -> bool:
+        role_value = role.value if isinstance(role, UserRole) else str(role)
+
         return role_value in self.roles
 
-    def has_any_role(self, roles: list[UserRole | str] | set[UserRole | str]) -> bool:
+    def has_any_role(
+        self,
+        roles: Iterable[UserRole | str],
+    ) -> bool:
         role_values = {
-            role.value if isinstance(role, UserRole) else role for role in roles
+            role.value if isinstance(role, UserRole) else str(role) for role in roles
         }
 
-        return bool(set(self.roles).intersection(role_values))
+        return bool(role_values.intersection(self.roles))
 
     @property
     def is_platform_admin(self) -> bool:
@@ -212,4 +233,9 @@ class User(Base):
                 UserRole.SCHOOL_ADMIN,
                 UserRole.TEACHER,
             }
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"<User " f"id={self.id} " f"email={self.email!r} " f"roles={self.roles}>"
         )

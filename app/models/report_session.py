@@ -25,6 +25,10 @@ class ReportSession(Base):
 
     __tablename__ = "report_sessions"
 
+    # ------------------------------------------------------------------
+    # Identity and ownership
+    # ------------------------------------------------------------------
+
     id: Mapped[int] = mapped_column(
         primary_key=True,
     )
@@ -37,6 +41,10 @@ class ReportSession(Base):
         index=True,
         nullable=False,
     )
+
+    # ------------------------------------------------------------------
+    # Session identification
+    # ------------------------------------------------------------------
 
     title: Mapped[str] = mapped_column(
         String(200),
@@ -257,14 +265,25 @@ class ReportSession(Base):
     # Relationships
     # ------------------------------------------------------------------
 
-    school = relationship(
+    school: Mapped["School"] = relationship(
         "School",
         lazy="selectin",
     )
 
-    copied_from_session = relationship(
+    copied_from_session: Mapped["ReportSession | None"] = relationship(
         "ReportSession",
         remote_side=[id],
         foreign_keys=[copied_from_session_id],
         lazy="selectin",
     )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ReportSession "
+            f"id={self.id} "
+            f"school_id={self.school_id} "
+            f"title={self.title!r} "
+            f"academic_year={self.academic_year!r} "
+            f"checkpoint_name={self.checkpoint_name!r} "
+            f"active={self.active}>"
+        )
