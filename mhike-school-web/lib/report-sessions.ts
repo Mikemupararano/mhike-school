@@ -23,16 +23,22 @@ export type ReportSessionCreateInput = Omit<
     "id" | "school_id" | "created_at"
 >;
 
-export type ReportSessionUpdateInput = Partial<ReportSessionCreateInput>;
+export type ReportSessionUpdateInput =
+    Partial<ReportSessionCreateInput>;
 
-export async function listReportSessions(): Promise<ReportSession[]> {
-    return apiGet<ReportSession[]>("/report-sessions");
+export async function listReportSessions(): Promise<
+    ReportSession[]
+> {
+    return apiGet<ReportSession[]>("/report-sessions/");
 }
 
 export async function createReportSession(
     payload: ReportSessionCreateInput,
 ): Promise<ReportSession> {
-    return apiPost<ReportSession>("/report-sessions", payload);
+    return apiPost<ReportSession>(
+        "/report-sessions/",
+        payload,
+    );
 }
 
 export async function updateReportSession(
@@ -45,6 +51,10 @@ export async function updateReportSession(
     );
 }
 
-export async function deleteReportSession(sessionId: number): Promise<void> {
-    return apiDelete<void>(`/report-sessions/${sessionId}`);
+export async function deleteReportSession(
+    sessionId: number,
+): Promise<void> {
+    return apiDelete<void>(
+        `/report-sessions/${sessionId}`,
+    );
 }

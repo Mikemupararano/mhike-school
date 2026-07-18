@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
+import {
+    listReportSessions,
+    type ReportSession,
+} from "@/lib/report-sessions";
 import { publishReportSession } from "@/lib/report-publishing";
 import {
     approveStudentReport,
@@ -17,23 +22,33 @@ type StatusFilter =
     | "all"
     | "draft"
     | "submitted"
+    | "tutor_review"
+    | "returned_by_tutor"
+    | "ready_for_smt"
+    | "returned_by_smt"
     | "approved"
     | "published";
 
 type ReportSessionGroup = {
-    report_session_id: number | null;
+    reportSessionId: number | null;
     title: string;
     reports: StudentReport[];
-    draftCount: number;
-    submittedCount: number;
-    approvedCount: number;
-    publishedCount: number;
+    statusCounts: Record<string, number>;
 };
 
-const REPORT_STATUS_DRAFT = "draft";
-const REPORT_STATUS_SUBMITTED = "submitted";
-const REPORT_STATUS_APPROVED = "approved";
-const REPORT_STATUS_PUBLISHED = "published";
+type ReturnEditorState = {
+    reportId: number;
+    comments: string;
+} | null;
+
+const STATUS_DRAFT = "draft";
+const STATUS_SUBMITTED = "submitted";
+const STATUS_TUTOR_REVIEW = "tutor_review";
+const STATUS_RETURNED_BY_TUTOR = "returned_by_tutor";
+const STATUS_READY_FOR_SMT = "ready_for_smt";
+const STATUS_RETURNED_BY_SMT = "returned_by_smt";
+const STATUS_APPROVED = "approved";
+const STATUS_PUBLISHED = "published";
 
 const EMPTY_DASHBOARD: StudentReportReviewDashboard = {
     draft: 0,
@@ -42,7 +57,28 @@ const EMPTY_DASHBOARD: StudentReportReviewDashboard = {
     published: 0,
 };
 
-function formatDate(value: string | null): string {
+const REVIEWABLE_STATUSES = new Set([
+    STATUS_SUBMITTED,
+    STATUS_TUTOR_REVIEW,
+    STATUS_READY_FOR_SMT,
+]);
+
+const STATUS_OPTIONS: Array<{
+    value: StatusFilter;
+    label: string;
+}> = [
+        { value: "submitted", label: "Awaiting review" },
+        { value: "tutor_review", label: "Tutor review" },
+        { value: "ready_for_smt", label: "Ready for SMT" },
+        { value: "returned_by_tutor", label: "Returned by tutor" },
+        { value: "returned_by_smt", label: "Returned by SMT" },
+        { value: "approved", label: "Approved" },
+        { value: "published", label: "Published" },
+        { value: "draft", label: "Draft" },
+        { value: "all", label: "All reports" },
+    ];
+
+function formatDate(value: string | null | undefined): string {
     if (!value) {
         return "Not recorded";
     }
@@ -61,52 +97,99 @@ function formatDate(value: string | null): string {
 }
 
 function formatStatus(status: string): string {
-    return status
-        .split("_")
-        .map(
-            (word) =>
-                word.charAt(0).toUpperCase() +
-                word.slice(1).toLowerCase(),
-        )
-        .join(" ");
-}
-
-function getGroupTitle(report: StudentReport): string {
-    if (report.report_session_id !== null) {
-        return `Report Session ${report.report_session_id}`;
+    switch (status) {
+        case STATUS_DRAFT:
+            return "Draft";
+        case STATUS_SUBMITTED:
+            return "Submitted";
+        case STATUS_TUTOR_REVIEW:
+            return "Tutor review";
+        case STATUS_RETURNED_BY_TUTOR:
+            return "Returned by tutor";
+        case STATUS_READY_FOR_SMT:
+            return "Ready for SMT";
+        case STATUS_RETURNED_BY_SMT:
+            return "Returned by SMT";
+        case STATUS_APPROVED:
+            return "Approved";
+        case STATUS_PUBLISHED:
+            return "Published";
+        default:
+            return status.replaceAll("_", " ");
     }
-
-    return "Reports Without Session";
 }
 
 function getStatusClassName(status: string): string {
     switch (status) {
-        case REPORT_STATUS_PUBLISHED:
+        case STATUS_PUBLISHED:
             return "bg-green-50 text-green-700";
-
-        case REPORT_STATUS_APPROVED:
+        case STATUS_APPROVED:
             return "bg-blue-50 text-blue-700";
-
-        case REPORT_STATUS_SUBMITTED:
+        case STATUS_SUBMITTED:
+        case STATUS_TUTOR_REVIEW:
+        case STATUS_READY_FOR_SMT:
             return "bg-purple-50 text-purple-700";
-
+        case STATUS_RETURNED_BY_TUTOR:
+        case STATUS_RETURNED_BY_SMT:
+            return "bg-red-50 text-red-700";
         default:
             return "bg-amber-50 text-amber-700";
     }
 }
 
+function getReportTimestamp(report: StudentReport): number {
+    const value =
+        report.submitted_at ??
+        report.updated_at ??
+        report.created_at;
+
+    const timestamp = new Date(value).getTime();
+
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function isPublished(report: StudentReport): boolean {
+    return report.published || report.status === STATUS_PUBLISHED;
+}
+
+function matchesStatus(
+    report: StudentReport,
+    statusFilter: StatusFilter,
+): boolean {
+    if (statusFilter === "all") {
+        return true;
+    }
+
+    if (statusFilter === STATUS_PUBLISHED) {
+        return isPublished(report);
+    }
+
+    if (isPublished(report)) {
+        return false;
+    }
+
+    return report.status === statusFilter;
+}
+
 export default function SchoolAdminReportsPage() {
+    const router = useRouter();
+
     const [reports, setReports] = useState<StudentReport[]>([]);
+    const [reportSessions, setReportSessions] = useState<ReportSession[]>([]);
     const [dashboard, setDashboard] =
         useState<StudentReportReviewDashboard>(EMPTY_DASHBOARD);
 
     const [statusFilter, setStatusFilter] =
         useState<StatusFilter>("submitted");
+    const [sessionFilter, setSessionFilter] = useState("all");
+    const [searchQuery, setSearchQuery] = useState("");
 
     const [loading, setLoading] = useState(true);
     const [savingId, setSavingId] = useState<number | null>(null);
     const [publishingSessionId, setPublishingSessionId] =
         useState<number | null>(null);
+    const [returnEditor, setReturnEditor] =
+        useState<ReturnEditorState>(null);
 
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(
@@ -118,13 +201,16 @@ export default function SchoolAdminReportsPage() {
             setLoading(true);
             setError(null);
 
-            const [reportData, dashboardData] = await Promise.all([
-                listStudentReports(),
-                getStudentReportReviewDashboard(),
-            ]);
+            const [reportData, dashboardData, sessionData] =
+                await Promise.all([
+                    listStudentReports(),
+                    getStudentReportReviewDashboard(),
+                    listReportSessions(),
+                ]);
 
             setReports(reportData);
             setDashboard(dashboardData);
+            setReportSessions(sessionData);
         } catch (err) {
             setError(
                 err instanceof Error
@@ -140,36 +226,78 @@ export default function SchoolAdminReportsPage() {
         void loadData();
     }, [loadData]);
 
+    const sessionTitleById = useMemo(
+        () =>
+            new Map(
+                reportSessions.map((session) => [
+                    session.id,
+                    session.title,
+                ]),
+            ),
+        [reportSessions],
+    );
+
+    const statusCounts = useMemo(() => {
+        const counts: Record<string, number> = {
+            draft: 0,
+            submitted: 0,
+            tutor_review: 0,
+            returned_by_tutor: 0,
+            ready_for_smt: 0,
+            returned_by_smt: 0,
+            approved: 0,
+            published: 0,
+        };
+
+        for (const report of reports) {
+            if (isPublished(report)) {
+                counts.published += 1;
+                continue;
+            }
+
+            counts[report.status] = (counts[report.status] ?? 0) + 1;
+        }
+
+        return counts;
+    }, [reports]);
+
     const filteredReports = useMemo(() => {
-        const sorted = [...reports].sort((first, second) => {
-            const firstDate =
-                first.submitted_at ?? first.created_at;
-            const secondDate =
-                second.submitted_at ?? second.created_at;
+        const normalisedSearch = searchQuery.trim().toLowerCase();
 
-            return (
-                new Date(secondDate).getTime() -
-                new Date(firstDate).getTime()
+        return [...reports]
+            .filter((report) => matchesStatus(report, statusFilter))
+            .filter((report) =>
+                sessionFilter === "all"
+                    ? true
+                    : String(report.report_session_id ?? "none") ===
+                    sessionFilter,
+            )
+            .filter((report) => {
+                if (!normalisedSearch) {
+                    return true;
+                }
+
+                const searchableText = [
+                    report.title,
+                    report.report_text,
+                    report.review_comments ?? "",
+                    String(report.student_id),
+                    String(report.teacher_id ?? ""),
+                    report.academic_year,
+                    report.term ?? "",
+                    report.status,
+                ]
+                    .join(" ")
+                    .toLowerCase();
+
+                return searchableText.includes(normalisedSearch);
+            })
+            .sort(
+                (first, second) =>
+                    getReportTimestamp(second) -
+                    getReportTimestamp(first),
             );
-        });
-
-        if (statusFilter === "all") {
-            return sorted;
-        }
-
-        if (statusFilter === REPORT_STATUS_PUBLISHED) {
-            return sorted.filter(
-                (report) =>
-                    report.published ||
-                    report.status === REPORT_STATUS_PUBLISHED,
-            );
-        }
-
-        return sorted.filter(
-            (report) =>
-                report.status === statusFilter && !report.published,
-        );
-    }, [reports, statusFilter]);
+    }, [reports, searchQuery, sessionFilter, statusFilter]);
 
     const groupedReports = useMemo<ReportSessionGroup[]>(() => {
         const groups = new Map<string, ReportSessionGroup>();
@@ -178,14 +306,17 @@ export default function SchoolAdminReportsPage() {
             const key = String(report.report_session_id ?? "none");
 
             if (!groups.has(key)) {
+                const sessionTitle =
+                    report.report_session_id === null
+                        ? "Reports Without Session"
+                        : sessionTitleById.get(report.report_session_id) ??
+                        `Report Session ${report.report_session_id}`;
+
                 groups.set(key, {
-                    report_session_id: report.report_session_id,
-                    title: getGroupTitle(report),
+                    reportSessionId: report.report_session_id,
+                    title: sessionTitle,
                     reports: [],
-                    draftCount: 0,
-                    submittedCount: 0,
-                    approvedCount: 0,
-                    publishedCount: 0,
+                    statusCounts: {},
                 });
             }
 
@@ -197,41 +328,35 @@ export default function SchoolAdminReportsPage() {
 
             group.reports.push(report);
 
-            if (
-                report.published ||
-                report.status === REPORT_STATUS_PUBLISHED
-            ) {
-                group.publishedCount += 1;
-            } else if (report.status === REPORT_STATUS_APPROVED) {
-                group.approvedCount += 1;
-            } else if (report.status === REPORT_STATUS_SUBMITTED) {
-                group.submittedCount += 1;
-            } else {
-                group.draftCount += 1;
-            }
+            const status = isPublished(report)
+                ? STATUS_PUBLISHED
+                : report.status;
+
+            group.statusCounts[status] =
+                (group.statusCounts[status] ?? 0) + 1;
         }
 
         return Array.from(groups.values()).sort((first, second) => {
             if (
-                first.report_session_id === null &&
-                second.report_session_id !== null
+                first.reportSessionId === null &&
+                second.reportSessionId !== null
             ) {
                 return 1;
             }
 
             if (
-                first.report_session_id !== null &&
-                second.report_session_id === null
+                first.reportSessionId !== null &&
+                second.reportSessionId === null
             ) {
                 return -1;
             }
 
             return (
-                (second.report_session_id ?? 0) -
-                (first.report_session_id ?? 0)
+                (second.reportSessionId ?? 0) -
+                (first.reportSessionId ?? 0)
             );
         });
-    }, [filteredReports]);
+    }, [filteredReports, sessionTitleById]);
 
     async function handleApproveReport(report: StudentReport) {
         try {
@@ -254,19 +379,23 @@ export default function SchoolAdminReportsPage() {
         }
     }
 
-    async function handleReturnReport(report: StudentReport) {
-        const reviewComments = window.prompt(
-            "Enter feedback explaining what the teacher should correct:",
-            report.review_comments ?? "",
-        );
+    function openReturnEditor(report: StudentReport) {
+        setError(null);
+        setSuccessMessage(null);
+        setReturnEditor({
+            reportId: report.id,
+            comments: report.review_comments ?? "",
+        });
+    }
 
-        if (reviewComments === null) {
+    async function handleReturnReport(report: StudentReport) {
+        if (!returnEditor || returnEditor.reportId !== report.id) {
             return;
         }
 
-        const trimmedComments = reviewComments.trim();
+        const reviewComments = returnEditor.comments.trim();
 
-        if (!trimmedComments) {
+        if (!reviewComments) {
             setError(
                 "Please enter feedback before returning the report.",
             );
@@ -279,9 +408,10 @@ export default function SchoolAdminReportsPage() {
             setSuccessMessage(null);
 
             await returnStudentReport(report.id, {
-                review_comments: trimmedComments,
+                review_comments: reviewComments,
             });
 
+            setReturnEditor(null);
             await loadData();
 
             setSuccessMessage(
@@ -300,7 +430,7 @@ export default function SchoolAdminReportsPage() {
 
     async function handlePublishSession(reportSessionId: number) {
         const confirmed = window.confirm(
-            "Publish all approved reports in this report session?",
+            "Publish all approved reports in this report session? Published reports will become visible to authorised parents.",
         );
 
         if (!confirmed) {
@@ -332,7 +462,7 @@ export default function SchoolAdminReportsPage() {
     }
 
     async function handleDeleteReport(report: StudentReport) {
-        if (report.status !== REPORT_STATUS_DRAFT || report.published) {
+        if (report.status !== STATUS_DRAFT || isPublished(report)) {
             setError("Only unpublished draft reports can be deleted.");
             return;
         }
@@ -365,18 +495,62 @@ export default function SchoolAdminReportsPage() {
         }
     }
 
+    const summaryCards = [
+        {
+            label: "Draft",
+            value: dashboard.draft,
+            filter: "draft" as StatusFilter,
+            valueClass: "text-amber-600",
+            hoverClass: "hover:border-amber-300",
+        },
+        {
+            label: "Awaiting Review",
+            value:
+                statusCounts.submitted +
+                statusCounts.tutor_review +
+                statusCounts.ready_for_smt,
+            filter: "submitted" as StatusFilter,
+            valueClass: "text-purple-600",
+            hoverClass: "hover:border-purple-300",
+        },
+        {
+            label: "Approved",
+            value: dashboard.approved,
+            filter: "approved" as StatusFilter,
+            valueClass: "text-blue-600",
+            hoverClass: "hover:border-blue-300",
+        },
+        {
+            label: "Published",
+            value: dashboard.published,
+            filter: "published" as StatusFilter,
+            valueClass: "text-green-600",
+            hoverClass: "hover:border-green-300",
+        },
+    ];
+
     return (
         <main className="space-y-6 p-8">
-            <div>
-                <h1 className="text-3xl font-extrabold text-slate-950">
-                    Report Review &amp; Publishing
-                </h1>
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                    <h1 className="text-3xl font-extrabold text-slate-950">
+                        Report Review &amp; Publishing
+                    </h1>
 
-                <p className="mt-2 max-w-3xl text-slate-600">
-                    Review submitted reports, return reports requiring
-                    correction, approve completed reports and publish approved
-                    report sessions for parent access.
-                </p>
+                    <p className="mt-2 max-w-3xl text-base text-slate-600">
+                        Review submitted reports, return reports requiring
+                        correction, approve completed reports and publish
+                        approved sessions for parent access.
+                    </p>
+                </div>
+
+                <button
+                    type="button"
+                    onClick={() => router.back()}
+                    className="w-fit rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-bold text-slate-700 hover:bg-slate-50"
+                >
+                    ← Back
+                </button>
             </div>
 
             {error && (
@@ -401,110 +575,120 @@ export default function SchoolAdminReportsPage() {
                 aria-label="Report status summary"
                 className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
             >
-                <button
-                    type="button"
-                    onClick={() => setStatusFilter("draft")}
-                    className="rounded-2xl border bg-white p-5 text-left transition hover:border-amber-300 hover:shadow-sm"
-                >
-                    <p className="text-base font-medium text-slate-600">
-                        Draft
-                    </p>
-                    <p className="mt-2 text-3xl font-bold text-amber-600">
-                        {dashboard.draft}
-                    </p>
-                </button>
-
-                <button
-                    type="button"
-                    onClick={() => setStatusFilter("submitted")}
-                    className="rounded-2xl border bg-white p-5 text-left transition hover:border-purple-300 hover:shadow-sm"
-                >
-                    <p className="text-base font-medium text-slate-600">
-                        Awaiting Review
-                    </p>
-                    <p className="mt-2 text-3xl font-bold text-purple-600">
-                        {dashboard.submitted}
-                    </p>
-                </button>
-
-                <button
-                    type="button"
-                    onClick={() => setStatusFilter("approved")}
-                    className="rounded-2xl border bg-white p-5 text-left transition hover:border-blue-300 hover:shadow-sm"
-                >
-                    <p className="text-base font-medium text-slate-600">
-                        Approved
-                    </p>
-                    <p className="mt-2 text-3xl font-bold text-blue-600">
-                        {dashboard.approved}
-                    </p>
-                </button>
-
-                <button
-                    type="button"
-                    onClick={() => setStatusFilter("published")}
-                    className="rounded-2xl border bg-white p-5 text-left transition hover:border-green-300 hover:shadow-sm"
-                >
-                    <p className="text-base font-medium text-slate-600">
-                        Published
-                    </p>
-                    <p className="mt-2 text-3xl font-bold text-green-600">
-                        {dashboard.published}
-                    </p>
-                </button>
+                {summaryCards.map((card) => (
+                    <button
+                        key={card.label}
+                        type="button"
+                        onClick={() => setStatusFilter(card.filter)}
+                        className={`rounded-2xl border bg-white p-5 text-left transition hover:shadow-sm ${card.hoverClass}`}
+                    >
+                        <p className="text-base font-medium text-slate-600">
+                            {card.label}
+                        </p>
+                        <p
+                            className={`mt-2 text-3xl font-bold ${card.valueClass}`}
+                        >
+                            {card.value}
+                        </p>
+                    </button>
+                ))}
             </section>
 
             <section className="rounded-2xl border bg-white p-6">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-950">
-                            Reports
-                        </h2>
+                <div className="flex flex-col gap-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-950">
+                                Reports
+                            </h2>
 
-                        <p className="mt-1 text-base text-slate-600">
-                            {filteredReports.length}{" "}
-                            {filteredReports.length === 1
-                                ? "report"
-                                : "reports"}{" "}
-                            shown.
-                        </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                        <label
-                            htmlFor="report-status-filter"
-                            className="text-base font-semibold text-slate-700"
-                        >
-                            Status
-                        </label>
-
-                        <select
-                            id="report-status-filter"
-                            value={statusFilter}
-                            onChange={(event) =>
-                                setStatusFilter(
-                                    event.target.value as StatusFilter,
-                                )
-                            }
-                            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base text-slate-900"
-                        >
-                            <option value="submitted">
-                                Awaiting review
-                            </option>
-                            <option value="approved">Approved</option>
-                            <option value="draft">Draft</option>
-                            <option value="published">Published</option>
-                            <option value="all">All reports</option>
-                        </select>
+                            <p className="mt-1 text-base text-slate-600">
+                                {filteredReports.length}{" "}
+                                {filteredReports.length === 1
+                                    ? "report"
+                                    : "reports"}{" "}
+                                shown.
+                            </p>
+                        </div>
 
                         <button
                             type="button"
                             disabled={loading}
                             onClick={() => void loadData()}
-                            className="rounded-xl border border-slate-300 px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="w-fit rounded-xl border border-slate-300 px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            Refresh
+                            {loading ? "Refreshing..." : "Refresh"}
                         </button>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                        <label className="grid gap-2">
+                            <span className="text-base font-semibold text-slate-700">
+                                Status
+                            </span>
+
+                            <select
+                                value={statusFilter}
+                                onChange={(event) =>
+                                    setStatusFilter(
+                                        event.target.value as StatusFilter,
+                                    )
+                                }
+                                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base text-slate-900"
+                            >
+                                {STATUS_OPTIONS.map((option) => (
+                                    <option
+                                        key={option.value}
+                                        value={option.value}
+                                    >
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+
+                        <label className="grid gap-2">
+                            <span className="text-base font-semibold text-slate-700">
+                                Report Session
+                            </span>
+
+                            <select
+                                value={sessionFilter}
+                                onChange={(event) =>
+                                    setSessionFilter(event.target.value)
+                                }
+                                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base text-slate-900"
+                            >
+                                <option value="all">All sessions</option>
+                                {reportSessions.map((session) => (
+                                    <option
+                                        key={session.id}
+                                        value={String(session.id)}
+                                    >
+                                        {session.title}
+                                        {session.active ? " (Active)" : ""}
+                                    </option>
+                                ))}
+                                <option value="none">
+                                    Reports without session
+                                </option>
+                            </select>
+                        </label>
+
+                        <label className="grid gap-2">
+                            <span className="text-base font-semibold text-slate-700">
+                                Search
+                            </span>
+
+                            <input
+                                value={searchQuery}
+                                onChange={(event) =>
+                                    setSearchQuery(event.target.value)
+                                }
+                                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base text-slate-900"
+                                placeholder="Title, pupil ID, teacher ID or text"
+                            />
+                        </label>
                     </div>
                 </div>
 
@@ -514,221 +698,390 @@ export default function SchoolAdminReportsPage() {
                     </p>
                 ) : groupedReports.length === 0 ? (
                     <div className="mt-6 rounded-2xl border border-dashed bg-slate-50 p-6 text-base text-slate-600">
-                        No reports were found for this status.
+                        No reports were found for the selected filters.
                     </div>
                 ) : (
                     <div className="mt-6 grid gap-6">
-                        {groupedReports.map((group) => (
-                            <section
-                                key={group.report_session_id ?? "none"}
-                                className="rounded-2xl border bg-slate-50 p-5"
-                            >
-                                <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row md:items-center md:justify-between">
-                                    <div>
-                                        <h3 className="text-lg font-bold text-slate-950">
-                                            {group.title}
-                                        </h3>
+                        {groupedReports.map((group) => {
+                            const approvedCount =
+                                group.statusCounts[STATUS_APPROVED] ?? 0;
 
-                                        <p className="mt-1 text-base text-slate-600">
-                                            {group.reports.length}{" "}
-                                            {group.reports.length === 1
-                                                ? "report"
-                                                : "reports"}
-                                            {" · "}
-                                            {group.draftCount} draft
-                                            {" · "}
-                                            {group.submittedCount} submitted
-                                            {" · "}
-                                            {group.approvedCount} approved
-                                            {" · "}
-                                            {group.publishedCount} published
-                                        </p>
+                            return (
+                                <section
+                                    key={group.reportSessionId ?? "none"}
+                                    className="rounded-2xl border bg-slate-50 p-5"
+                                >
+                                    <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <h3 className="text-lg font-bold text-slate-950">
+                                                {group.title}
+                                            </h3>
+
+                                            <p className="mt-1 text-base text-slate-600">
+                                                {group.reports.length}{" "}
+                                                {group.reports.length === 1
+                                                    ? "report"
+                                                    : "reports"}
+                                                {" · "}
+                                                {group.statusCounts[
+                                                    STATUS_DRAFT
+                                                ] ?? 0}{" "}
+                                                draft
+                                                {" · "}
+                                                {group.statusCounts[
+                                                    STATUS_SUBMITTED
+                                                ] ?? 0}{" "}
+                                                submitted
+                                                {" · "}
+                                                {group.statusCounts[
+                                                    STATUS_READY_FOR_SMT
+                                                ] ?? 0}{" "}
+                                                ready for SMT
+                                                {" · "}
+                                                {approvedCount} approved
+                                                {" · "}
+                                                {group.statusCounts[
+                                                    STATUS_PUBLISHED
+                                                ] ?? 0}{" "}
+                                                published
+                                            </p>
+                                        </div>
+
+                                        {group.reportSessionId !== null && (
+                                            <button
+                                                type="button"
+                                                disabled={
+                                                    approvedCount === 0 ||
+                                                    publishingSessionId ===
+                                                    group.reportSessionId
+                                                }
+                                                onClick={() =>
+                                                    void handlePublishSession(
+                                                        group.reportSessionId as number,
+                                                    )
+                                                }
+                                                className="w-fit rounded-xl bg-green-600 px-4 py-2 text-base font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                {publishingSessionId ===
+                                                    group.reportSessionId
+                                                    ? "Publishing..."
+                                                    : "Publish Approved Reports"}
+                                            </button>
+                                        )}
                                     </div>
 
-                                    {group.report_session_id !== null && (
-                                        <button
-                                            type="button"
-                                            disabled={
-                                                group.approvedCount === 0 ||
-                                                publishingSessionId ===
-                                                group.report_session_id
-                                            }
-                                            onClick={() =>
-                                                void handlePublishSession(
-                                                    group.report_session_id as number,
-                                                )
-                                            }
-                                            className="w-fit rounded-xl bg-green-600 px-4 py-2 text-base font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                            {publishingSessionId ===
-                                                group.report_session_id
-                                                ? "Publishing..."
-                                                : "Publish Approved Reports"}
-                                        </button>
-                                    )}
-                                </div>
+                                    <div className="mt-4 grid gap-4">
+                                        {group.reports.map((report) => {
+                                            const published =
+                                                isPublished(report);
+                                            const returnEditorOpen =
+                                                returnEditor?.reportId ===
+                                                report.id;
 
-                                <div className="mt-4 grid gap-4">
-                                    {group.reports.map((report) => (
-                                        <article
-                                            key={report.id}
-                                            className="rounded-2xl border bg-white p-5"
-                                        >
-                                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                                <div>
-                                                    <h4 className="text-lg font-bold text-slate-950">
-                                                        {report.title}
-                                                    </h4>
+                                            return (
+                                                <article
+                                                    key={report.id}
+                                                    className="rounded-2xl border bg-white p-5"
+                                                >
+                                                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                        <div>
+                                                            <h4 className="text-lg font-bold text-slate-950">
+                                                                {report.title}
+                                                            </h4>
 
-                                                    <p className="mt-1 text-base text-slate-600">
-                                                        Student{" "}
-                                                        {report.student_id}
-                                                        {" · "}
-                                                        Teacher{" "}
-                                                        {report.teacher_id ??
-                                                            "Not assigned"}
-                                                        {" · "}
-                                                        {
-                                                            report.academic_year
-                                                        }
-                                                        {report.term
-                                                            ? ` · ${report.term}`
-                                                            : ""}
-                                                    </p>
-
-                                                    <p className="mt-1 text-sm text-slate-500">
-                                                        Created{" "}
-                                                        {formatDate(
-                                                            report.created_at,
-                                                        )}
-                                                        {report.submitted_at
-                                                            ? ` · Submitted ${formatDate(
-                                                                report.submitted_at,
-                                                            )}`
-                                                            : ""}
-                                                    </p>
-                                                </div>
-
-                                                <div className="flex flex-wrap gap-2">
-                                                    <span
-                                                        className={`w-fit rounded-full px-3 py-1 text-sm font-bold ${getStatusClassName(
-                                                            report.status,
-                                                        )}`}
-                                                    >
-                                                        {formatStatus(
-                                                            report.status,
-                                                        )}
-                                                    </span>
-
-                                                    {report.published && (
-                                                        <span className="w-fit rounded-full bg-green-50 px-3 py-1 text-sm font-bold text-green-700">
-                                                            Parent Visible
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            <p className="mt-4 whitespace-pre-line rounded-xl bg-slate-50 p-4 text-base leading-7 text-slate-800">
-                                                {report.report_text}
-                                            </p>
-
-                                            {report.review_comments && (
-                                                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                                                    <p className="font-semibold text-amber-900">
-                                                        Review feedback
-                                                    </p>
-                                                    <p className="mt-1 whitespace-pre-line text-base leading-7 text-amber-800">
-                                                        {
-                                                            report.review_comments
-                                                        }
-                                                    </p>
-                                                </div>
-                                            )}
-
-                                            <div className="mt-4 flex flex-wrap gap-3 border-t border-slate-200 pt-4">
-                                                {report.status ===
-                                                    REPORT_STATUS_SUBMITTED &&
-                                                    !report.published && (
-                                                        <>
-                                                            <button
-                                                                type="button"
-                                                                disabled={
-                                                                    savingId ===
-                                                                    report.id
+                                                            <p className="mt-1 text-base text-slate-600">
+                                                                Pupil ID{" "}
+                                                                {
+                                                                    report.student_id
                                                                 }
-                                                                onClick={() =>
-                                                                    void handleApproveReport(
-                                                                        report,
-                                                                    )
+                                                                {" · "}
+                                                                Teacher ID{" "}
+                                                                {report.teacher_id ??
+                                                                    "Not assigned"}
+                                                                {" · "}
+                                                                {
+                                                                    report.academic_year
                                                                 }
-                                                                className="rounded-xl bg-blue-600 px-4 py-2 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                {report.term
+                                                                    ? ` · ${report.term}`
+                                                                    : ""}
+                                                            </p>
+
+                                                            <p className="mt-1 text-sm text-slate-500">
+                                                                Created{" "}
+                                                                {formatDate(
+                                                                    report.created_at,
+                                                                )}
+                                                                {report.submitted_at
+                                                                    ? ` · Submitted ${formatDate(
+                                                                        report.submitted_at,
+                                                                    )}`
+                                                                    : ""}
+                                                            </p>
+                                                        </div>
+
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <span
+                                                                className={`w-fit rounded-full px-3 py-1 text-sm font-bold ${getStatusClassName(
+                                                                    published
+                                                                        ? STATUS_PUBLISHED
+                                                                        : report.status,
+                                                                )}`}
                                                             >
-                                                                {savingId ===
-                                                                    report.id
-                                                                    ? "Saving..."
-                                                                    : "Approve"}
-                                                            </button>
+                                                                {formatStatus(
+                                                                    published
+                                                                        ? STATUS_PUBLISHED
+                                                                        : report.status,
+                                                                )}
+                                                            </span>
 
-                                                            <button
-                                                                type="button"
-                                                                disabled={
-                                                                    savingId ===
-                                                                    report.id
+                                                            {published && (
+                                                                <span className="w-fit rounded-full bg-green-50 px-3 py-1 text-sm font-bold text-green-700">
+                                                                    Parent
+                                                                    Visible
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    {report.work_covered && (
+                                                        <div className="mt-4">
+                                                            <p className="text-sm font-bold uppercase tracking-wide text-slate-500">
+                                                                Work Covered
+                                                            </p>
+                                                            <p className="mt-1 whitespace-pre-line rounded-xl bg-slate-50 p-4 text-base leading-7 text-slate-800">
+                                                                {
+                                                                    report.work_covered
                                                                 }
-                                                                onClick={() =>
-                                                                    void handleReturnReport(
-                                                                        report,
-                                                                    )
-                                                                }
-                                                                className="rounded-xl border border-amber-300 px-4 py-2 text-base font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                                            >
-                                                                Return for
-                                                                Correction
-                                                            </button>
-                                                        </>
+                                                            </p>
+                                                        </div>
                                                     )}
 
-                                                {report.status ===
-                                                    REPORT_STATUS_DRAFT &&
-                                                    !report.published && (
+                                                    {report.teacher_notes && (
+                                                        <div className="mt-4">
+                                                            <p className="text-sm font-bold uppercase tracking-wide text-slate-500">
+                                                                Teacher Notes
+                                                            </p>
+                                                            <p className="mt-1 whitespace-pre-line rounded-xl bg-slate-50 p-4 text-base leading-7 text-slate-800">
+                                                                {
+                                                                    report.teacher_notes
+                                                                }
+                                                            </p>
+                                                        </div>
+                                                    )}
+
+                                                    {report.generated_report_text && (
+                                                        <div className="mt-4">
+                                                            <p className="text-sm font-bold uppercase tracking-wide text-slate-500">
+                                                                Generated Draft
+                                                            </p>
+                                                            <p className="mt-1 whitespace-pre-line rounded-xl border border-blue-100 bg-blue-50 p-4 text-base leading-7 text-slate-800">
+                                                                {
+                                                                    report.generated_report_text
+                                                                }
+                                                            </p>
+                                                        </div>
+                                                    )}
+
+                                                    <div className="mt-4">
+                                                        <p className="text-sm font-bold uppercase tracking-wide text-slate-500">
+                                                            Final Report
+                                                        </p>
+                                                        <p className="mt-1 whitespace-pre-line rounded-xl border border-slate-200 bg-white p-4 text-base leading-7 text-slate-800">
+                                                            {
+                                                                report.report_text
+                                                            }
+                                                        </p>
+                                                    </div>
+
+                                                    {report.review_comments && (
+                                                        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                                            <p className="font-semibold text-amber-900">
+                                                                Review Feedback
+                                                            </p>
+                                                            <p className="mt-1 whitespace-pre-line text-base leading-7 text-amber-800">
+                                                                {
+                                                                    report.review_comments
+                                                                }
+                                                            </p>
+                                                        </div>
+                                                    )}
+
+                                                    {returnEditorOpen && (
+                                                        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+                                                            <label className="grid gap-2">
+                                                                <span className="text-base font-bold text-amber-900">
+                                                                    Feedback
+                                                                    for the
+                                                                    teacher
+                                                                </span>
+
+                                                                <textarea
+                                                                    value={
+                                                                        returnEditor.comments
+                                                                    }
+                                                                    onChange={(
+                                                                        event,
+                                                                    ) =>
+                                                                        setReturnEditor(
+                                                                            {
+                                                                                reportId:
+                                                                                    report.id,
+                                                                                comments:
+                                                                                    event
+                                                                                        .target
+                                                                                        .value,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                    className="min-h-32 rounded-xl border border-amber-300 bg-white px-4 py-3 text-base leading-7 text-slate-900"
+                                                                    placeholder="Explain clearly what should be corrected."
+                                                                />
+                                                            </label>
+
+                                                            <div className="mt-3 flex flex-wrap gap-3">
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={
+                                                                        savingId ===
+                                                                        report.id
+                                                                    }
+                                                                    onClick={() =>
+                                                                        void handleReturnReport(
+                                                                            report,
+                                                                        )
+                                                                    }
+                                                                    className="rounded-xl bg-amber-600 px-4 py-2 text-base font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                >
+                                                                    {savingId ===
+                                                                        report.id
+                                                                        ? "Returning..."
+                                                                        : "Confirm Return"}
+                                                                </button>
+
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={
+                                                                        savingId ===
+                                                                        report.id
+                                                                    }
+                                                                    onClick={() =>
+                                                                        setReturnEditor(
+                                                                            null,
+                                                                        )
+                                                                    }
+                                                                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50"
+                                                                >
+                                                                    Cancel
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    <div className="mt-4 flex flex-wrap gap-3 border-t border-slate-200 pt-4">
                                                         <button
                                                             type="button"
-                                                            disabled={
-                                                                savingId ===
-                                                                report.id
-                                                            }
                                                             onClick={() =>
-                                                                void handleDeleteReport(
-                                                                    report,
+                                                                router.push(
+                                                                    `/teacher/reports/${report.id}`,
                                                                 )
                                                             }
-                                                            className="rounded-xl border border-red-200 px-4 py-2 text-base font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50"
                                                         >
-                                                            Delete Draft
+                                                            Open Full Report
                                                         </button>
-                                                    )}
 
-                                                {report.status ===
-                                                    REPORT_STATUS_APPROVED &&
-                                                    !report.published && (
-                                                        <p className="self-center text-base font-medium text-blue-700">
-                                                            Ready for session
-                                                            publication.
-                                                        </p>
-                                                    )}
+                                                        {REVIEWABLE_STATUSES.has(
+                                                            report.status,
+                                                        ) &&
+                                                            !published && (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={
+                                                                            savingId ===
+                                                                            report.id
+                                                                        }
+                                                                        onClick={() =>
+                                                                            void handleApproveReport(
+                                                                                report,
+                                                                            )
+                                                                        }
+                                                                        className="rounded-xl bg-blue-600 px-4 py-2 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {savingId ===
+                                                                            report.id
+                                                                            ? "Saving..."
+                                                                            : "Approve"}
+                                                                    </button>
 
-                                                {report.published && (
-                                                    <p className="self-center text-base font-medium text-green-700">
-                                                        Published and available
-                                                        to authorised parents.
-                                                    </p>
-                                                )}
-                                            </div>
-                                        </article>
-                                    ))}
-                                </div>
-                            </section>
-                        ))}
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={
+                                                                            savingId ===
+                                                                            report.id
+                                                                        }
+                                                                        onClick={() =>
+                                                                            openReturnEditor(
+                                                                                report,
+                                                                            )
+                                                                        }
+                                                                        className="rounded-xl border border-amber-300 px-4 py-2 text-base font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        Return
+                                                                        for
+                                                                        Correction
+                                                                    </button>
+                                                                </>
+                                                            )}
+
+                                                        {report.status ===
+                                                            STATUS_DRAFT &&
+                                                            !published && (
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={
+                                                                        savingId ===
+                                                                        report.id
+                                                                    }
+                                                                    onClick={() =>
+                                                                        void handleDeleteReport(
+                                                                            report,
+                                                                        )
+                                                                    }
+                                                                    className="rounded-xl border border-red-200 px-4 py-2 text-base font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                >
+                                                                    Delete
+                                                                    Draft
+                                                                </button>
+                                                            )}
+
+                                                        {report.status ===
+                                                            STATUS_APPROVED &&
+                                                            !published && (
+                                                                <p className="self-center text-base font-medium text-blue-700">
+                                                                    Ready for
+                                                                    session
+                                                                    publication.
+                                                                </p>
+                                                            )}
+
+                                                        {published && (
+                                                            <p className="self-center text-base font-medium text-green-700">
+                                                                Published and
+                                                                available to
+                                                                authorised
+                                                                parents.
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </article>
+                                            );
+                                        })}
+                                    </div>
+                                </section>
+                            );
+                        })}
                     </div>
                 )}
             </section>

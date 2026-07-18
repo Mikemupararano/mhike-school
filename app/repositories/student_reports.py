@@ -13,6 +13,8 @@ from app.models.student_report import StudentReport
 from app.models.user import User
 from app.schemas.report_memory import ReportMemoryCreate
 from app.schemas.student_report import (
+    StudentReportCompletionOverview,
+    StudentReportCompletionRow,
     StudentReportCreate,
     StudentReportUpdate,
 )
@@ -979,6 +981,89 @@ async def get_student_report_dashboard_counts(
             counts[report_status] = int(report_count)
 
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Teacher completion overview
+# ---------------------------------------------------------------------------
+
+
+async def get_student_report_completion_overview(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    class_id: int,
+    report_session_id: int,
+    teacher_id: int | None = None,
+) -> dict[str, Any]:
+    enrollment_stmt = (
+        select(User)
+        .join(Enrollment, Enrollment.user_id == User.id)
+        .where(
+            Enrollment.class_id == class_id,
+            User.school_id == school_id,
+        )
+        .order_by(User.full_name.asc())
+    )
+
+    students = (await db.execute(enrollment_stmt)).scalars().all()
+
+    rows = []
+    counts = {
+        "not_started": 0,
+        "draft": 0,
+        "returned_by_tutor": 0,
+        "returned_by_smt": 0,
+        "submitted": 0,
+        "tutor_review": 0,
+        "ready_for_smt": 0,
+        "approved": 0,
+        "published": 0,
+    }
+
+    complete = {"submitted", "tutor_review", "ready_for_smt", "approved", "published"}
+
+    for student in students:
+        stmt = select(StudentReport).where(
+            StudentReport.school_id == school_id,
+            StudentReport.student_id == student.id,
+            StudentReport.report_session_id == report_session_id,
+        )
+        if teacher_id is not None:
+            stmt = stmt.where(StudentReport.teacher_id == teacher_id)
+        stmt = stmt.order_by(StudentReport.updated_at.desc())
+        report = (await db.execute(stmt)).scalars().first()
+
+        status = "not_started" if report is None else report.status
+        counts[status] = counts.get(status, 0) + 1
+
+        rows.append(
+            StudentReportCompletionRow(
+                student_id=student.id,
+                student_name=student.full_name,
+                report_id=None if report is None else report.id,
+                status=status,
+                last_updated=None if report is None else report.updated_at,
+            )
+        )
+
+    total = len(rows)
+    completed = sum(counts[s] for s in complete)
+    outstanding = total - completed
+    pct = 0.0 if total == 0 else round(completed * 100 / total, 1)
+
+    overview = StudentReportCompletionOverview(
+        class_id=class_id,
+        report_session_id=report_session_id,
+        teacher_id=teacher_id,
+        total_students=total,
+        completed=completed,
+        outstanding=outstanding,
+        completion_percentage=pct,
+        students=rows,
+        **counts,
+    )
+    return overview.model_dump()
 
 
 # ---------------------------------------------------------------------------

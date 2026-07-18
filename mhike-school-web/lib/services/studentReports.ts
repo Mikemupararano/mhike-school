@@ -75,6 +75,43 @@ export type StudentReportReviewDashboard = {
     published: number;
 };
 
+export type StudentReportCompletionRow = {
+    student_id: number;
+    student_name: string;
+    report_id: number | null;
+    status: string;
+    last_updated: string | null;
+};
+
+export type StudentReportCompletionOverview = {
+    class_id: number;
+    report_session_id: number;
+    teacher_id: number | null;
+
+    total_students: number;
+    completed: number;
+    outstanding: number;
+
+    not_started: number;
+    draft: number;
+    returned_by_tutor: number;
+    returned_by_smt: number;
+    submitted: number;
+    tutor_review: number;
+    ready_for_smt: number;
+    approved: number;
+    published: number;
+
+    completion_percentage: number;
+    students: StudentReportCompletionRow[];
+};
+
+export type CompletionOverviewFilters = {
+    class_id: number;
+    report_session_id: number;
+    teacher_id?: number;
+};
+
 export type ReviewQueueFilters = {
     teacher_id?: number;
     student_id?: number;
@@ -88,7 +125,7 @@ export type ReturnStudentReportInput = {
 };
 
 export async function listStudentReports(): Promise<StudentReport[]> {
-    return apiGet<StudentReport[]>("/student-reports");
+    return apiGet<StudentReport[]>("/student-reports/");
 }
 
 export async function listReportsForStudent(
@@ -106,7 +143,7 @@ export async function listParentStudentReports(): Promise<StudentReport[]> {
 export async function createStudentReport(
     payload: StudentReportCreateInput,
 ): Promise<StudentReport> {
-    return apiPost<StudentReport>("/student-reports", payload);
+    return apiPost<StudentReport>("/student-reports/", payload);
 }
 
 export async function updateStudentReport(
@@ -162,6 +199,23 @@ export async function returnStudentReport(
 export async function getStudentReportReviewDashboard(): Promise<StudentReportReviewDashboard> {
     return apiGet<StudentReportReviewDashboard>(
         "/student-reports/review-dashboard",
+    );
+}
+
+export async function getStudentReportCompletionOverview(
+    filters: CompletionOverviewFilters,
+): Promise<StudentReportCompletionOverview> {
+    const params = new URLSearchParams({
+        class_id: String(filters.class_id),
+        report_session_id: String(filters.report_session_id),
+    });
+
+    if (filters.teacher_id !== undefined) {
+        params.set("teacher_id", String(filters.teacher_id));
+    }
+
+    return apiGet<StudentReportCompletionOverview>(
+        `/student-reports/completion-overview?${params.toString()}`,
     );
 }
 

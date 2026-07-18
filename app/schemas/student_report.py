@@ -445,6 +445,44 @@ class StudentReportReviewDashboard(BaseModel):
     )
 
 
+class StudentReportCompletionRow(BaseModel):
+    """One pupil within a report completion overview."""
+
+    student_id: int = Field(ge=1)
+    student_name: str
+    report_id: int | None = None
+    status: str
+    last_updated: datetime | None = None
+
+
+class StudentReportCompletionOverview(BaseModel):
+    """Teacher completion dashboard for a class/report session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    class_id: int = Field(ge=1)
+    report_session_id: int = Field(ge=1)
+    teacher_id: int | None = Field(default=None, ge=1)
+
+    total_students: int = Field(ge=0)
+    completed: int = Field(ge=0)
+    outstanding: int = Field(ge=0)
+
+    not_started: int = Field(ge=0)
+    draft: int = Field(ge=0)
+    returned_by_tutor: int = Field(ge=0)
+    returned_by_smt: int = Field(ge=0)
+    submitted: int = Field(ge=0)
+    tutor_review: int = Field(ge=0)
+    ready_for_smt: int = Field(ge=0)
+    approved: int = Field(ge=0)
+    published: int = Field(ge=0)
+
+    completion_percentage: float = Field(ge=0, le=100)
+
+    students: list[StudentReportCompletionRow]
+
+
 class StudentReportRead(StudentReportBase):
     """Complete student-report representation returned by the API."""
 

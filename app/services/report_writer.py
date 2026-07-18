@@ -1,5 +1,6 @@
 import random
 import re
+from collections.abc import Iterable
 
 REPORT_OPENINGS = [
     "{name} has continued to make positive progress in {subject} throughout {year_group}.",
@@ -146,20 +147,20 @@ SUBJECT_TOPIC_MAPS = {
 }
 
 SUBJECT_TOPIC_SENTENCES = {
-    "chemistry": "Through the study of {topics}, {learner} has strengthened scientific knowledge and confidence.",
-    "biology": "Through work on {topics}, {learner} has developed a stronger understanding of biological concepts and processes.",
-    "physics": "Through the study of {topics}, {learner} has strengthened problem-solving skills and understanding of physical principles.",
-    "english": "Through work on {topics}, {learner} has developed analytical, reading and written communication skills.",
-    "geography": "Through the study of {topics}, {learner} has developed geographical knowledge and the ability to explain processes and places.",
-    "computer science": "Through work on {topics}, {learner} has developed computational thinking and problem-solving skills.",
-    "art": "Through work on {topics}, {learner} has developed creative confidence, technical control and visual communication skills.",
-    "religious studies": "Through the study of {topics}, {learner} has developed understanding of beliefs, ethics and different viewpoints.",
-    "history": "Through work on {topics}, {learner} has developed historical knowledge, source skills and analytical thinking.",
-    "mathematics": "Through work on {topics}, {learner} has developed mathematical fluency, accuracy and problem-solving confidence.",
+    "chemistry": "Through the study of {topics}, they have strengthened their scientific knowledge and confidence.",
+    "biology": "Through work on {topics}, they have developed a stronger understanding of biological concepts and processes.",
+    "physics": "Through the study of {topics}, they have strengthened their problem-solving skills and understanding of physical principles.",
+    "english": "Through work on {topics}, they have developed their analytical, reading and written communication skills.",
+    "geography": "Through the study of {topics}, they have developed their geographical knowledge and ability to explain processes and places.",
+    "computer science": "Through work on {topics}, they have developed their computational thinking and problem-solving skills.",
+    "art": "Through work on {topics}, they have developed their creative confidence, technical control and visual communication skills.",
+    "religious studies": "Through the study of {topics}, they have developed their understanding of beliefs, ethics and different viewpoints.",
+    "history": "Through work on {topics}, they have developed their historical knowledge, source skills and analytical thinking.",
+    "mathematics": "Through work on {topics}, they have developed their mathematical fluency, accuracy and problem-solving confidence.",
 }
 
 DEFAULT_TOPIC_SENTENCE = (
-    "Through work on {topics}, {learner} has strengthened subject knowledge, "
+    "Through work on {topics}, they have strengthened their subject knowledge, "
     "confidence and understanding."
 )
 
@@ -200,6 +201,19 @@ CURRICULUM_FILLER_PHRASES = [
     "end of topic assessments",
 ]
 
+PROMPT_LEAKAGE_PATTERNS = [
+    r"use these teacher notes as the main evidence.*",
+    r"use the teacher notes as the main evidence.*",
+    r"write a professional school report.*",
+    r"generate a professional school report.*",
+    r"do not invent information.*",
+    r"use the pupil'?s first name only.*",
+    r"use the student'?s first name only.*",
+    r"avoid repeating the work covered.*",
+    r"include a clear next step.*",
+    r"return only the report.*",
+]
+
 MEMORY_EXCLUSION_PHRASES = [
     "to build on this progress",
     "next step",
@@ -209,6 +223,8 @@ MEMORY_EXCLUSION_PHRASES = [
     "work covered",
     "teacher notes",
 ]
+
+BULLET_PREFIX_PATTERN = re.compile(r"^\s*(?:[-*•▪◦‣]+|\d+[.)])\s*")
 
 
 def normalise_subject(subject: str | None) -> str:
@@ -242,18 +258,23 @@ def normalise_subject(subject: str | None) -> str:
 
 
 def get_first_name(student_name: str) -> str:
-    cleaned = student_name.strip()
+    cleaned = " ".join(student_name.strip().split())
 
     if not cleaned or cleaned.lower() == "the student":
         return "The student"
 
-    return cleaned.split()[0]
+    first_name = cleaned.split(" ", maxsplit=1)[0]
+    first_name = first_name.strip(" ,.;:!?()[]{}")
+
+    return first_name or "The student"
 
 
-def join_items(items: list[str]) -> str:
+def join_items(items: Iterable[str]) -> str:
     unique_items: list[str] = []
 
-    for item in items:
+    for raw_item in items:
+        item = raw_item.strip()
+
         if item and item not in unique_items:
             unique_items.append(item)
 
@@ -263,125 +284,136 @@ def join_items(items: list[str]) -> str:
     if len(unique_items) == 1:
         return unique_items[0]
 
+    if len(unique_items) == 2:
+        return f"{unique_items[0]} and {unique_items[1]}"
+
     return ", ".join(unique_items[:-1]) + f" and {unique_items[-1]}"
 
 
+def _remove_prompt_leakage(text: str) -> str:
+    cleaned_lines: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+
+        if not line:
+            continue
+
+        lower_line = line.lower()
+
+        if any(
+            re.fullmatch(pattern, lower_line) for pattern in PROMPT_LEAKAGE_PATTERNS
+        ):
+            continue
+
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
+
+
+def _normalise_bullets(text: str) -> list[str]:
+    items: list[str] = []
+
+    for raw_line in re.split(r"[\r\n]+", text):
+        line = BULLET_PREFIX_PATTERN.sub("", raw_line).strip(" \t,;")
+
+        if not line:
+            continue
+
+        if ";" in line:
+            items.extend(part.strip() for part in line.split(";") if part.strip())
+        else:
+            items.append(line)
+
+    return items
+
+
 def split_generation_notes(notes: str) -> tuple[str, str]:
-    """Split combined frontend notes into work-covered and teacher-note sections.
-
-    The frontend may send either order, for example:
-    - Teacher notes: ...\n\nWork covered: ...
-    - Work covered: ...\n\nTeacher notes: ...
-
-    This parser keeps the two sections separate so curriculum context is not
-    mistaken for pupil-specific evidence.
-    """
+    cleaned_notes = _remove_prompt_leakage(notes)
 
     markers = list(
         re.finditer(
-            r"(?im)^(work covered|teacher notes):\s*",
-            notes,
+            r"(?im)^\s*(work covered|teacher notes|student comment|teacher comment)\s*:\s*",
+            cleaned_notes,
         ),
     )
 
     if not markers:
-        cleaned = notes.strip()
-        return "", cleaned
+        return "", cleaned_notes.strip()
 
-    sections: dict[str, str] = {}
+    sections: dict[str, list[str]] = {}
 
     for index, marker in enumerate(markers):
         label = marker.group(1).lower()
         start = marker.end()
-        end = markers[index + 1].start() if index + 1 < len(markers) else len(notes)
-        sections[label] = notes[start:end].strip()
+        end = (
+            markers[index + 1].start()
+            if index + 1 < len(markers)
+            else len(cleaned_notes)
+        )
+        sections.setdefault(label, []).append(cleaned_notes[start:end].strip())
 
-    return (
-        sections.get("work covered", "").strip(),
-        sections.get("teacher notes", "").strip(),
-    )
+    work_covered = "\n".join(sections.get("work covered", [])).strip()
+    teacher_notes = "\n".join(
+        sections.get("teacher notes", [])
+        + sections.get("student comment", [])
+        + sections.get("teacher comment", [])
+    ).strip()
+
+    return work_covered, teacher_notes
 
 
 def clean_work_covered_text(text: str) -> str:
-    cleaned = text.lower()
+    cleaned = _remove_prompt_leakage(text).lower()
 
-    cleaned = re.sub(
+    for pattern in (
         r"\bin\s+(aqa|ocr|edexcel)\s+gcse\s+[a-z ]+?,",
-        "",
-        cleaned,
-    )
-    cleaned = re.sub(
         r"\b(aqa|ocr|edexcel)\s+gcse\s+[a-z ]+?,",
-        "",
-        cleaned,
-    )
-    cleaned = re.sub(
         r"\bin\s+(aqa|ocr|edexcel)\s+[a-z ]+?,",
-        "",
-        cleaned,
-    )
-    cleaned = re.sub(
         r"\b(aqa|ocr|edexcel)\s+[a-z ]+?,",
-        "",
-        cleaned,
-    )
+    ):
+        cleaned = re.sub(pattern, "", cleaned)
 
     for phrase in CURRICULUM_FILLER_PHRASES:
         cleaned = cleaned.replace(phrase, "")
 
+    cleaned = re.sub(r"[\r\n;]+", ",", cleaned)
     cleaned = cleaned.replace(".", ",")
-    cleaned = cleaned.replace(";", ",")
-    cleaned = cleaned.replace(" and ", ",")
+    cleaned = re.sub(r"\s+and\s+", ",", cleaned)
+    cleaned = re.sub(r",+", ",", cleaned)
 
-    while ",," in cleaned:
-        cleaned = cleaned.replace(",,", ",")
-
-    return cleaned.strip(" ,.:")
+    return cleaned.strip(" ,..:")
 
 
 def detect_topics(text: str, subject_key: str) -> list[str]:
     topic_map = SUBJECT_TOPIC_MAPS.get(subject_key, {})
-    topics: list[str] = []
-
     cleaned_text = clean_work_covered_text(text)
+    topics: list[str] = []
 
     for keyword, topic in topic_map.items():
         if keyword in cleaned_text and topic not in topics:
             topics.append(topic)
 
     if topics:
-        return topics
+        return topics[:5]
 
-    parts = [part.strip() for part in cleaned_text.split(",") if len(part.strip()) > 2]
+    fallback_parts = [
+        part.strip() for part in cleaned_text.split(",") if len(part.strip()) > 2
+    ]
 
-    unique_parts: list[str] = []
-
-    for part in parts:
-        if part not in unique_parts:
-            unique_parts.append(part)
-
-    return unique_parts[:5]
+    return list(dict.fromkeys(fallback_parts))[:5]
 
 
-def build_topic_sentence(
-    *,
-    topics: list[str],
-    learner: str,
-    subject_key: str,
-) -> str:
+def build_topic_sentence(*, topics: list[str], subject_key: str) -> str:
     if not topics:
         return ""
 
     template = SUBJECT_TOPIC_SENTENCES.get(subject_key, DEFAULT_TOPIC_SENTENCE)
-
-    return template.format(
-        topics=join_items(topics[:5]),
-        learner=learner,
-    )
+    return template.format(topics=join_items(topics[:5]))
 
 
 def clean_teacher_notes_text(text: str, first_name: str) -> str:
-    cleaned = text.strip()
+    cleaned = _remove_prompt_leakage(text).strip()
 
     if not cleaned:
         return ""
@@ -394,174 +426,145 @@ def clean_teacher_notes_text(text: str, first_name: str) -> str:
             flags=re.IGNORECASE,
         )
 
-    cleaned = cleaned.strip(" .")
-    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
-    return cleaned
+    return cleaned.strip(" .")
 
 
-def build_teacher_evidence_sentence(
-    *,
-    first_name: str,
-    teacher_notes: str,
-) -> str:
-    """Create a pupil-specific evidence sentence from the teacher's notes.
-
-    This deliberately uses the teacher notes directly, because these are the
-    most reliable evidence for the individual pupil. It avoids copying frontend
-    labels such as "Teacher notes:" into the report.
-    """
-
-    cleaned = clean_teacher_notes_text(
-        teacher_notes,
-        first_name,
+def _extract_percentage_evidence(text: str) -> str | None:
+    percentage_match = re.search(
+        r"\b(\d{1,3})\s*%\s*(?:in|on)?\s*([^.,;\n]*)",
+        text,
+        flags=re.IGNORECASE,
     )
+
+    if not percentage_match:
+        return None
+
+    percentage = percentage_match.group(1)
+    context = percentage_match.group(2).strip() or "recent assessment work"
+    return f"They achieved {percentage}% in {context}."
+
+
+def build_teacher_evidence_sentence(*, first_name: str, teacher_notes: str) -> str:
+    cleaned = clean_teacher_notes_text(teacher_notes, first_name)
 
     if not cleaned:
         return ""
 
-    learner = "The student" if first_name == "The student" else first_name
-    lower_cleaned = cleaned.lower()
-
+    items = _normalise_bullets(cleaned)
+    lower_notes = cleaned.lower()
     strengths: list[str] = []
 
-    if "hardworking" in lower_cleaned or "hard working" in lower_cleaned:
-        strengths.append("is hardworking")
-
-    if "well behaved" in lower_cleaned or "well-behaved" in lower_cleaned:
-        strengths.append("is well behaved")
-
-    if "punctual" in lower_cleaned:
-        strengths.append("is punctual")
-
-    if "homework" in lower_cleaned and (
-        "on time" in lower_cleaned
-        or "completed" in lower_cleaned
-        or "completes" in lower_cleaned
+    if "hardworking" in lower_notes or "hard working" in lower_notes:
+        strengths.append("work hard")
+    if "positive attitude" in lower_notes:
+        strengths.append("show a positive attitude to learning")
+    if "well behaved" in lower_notes or "well-behaved" in lower_notes:
+        strengths.append("behave well in lessons")
+    if "punctual" in lower_notes:
+        strengths.append("are punctual and prepared for learning")
+    if "homework" in lower_notes and any(
+        phrase in lower_notes
+        for phrase in ("on time", "completed", "completes", "always done")
     ):
-        strengths.append("completes homework on time")
+        strengths.append("complete homework reliably")
+    if "engaged" in lower_notes or "class discussion" in lower_notes:
+        strengths.append("engage positively in class")
+    if "practical" in lower_notes:
+        strengths.append("contribute well to practical work")
+    if "independent" in lower_notes or "independently" in lower_notes:
+        strengths.append("work with increasing independence")
 
-    if "engaged" in lower_cleaned or "class discussion" in lower_cleaned:
-        strengths.append("engages positively in class")
-
-    if "practical" in lower_cleaned:
-        strengths.append("contributes well to practical work")
-
-    assessment_sentence = ""
-    percentage_match = re.search(
-        r"(\d{1,3})\s*%\s*(?:in|on)?\s*([^.,;]*)",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-
-    if percentage_match:
-        percentage = percentage_match.group(1)
-        assessment_context = percentage_match.group(2).strip()
-        assessment_context = assessment_context or "recent assessment work"
-        assessment_sentence = (
-            f" {learner} achieved {percentage}% in {assessment_context}."
-        )
+    evidence_parts: list[str] = []
 
     if strengths:
-        return f"{learner} {join_items(strengths)}.{assessment_sentence}".strip()
+        evidence_parts.append(f"They {join_items(strengths[:4])}.")
 
-    if cleaned.endswith((".", "!", "?")):
-        return f"{learner} has shown that {cleaned}"
+    percentage_sentence = _extract_percentage_evidence(cleaned)
+    if percentage_sentence:
+        evidence_parts.append(percentage_sentence)
 
-    return f"{learner} has shown that {cleaned}."
+    if evidence_parts:
+        return " ".join(evidence_parts)
+
+    cleaned_items = [item.rstrip(".") for item in items if len(item.split()) >= 2]
+    if cleaned_items:
+        return f"They have shown {join_items(cleaned_items[:3])}."
+
+    return ""
 
 
-def detect_attitude_sentence(first_name: str, lower_notes: str) -> str | None:
+def detect_attitude_sentence(lower_notes: str) -> str | None:
     qualities: list[str] = []
 
-    if (
-        "hard worker" in lower_notes
-        or "hard working" in lower_notes
-        or "hardworking" in lower_notes
+    if any(
+        phrase in lower_notes
+        for phrase in ("hard worker", "hard working", "hardworking")
     ):
-        qualities.append("works hard")
-
+        qualities.append("work hard")
     if "asks questions" in lower_notes or "asking questions" in lower_notes:
-        qualities.append("asks thoughtful questions to deepen understanding")
-
+        qualities.append("ask thoughtful questions to deepen their understanding")
     if "engaged" in lower_notes or "engagement" in lower_notes:
-        qualities.append("engages well with learning")
-
+        qualities.append("engage well with learning")
     if "independent" in lower_notes or "independently" in lower_notes:
-        qualities.append("works with increasing independence")
-
+        qualities.append("work with increasing independence")
     if "resilient" in lower_notes or "resilience" in lower_notes:
-        qualities.append("shows resilience when tackling challenging work")
-
+        qualities.append("show resilience when tackling challenging work")
     if "creative" in lower_notes or "creativity" in lower_notes:
-        qualities.append("shows creativity and originality")
-
+        qualities.append("show creativity and originality")
     if "organised" in lower_notes or "organized" in lower_notes:
-        qualities.append("is organised and prepared for learning")
+        qualities.append("are organised and prepared for learning")
 
-    if not qualities:
-        return None
-
-    learner = "The student" if first_name == "The student" else first_name
-
-    return f"{learner} {join_items(qualities[:3])}."
+    return f"They {join_items(qualities[:3])}." if qualities else None
 
 
-def detect_achievement_sentence(first_name: str, lower_notes: str) -> str | None:
+def detect_achievement_sentence(lower_notes: str) -> str | None:
     achievements: list[str] = []
 
     if "confident" in lower_notes or "confidence" in lower_notes:
         achievements.append("grown in confidence")
-
-    if (
-        "passed tests" in lower_notes
-        or "excellent assessment" in lower_notes
-        or "strong assessment" in lower_notes
-        or "good assessment" in lower_notes
-        or "high test score" in lower_notes
-        or "strong test score" in lower_notes
+    if any(
+        phrase in lower_notes
+        for phrase in (
+            "passed tests",
+            "excellent assessment",
+            "strong assessment",
+            "good assessment",
+            "high test score",
+            "strong test score",
+        )
     ):
         achievements.append("performed well in recent assessment work")
-
     if "good progress" in lower_notes or "positive progress" in lower_notes:
         achievements.append("made positive progress across the course")
-
     if "excellent" in lower_notes:
         achievements.append("produced work of an excellent standard")
-
     if "improved" in lower_notes or "improvement" in lower_notes:
         achievements.append("shown clear improvement over time")
-
     if "knowledge" in lower_notes or "understanding" in lower_notes:
         achievements.append("developed secure subject knowledge")
-
     if "answers" in lower_notes or "written" in lower_notes:
-        achievements.append("improved the quality of written responses")
-
+        achievements.append("improved the quality of their written responses")
     if "practical" in lower_notes or "experiment" in lower_notes:
-        achievements.append("developed practical and investigative skills")
-
+        achievements.append("developed their practical and investigative skills")
     if "exam question" in lower_notes or "exam-style" in lower_notes:
         achievements.append("made progress with examination-style questions")
-
     if "analysis" in lower_notes or "analytical" in lower_notes:
-        achievements.append("developed analytical skills")
-
+        achievements.append("developed their analytical skills")
     if "evaluation" in lower_notes or "evaluate" in lower_notes:
-        achievements.append("improved evaluative skills")
-
+        achievements.append("improved their evaluative skills")
     if "coding" in lower_notes or "programming" in lower_notes:
-        achievements.append("developed programming skills")
-
+        achievements.append("developed their programming skills")
     if "composition" in lower_notes or "portfolio" in lower_notes:
-        achievements.append("developed creative and technical skills")
+        achievements.append("developed their creative and technical skills")
 
-    if not achievements:
-        return None
-
-    learner = "the student" if first_name == "The student" else first_name
-
-    return f"This has helped {learner} to {join_items(achievements[:3])}."
+    return (
+        f"This has helped them to {join_items(achievements[:3])}."
+        if achievements
+        else None
+    )
 
 
 def detect_next_steps(lower_notes: str, subject_key: str) -> list[str]:
@@ -569,60 +572,49 @@ def detect_next_steps(lower_notes: str, subject_key: str) -> list[str]:
 
     if "revision guide" in lower_notes:
         next_steps.append(
-            "use the revision guide regularly to consolidate key knowledge",
+            "use the revision guide regularly to consolidate key knowledge"
         )
-
     if "exam question" in lower_notes or "exam-style" in lower_notes:
         next_steps.append("continue practising examination-style questions")
-
     if "application" in lower_notes or "apply" in lower_notes:
         next_steps.append(
-            "focus on applying knowledge accurately to unfamiliar questions",
+            "focus on applying knowledge accurately to unfamiliar questions"
         )
-
-    if (
-        "calculation" in lower_notes
-        or "calculations" in lower_notes
-        or "maths" in lower_notes
-    ):
+    if any(word in lower_notes for word in ("calculation", "calculations", "maths")):
         next_steps.append(
-            "show clear working in calculations and check units carefully",
+            "show clear working in calculations and check units carefully"
         )
-
     if "detail" in lower_notes or "explain" in lower_notes:
         next_steps.append("include more precise detail in written explanations")
-
     if "recall" in lower_notes or "remember" in lower_notes:
         next_steps.append("strengthen recall of key facts and definitions")
-
     if "revise" in lower_notes or "revision" in lower_notes:
         next_steps.append("maintain a regular revision routine")
-
     if "six-mark" in lower_notes or "6-mark" in lower_notes:
         next_steps.append(
-            "structure extended responses carefully and include sufficient detail",
+            "structure extended responses carefully and include sufficient detail"
         )
 
     if next_steps:
-        return next_steps
+        return list(dict.fromkeys(next_steps))
 
-    subject_defaults = {
+    defaults = {
         "english": "continue developing clear paragraph structure and support ideas with precise textual evidence",
         "geography": "continue using accurate geographical terminology and evidence when explaining processes",
         "computer science": "continue practising programming problems and explaining algorithms clearly",
         "art": "continue refining observational detail and recording development clearly in the sketchbook",
         "religious studies": "continue using evidence and examples to explain different beliefs and viewpoints",
         "history": "continue supporting judgements with precise evidence and clear explanation",
-        "mathematics": "continue practising multi-step problems and checking working carefully",
+        "mathematics": "continue practising multi-step problems and checking their working carefully",
         "biology": "continue using key terminology accurately when explaining biological processes",
         "physics": "continue applying equations carefully and explaining physical principles clearly",
         "chemistry": "continue applying chemical ideas accurately to unfamiliar questions",
     }
 
     return [
-        subject_defaults.get(
+        defaults.get(
             subject_key,
-            "continue to review class notes and practise applying knowledge",
+            "continue to review class notes and practise applying their knowledge",
         ),
     ]
 
@@ -631,69 +623,38 @@ def infer_next_step_from_topics(topics: list[str], subject_key: str) -> str:
     if subject_key == "chemistry":
         if "chemical calculations" in topics:
             return "show clear working in calculations and check units carefully"
-
         if "reaction rates" in topics:
             return (
                 "practise explaining how changes in conditions affect reaction "
                 "rate using precise scientific language"
             )
 
-    if subject_key == "english":
-        return (
-            "continue developing clear paragraph structure and support ideas "
-            "with precise textual evidence"
-        )
+    defaults = {
+        "english": "continue developing clear paragraph structure and support ideas with precise textual evidence",
+        "geography": "continue using accurate geographical terminology and evidence when explaining processes",
+        "computer science": "continue practising programming problems and explaining algorithms clearly",
+        "art": "continue refining observational detail and recording development clearly in the sketchbook",
+        "religious studies": "continue using evidence and examples to explain different beliefs and viewpoints",
+        "history": "continue supporting judgements with precise evidence and clear explanation",
+        "mathematics": "continue practising multi-step problems and checking their working carefully",
+        "biology": "continue using key terminology accurately when explaining biological processes",
+        "physics": "continue applying equations carefully and explaining physical principles clearly",
+    }
 
-    if subject_key == "geography":
-        return (
-            "continue using accurate geographical terminology and evidence "
-            "when explaining processes"
-        )
-
-    if subject_key == "computer science":
-        return (
-            "continue practising programming problems and explaining algorithms clearly"
-        )
-
-    if subject_key == "art":
-        return (
-            "continue refining observational detail and recording development "
-            "clearly in the sketchbook"
-        )
-
-    if subject_key == "religious studies":
-        return (
-            "continue using evidence and examples to explain different beliefs "
-            "and viewpoints"
-        )
-
-    if subject_key == "history":
-        return (
-            "continue supporting judgements with precise evidence and clear explanation"
-        )
-
-    if subject_key == "mathematics":
-        return "continue practising multi-step problems and checking working carefully"
-
-    if subject_key == "biology":
-        return "continue using key terminology accurately when explaining biological processes"
-
-    if subject_key == "physics":
-        return "continue applying equations carefully and explaining physical principles clearly"
-
-    return "continue to review class notes and practise applying knowledge"
+    return defaults.get(
+        subject_key,
+        "continue to review class notes and practise applying their knowledge",
+    )
 
 
-def extract_memory_phrases(
-    similar_reports: list[str] | None,
-) -> list[str]:
+def extract_memory_phrases(similar_reports: list[str] | None) -> list[str]:
     if not similar_reports:
         return []
 
     phrases: list[str] = []
 
     for report in similar_reports:
-        for raw_sentence in report.split("."):
+        for raw_sentence in re.split(r"(?<=[.!?])\s+", report):
             sentence = raw_sentence.strip()
 
             if len(sentence) < 35:
@@ -728,7 +689,6 @@ def choose_memory_sentence(
         return None
 
     used_phrases = used_phrases or set()
-
     keywords = {
         word.strip(".,!?").lower()
         for word in teacher_notes.split()
@@ -739,7 +699,6 @@ def choose_memory_sentence(
 
     for phrase in phrases:
         phrase_lower = phrase.lower()
-
         score = sum(1 for keyword in keywords if keyword in phrase_lower)
 
         if phrase_lower in used_phrases:
@@ -747,46 +706,60 @@ def choose_memory_sentence(
 
         scored.append((score, phrase))
 
-    scored.sort(
-        key=lambda item: item[0],
-        reverse=True,
-    )
-
+    scored.sort(key=lambda item: item[0], reverse=True)
     top_candidates = [phrase for score, phrase in scored[:5] if score > -100]
 
     if not top_candidates:
         return None
 
     selected = random.choice(top_candidates).strip()
+    selected = re.sub(
+        rf"\b{re.escape(student_name)}\b", learner, selected, flags=re.IGNORECASE
+    )
+    selected = re.sub(
+        rf"\b{re.escape(first_name)}\b", learner, selected, flags=re.IGNORECASE
+    )
 
-    selected = selected.replace(student_name, learner)
-    selected = selected.replace(first_name, learner)
-
-    if not selected.endswith("."):
+    if selected[-1] not in ".!?":
         selected += "."
 
     return selected
 
 
 def select_opening_sentence(
-    *,
-    first_name: str,
-    subject_name: str,
-    year_group_name: str,
+    *, first_name: str, subject_name: str, year_group_name: str
 ) -> str:
     if first_name == "The student":
-        return (
-            f"The student has made good progress in {subject_name} during "
-            f"{year_group_name}."
-        )
+        return f"The student has made positive progress in {subject_name} during {year_group_name}."
 
     template = random.choice(REPORT_OPENINGS)
-
     return template.format(
-        name=first_name,
-        subject=subject_name,
-        year_group=year_group_name,
+        name=first_name, subject=subject_name, year_group=year_group_name
     )
+
+
+def _deduplicate_sentences(parts: list[str | None]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+
+    for part in parts:
+        if not part:
+            continue
+
+        sentence = re.sub(r"\s+", " ", part.strip())
+
+        if not sentence:
+            continue
+
+        key = re.sub(r"[^a-z0-9]+", " ", sentence.lower()).strip()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        output.append(sentence)
+
+    return output
 
 
 def generate_report_comment(
@@ -798,50 +771,40 @@ def generate_report_comment(
     similar_reports: list[str] | None = None,
     used_phrases: set[str] | None = None,
 ) -> str:
-    if len(notes.split()) < 4:
+    del similar_reports, used_phrases
+
+    cleaned_notes = _remove_prompt_leakage(notes)
+
+    if len(cleaned_notes.split()) < 4:
         raise ValueError(
             "Please enter more detailed teacher notes before generating a report.",
         )
 
-    work_covered_text, teacher_notes_text = split_generation_notes(notes)
+    work_covered_text, teacher_notes_text = split_generation_notes(cleaned_notes)
 
     first_name = get_first_name(student_name)
     subject_name = subject.strip() if subject and subject.strip() else "the subject"
     year_group_name = (
         year_group.strip() if year_group and year_group.strip() else "this year"
     )
-
     subject_key = normalise_subject(subject_name)
 
     work_lower = work_covered_text.lower()
     teacher_lower = teacher_notes_text.lower()
-    combined_lower = notes.lower()
+    combined_lower = cleaned_notes.lower()
 
-    topics = detect_topics(
-        work_lower,
-        subject_key,
-    ) or detect_topics(
-        combined_lower,
-        subject_key,
-    )
+    topics = detect_topics(work_lower, subject_key)
 
-    next_steps = detect_next_steps(
-        teacher_lower,
-        subject_key,
-    ) or detect_next_steps(
-        combined_lower,
-        subject_key,
-    )
+    if not topics and not work_covered_text:
+        topics = detect_topics(combined_lower, subject_key)
+
+    next_steps = detect_next_steps(teacher_lower, subject_key)
 
     if not next_steps:
-        next_steps.append(
-            infer_next_step_from_topics(
-                topics,
-                subject_key,
-            ),
-        )
+        next_steps = detect_next_steps(combined_lower, subject_key)
 
-    learner = "the student" if first_name == "The student" else first_name
+    if not next_steps:
+        next_steps = [infer_next_step_from_topics(topics, subject_key)]
 
     opening_sentence = select_opening_sentence(
         first_name=first_name,
@@ -849,63 +812,36 @@ def generate_report_comment(
         year_group_name=year_group_name,
     )
 
-    topic_sentence = build_topic_sentence(
-        topics=topics,
-        learner=learner,
-        subject_key=subject_key,
-    )
-
-    attitude_sentence = detect_attitude_sentence(
-        first_name,
-        teacher_lower,
-    )
-
-    if attitude_sentence is None:
-        attitude_sentence = detect_attitude_sentence(
-            first_name,
-            combined_lower,
-        )
-
-    achievement_sentence = detect_achievement_sentence(
-        first_name,
-        teacher_lower,
-    )
-
-    if achievement_sentence is None:
-        achievement_sentence = detect_achievement_sentence(
-            first_name,
-            combined_lower,
-        )
-
     teacher_evidence_sentence = build_teacher_evidence_sentence(
         first_name=first_name,
         teacher_notes=teacher_notes_text,
     )
 
-    # Keep report-memory phrasing disabled for now. It can make reports sound
-    # generic or repetitive before the core teacher-note workflow is stable.
-    memory_sentence = None
+    topic_sentence = build_topic_sentence(topics=topics, subject_key=subject_key)
+    attitude_sentence = detect_attitude_sentence(teacher_lower)
+    achievement_sentence = detect_achievement_sentence(teacher_lower)
+
+    if teacher_evidence_sentence and attitude_sentence:
+        attitude_sentence = None
 
     if (
-        achievement_sentence is None
+        not teacher_evidence_sentence
         and not topic_sentence
-        and not teacher_evidence_sentence
-        and memory_sentence is None
+        and not achievement_sentence
     ):
-        achievement_sentence = (
-            f"{first_name if first_name != 'The student' else 'The student'} "
-            "has made positive progress in lessons."
-        )
+        achievement_sentence = "They have made positive progress in lessons."
 
-    next_step_sentence = f"To build on this progress, {learner} should {next_steps[0]}."
+    next_step_sentence = f"To build on this progress, they should {next_steps[0]}."
 
-    parts = [
-        opening_sentence,
-        teacher_evidence_sentence,
-        topic_sentence,
-        achievement_sentence,
-        memory_sentence,
-        next_step_sentence,
-    ]
+    parts = _deduplicate_sentences(
+        [
+            opening_sentence,
+            teacher_evidence_sentence,
+            attitude_sentence,
+            topic_sentence,
+            achievement_sentence,
+            next_step_sentence,
+        ],
+    )
 
-    return " ".join(part.strip() for part in parts if part).strip()
+    return re.sub(r"\s+", " ", " ".join(parts).strip())

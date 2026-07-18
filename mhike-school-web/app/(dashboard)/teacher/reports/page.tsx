@@ -1,3 +1,14 @@
+/*
+ * Reconciled teacher reports page.
+ *
+ * Key safeguards:
+ * - AI generation never overwrites a manually written or edited final report.
+ * - Work covered remains curriculum context; teacher notes remain pupil evidence.
+ * - Only the pupil's first name is sent for report generation.
+ * - Non-editable workflow stages remain read-only for teachers.
+ * - Selected teacher/session filters are applied consistently.
+ */
+
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -31,6 +42,38 @@ import {
 } from "@/lib/services/studentReports";
 
 type SaveAction = "draft" | "next" | "close" | "submit";
+
+type TeacherFacingStatus =
+    | "not_started"
+    | "draft"
+    | "returned_by_tutor"
+    | "returned_by_smt"
+    | "submitted"
+    | "tutor_review"
+    | "ready_for_smt"
+    | "approved"
+    | "published";
+
+type StudentCompletionRow = {
+    student: ReportStudent;
+    report: StudentReport | null;
+    status: TeacherFacingStatus;
+    isComplete: boolean;
+};
+
+const COMPLETE_REPORT_STATUSES = new Set<TeacherFacingStatus>([
+    "submitted",
+    "tutor_review",
+    "ready_for_smt",
+    "approved",
+    "published",
+]);
+
+const EDITABLE_REPORT_STATUSES = new Set<TeacherFacingStatus>([
+    "draft",
+    "returned_by_tutor",
+    "returned_by_smt",
+]);
 
 type ReportFormState = {
     teacher_id: string;
@@ -73,6 +116,16 @@ const initialFormState: ReportFormState = {
 };
 
 
+function getFirstName(fullName?: string | null): string | undefined {
+    const cleaned = fullName?.trim();
+
+    if (!cleaned) {
+        return undefined;
+    }
+
+    return cleaned.split(/\s+/)[0];
+}
+
 function formatDate(value: string): string {
     return new Date(value).toLocaleDateString("en-GB", {
         day: "2-digit",
@@ -88,9 +141,41 @@ function getStatusBadgeClass(status: string): string {
         case "approved":
             return "bg-blue-50 text-blue-700";
         case "submitted":
+        case "tutor_review":
+        case "ready_for_smt":
             return "bg-purple-50 text-purple-700";
+        case "returned_by_tutor":
+        case "returned_by_smt":
+            return "bg-red-50 text-red-700";
+        case "not_started":
+            return "bg-slate-100 text-slate-700";
         default:
             return "bg-amber-50 text-amber-700";
+    }
+}
+
+function getStatusLabel(status: string): string {
+    switch (status) {
+        case "not_started":
+            return "Not started";
+        case "draft":
+            return "Draft";
+        case "returned_by_tutor":
+            return "Returned by tutor";
+        case "returned_by_smt":
+            return "Returned by SMT";
+        case "submitted":
+            return "Submitted";
+        case "tutor_review":
+            return "Tutor review";
+        case "ready_for_smt":
+            return "Ready for SMT";
+        case "approved":
+            return "Approved";
+        case "published":
+            return "Published";
+        default:
+            return status.replaceAll("_", " ");
     }
 }
 
@@ -135,6 +220,7 @@ export default function TeacherReportsPage() {
         useState<ReportQualityResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [outstandingOnly, setOutstandingOnly] = useState(false);
 
     useEffect(() => {
         async function loadPageData() {
@@ -185,10 +271,93 @@ export default function TeacherReportsPage() {
         void loadPageData();
     }, []);
 
+    const completionRows = useMemo<StudentCompletionRow[]>(() => {
+        const selectedTeacherId = Number(form.teacher_id);
+
+        return students.map((student) => {
+            const matchingReports = reports
+                .filter(
+                    (report) =>
+                        report.student_id === student.id &&
+                        (!form.report_session_id ||
+                            String(report.report_session_id ?? "") ===
+                            form.report_session_id),
+                )
+                .filter((report) => {
+                    if (!selectedTeacherId || Number.isNaN(selectedTeacherId)) {
+                        return true;
+                    }
+
+                    const teacherId = (
+                        report as StudentReport & {
+                            teacher_id?: number | null;
+                        }
+                    ).teacher_id;
+
+                    return teacherId == null || teacherId === selectedTeacherId;
+                })
+                .sort(
+                    (first, second) =>
+                        new Date(second.updated_at ?? second.created_at).getTime() -
+                        new Date(first.updated_at ?? first.created_at).getTime(),
+                );
+
+            const report = matchingReports[0] ?? null;
+            const status = (report?.status ??
+                "not_started") as TeacherFacingStatus;
+
+            return {
+                student,
+                report,
+                status,
+                isComplete: COMPLETE_REPORT_STATUSES.has(status),
+            };
+        });
+    }, [form.report_session_id, form.teacher_id, reports, students]);
+
+    const completionSummary = useMemo(() => {
+        const total = completionRows.length;
+        const completed = completionRows.filter((row) => row.isComplete).length;
+        const outstanding = total - completed;
+        const notStarted = completionRows.filter(
+            (row) => row.status === "not_started",
+        ).length;
+        const drafts = completionRows.filter(
+            (row) => row.status === "draft",
+        ).length;
+        const returned = completionRows.filter(
+            (row) =>
+                row.status === "returned_by_tutor" ||
+                row.status === "returned_by_smt",
+        ).length;
+        const percentage =
+            total === 0 ? 0 : Math.round((completed / total) * 100);
+
+        return {
+            total,
+            completed,
+            outstanding,
+            notStarted,
+            drafts,
+            returned,
+            percentage,
+        };
+    }, [completionRows]);
+
+    const visibleCompletionRows = useMemo(
+        () =>
+            outstandingOnly
+                ? completionRows.filter((row) => !row.isComplete)
+                : completionRows,
+        [completionRows, outstandingOnly],
+    );
+
     const selectedStudentReports = useMemo(() => {
         if (!form.student_id) {
             return [];
         }
+
+        const selectedTeacherId = Number(form.teacher_id);
 
         return reports
             .filter((report) => String(report.student_id) === form.student_id)
@@ -198,15 +367,29 @@ export default function TeacherReportsPage() {
                     form.report_session_id
                     : true,
             )
+            .filter((report) => {
+                if (!selectedTeacherId || Number.isNaN(selectedTeacherId)) {
+                    return true;
+                }
+
+                const teacherId = (
+                    report as StudentReport & {
+                        teacher_id?: number | null;
+                    }
+                ).teacher_id;
+
+                return teacherId == null || teacherId === selectedTeacherId;
+            })
             .sort(
                 (first, second) =>
-                    new Date(second.created_at).getTime() -
-                    new Date(first.created_at).getTime(),
+                    new Date(second.updated_at ?? second.created_at).getTime() -
+                    new Date(first.updated_at ?? first.created_at).getTime(),
             );
     }, [
         reports,
         form.student_id,
         form.report_session_id,
+        form.teacher_id,
     ]);
 
     function updateFormField(field: keyof ReportFormState, value: string) {
@@ -214,10 +397,18 @@ export default function TeacherReportsPage() {
             setQualityResult(null);
         }
 
-        setForm((current) => ({
-            ...current,
-            [field]: value,
-        }));
+        setForm((current) => {
+            const next = {
+                ...current,
+                [field]: value,
+            };
+
+            if (field === "teacher_notes" || field === "work_covered") {
+                next.generated_report_text = "";
+            }
+
+            return next;
+        });
     }
 
     function resetFormForActiveSession() {
@@ -260,6 +451,7 @@ export default function TeacherReportsPage() {
         }));
 
         setStudents([]);
+        setOutstandingOnly(false);
 
         try {
             setLoadingClasses(true);
@@ -284,7 +476,11 @@ export default function TeacherReportsPage() {
             ...current,
             class_id: classId,
             student_id: "",
+
+
         }));
+
+        setOutstandingOnly(false);
 
         if (!classId) {
             setStudents([]);
@@ -311,16 +507,42 @@ export default function TeacherReportsPage() {
 
 
     function handleStudentChange(studentId: string) {
-        const existingReport = reports.find(
-            (report) =>
-                String(report.student_id) === studentId &&
-                (form.report_session_id
-                    ? String(report.report_session_id ?? "") ===
-                    form.report_session_id
-                    : true),
-        );
+        const selectedTeacherId = Number(form.teacher_id);
 
-        if (existingReport) {
+        const existingReport = reports
+            .filter(
+                (report) =>
+                    String(report.student_id) === studentId &&
+                    (form.report_session_id
+                        ? String(report.report_session_id ?? "") ===
+                        form.report_session_id
+                        : true),
+            )
+            .filter((report) => {
+                if (!selectedTeacherId || Number.isNaN(selectedTeacherId)) {
+                    return true;
+                }
+
+                const teacherId = (
+                    report as StudentReport & {
+                        teacher_id?: number | null;
+                    }
+                ).teacher_id;
+
+                return teacherId == null || teacherId === selectedTeacherId;
+            })
+            .sort(
+                (first, second) =>
+                    new Date(second.updated_at ?? second.created_at).getTime() -
+                    new Date(first.updated_at ?? first.created_at).getTime(),
+            )[0];
+
+        if (
+            existingReport &&
+            EDITABLE_REPORT_STATUSES.has(
+                existingReport.status as TeacherFacingStatus,
+            )
+        ) {
             handleEditReport(existingReport);
             return;
         }
@@ -328,7 +550,11 @@ export default function TeacherReportsPage() {
         setEditingReportId(null);
         setQualityResult(null);
         setError(null);
-        setSuccessMessage(null);
+        setSuccessMessage(
+            existingReport
+                ? "This report is read-only at its current review stage."
+                : null,
+        );
 
         setForm((current) => ({
             ...current,
@@ -405,11 +631,11 @@ export default function TeacherReportsPage() {
             );
 
             const notesForGeneration = [
-                form.teacher_notes.trim()
-                    ? `Teacher notes:\n${form.teacher_notes.trim()}`
-                    : "",
                 form.work_covered.trim()
                     ? `Work covered:\n${form.work_covered.trim()}`
+                    : "",
+                form.teacher_notes.trim()
+                    ? `Teacher notes:\n${form.teacher_notes.trim()}`
                     : "",
             ]
                 .filter(Boolean)
@@ -417,16 +643,27 @@ export default function TeacherReportsPage() {
 
             const generated = await generateReportFromNotes(
                 notesForGeneration,
-                selectedStudent?.full_name,
+                getFirstName(selectedStudent?.full_name),
                 selectedClass?.subject_name ?? undefined,
                 selectedClass?.name ?? undefined,
             );
 
-            setForm((current) => ({
-                ...current,
-                generated_report_text: generated.generated_comment,
-                report_text: generated.generated_comment,
-            }));
+            setForm((current) => {
+                const currentFinal = current.report_text.trim();
+                const previousGenerated =
+                    current.generated_report_text.trim();
+                const finalContainsManualWork =
+                    currentFinal.length > 0 &&
+                    currentFinal !== previousGenerated;
+
+                return {
+                    ...current,
+                    generated_report_text: generated.generated_comment,
+                    report_text: finalContainsManualWork
+                        ? current.report_text
+                        : generated.generated_comment,
+                };
+            });
 
             setSuccessMessage("Report generated from notes.");
         } catch (err) {
@@ -486,7 +723,44 @@ export default function TeacherReportsPage() {
             teacher_notes: report.teacher_notes ?? "",
             generated_report_text: report.generated_report_text ?? "",
             report_text: report.report_text,
-            attainment_grade: report.grade ?? "",
+            exam_mark:
+                (
+                    report as StudentReport & {
+                        exam_mark?: number | null;
+                    }
+                ).exam_mark?.toString() ?? "",
+            attainment_grade:
+                (
+                    report as StudentReport & {
+                        attainment_grade?: string | null;
+                    }
+                ).attainment_grade ??
+                report.grade ??
+                "",
+            effort_grade:
+                (
+                    report as StudentReport & {
+                        effort_grade?: string | null;
+                    }
+                ).effort_grade ?? "",
+            target_grade:
+                (
+                    report as StudentReport & {
+                        target_grade?: string | null;
+                    }
+                ).target_grade ?? "",
+            next_steps:
+                (
+                    report as StudentReport & {
+                        next_steps?: string | null;
+                    }
+                ).next_steps ?? "",
+            tutor_comment:
+                (
+                    report as StudentReport & {
+                        tutor_comment?: string | null;
+                    }
+                ).tutor_comment ?? "",
             academic_year: report.academic_year,
             term: report.term ?? "",
         }));
@@ -532,8 +806,36 @@ export default function TeacherReportsPage() {
             return;
         }
 
-        const payload: StudentReportCreateInput = {
+        const parsedExamMark = form.exam_mark.trim()
+            ? Number(form.exam_mark)
+            : null;
+
+        if (
+            parsedExamMark !== null &&
+            (Number.isNaN(parsedExamMark) || parsedExamMark < 0)
+        ) {
+            setError("Exam mark must be a valid non-negative number.");
+            return;
+        }
+
+        const selectedClass = classes.find(
+            (classItem) => String(classItem.id) === form.class_id,
+        );
+
+        const payload: StudentReportCreateInput &
+            Partial<{
+                exam_mark: number | null;
+                attainment_grade: string | null;
+                effort_grade: string | null;
+                target_grade: string | null;
+                next_steps: string | null;
+                tutor_comment: string | null;
+                subject_name: string | null;
+                checkpoint_name: string | null;
+                teacher_id: number | null;
+            }> = {
             student_id: studentId,
+            teacher_id: form.teacher_id ? Number(form.teacher_id) : null,
             report_session_id: reportSessionId,
             title: form.title.trim(),
             work_covered: form.work_covered.trim() || null,
@@ -541,10 +843,15 @@ export default function TeacherReportsPage() {
             generated_report_text:
                 form.generated_report_text.trim() || null,
             report_text: form.report_text.trim(),
-            grade:
-                form.attainment_grade.trim() ||
-                form.exam_mark.trim() ||
-                null,
+            grade: form.attainment_grade.trim() || null,
+            attainment_grade: form.attainment_grade.trim() || null,
+            effort_grade: form.effort_grade.trim() || null,
+            target_grade: form.target_grade.trim() || null,
+            exam_mark: parsedExamMark,
+            next_steps: form.next_steps.trim() || null,
+            tutor_comment: form.tutor_comment.trim() || null,
+            subject_name: selectedClass?.subject_name ?? null,
+            checkpoint_name: form.term.trim() || null,
             academic_year: form.academic_year.trim(),
             term: form.term.trim() || null,
         };
@@ -649,6 +956,7 @@ export default function TeacherReportsPage() {
                         Student Reports
                     </h1>
 
+
                     <p className="mt-2 text-slate-500">
                         Write student draft reports using the active report
                         session.
@@ -675,6 +983,166 @@ export default function TeacherReportsPage() {
                     {successMessage}
                 </div>
             )}
+
+            <section className="rounded-2xl border bg-white p-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <h2 className="text-2xl font-bold text-slate-950">
+                            Report Completion Overview
+                        </h2>
+                        <p className="mt-1 text-base text-slate-600">
+                            Every pupil in the selected class appears here,
+                            including pupils whose report has not been started.
+                        </p>
+                    </div>
+
+                    <button
+                        type="button"
+                        disabled={!form.class_id}
+                        onClick={() =>
+                            setOutstandingOnly((current) => !current)
+                        }
+                        className="w-fit rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {outstandingOnly
+                            ? "Show all pupils"
+                            : "Show outstanding only"}
+                    </button>
+                </div>
+
+                {!form.class_id ? (
+                    <div className="mt-5 rounded-2xl border border-dashed bg-slate-50 p-6 text-base text-slate-500">
+                        Select a teacher, class and report session to check
+                        completion.
+                    </div>
+                ) : (
+                    <>
+                        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
+                            {[
+                                ["Pupils", completionSummary.total],
+                                ["Written", completionSummary.completed],
+                                ["Outstanding", completionSummary.outstanding],
+                                ["Not started", completionSummary.notStarted],
+                                ["Drafts", completionSummary.drafts],
+                                ["Returned", completionSummary.returned],
+                                ["Complete", `${completionSummary.percentage}%`],
+                            ].map(([label, value]) => (
+                                <div
+                                    key={String(label)}
+                                    className="rounded-2xl border bg-slate-50 p-4"
+                                >
+                                    <p className="text-sm font-bold uppercase tracking-wide text-slate-500">
+                                        {label}
+                                    </p>
+                                    <p className="mt-1 text-2xl font-extrabold text-slate-950">
+                                        {value}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="mt-5">
+                            <div className="h-3 overflow-hidden rounded-full bg-slate-200">
+                                <div
+                                    className="h-full rounded-full bg-green-600 transition-all"
+                                    style={{
+                                        width: `${completionSummary.percentage}%`,
+                                    }}
+                                />
+                            </div>
+                            <p className="mt-2 text-sm font-semibold text-slate-600">
+                                {completionSummary.outstanding === 0 &&
+                                    completionSummary.total > 0
+                                    ? "All reports have been written and submitted."
+                                    : `${completionSummary.outstanding} report${completionSummary.outstanding === 1 ? "" : "s"} still require attention.`}
+                            </p>
+                        </div>
+
+                        <div className="mt-5 overflow-x-auto rounded-2xl border">
+                            <table className="min-w-full divide-y divide-slate-200 text-left">
+                                <thead className="bg-slate-50">
+                                    <tr>
+                                        <th className="px-4 py-3 text-sm font-bold uppercase text-slate-500">
+                                            Pupil
+                                        </th>
+                                        <th className="px-4 py-3 text-sm font-bold uppercase text-slate-500">
+                                            Status
+                                        </th>
+                                        <th className="px-4 py-3 text-sm font-bold uppercase text-slate-500">
+                                            Last updated
+                                        </th>
+                                        <th className="px-4 py-3 text-sm font-bold uppercase text-slate-500">
+                                            Action
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 bg-white">
+                                    {visibleCompletionRows.map((row) => (
+                                        <tr key={row.student.id}>
+                                            <td className="px-4 py-3 text-base font-semibold text-slate-900">
+                                                {row.student.full_name}
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span
+                                                    className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${getStatusBadgeClass(
+                                                        row.status,
+                                                    )}`}
+                                                >
+                                                    {getStatusLabel(row.status)}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 text-base text-slate-600">
+                                                {row.report
+                                                    ? formatDate(
+                                                        row.report.updated_at ??
+                                                        row.report.created_at,
+                                                    )
+                                                    : "—"}
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (
+                                                            row.report &&
+                                                            EDITABLE_REPORT_STATUSES.has(
+                                                                row.status,
+                                                            )
+                                                        ) {
+                                                            handleEditReport(
+                                                                row.report,
+                                                            );
+                                                        } else {
+                                                            handleStudentChange(
+                                                                String(
+                                                                    row.student
+                                                                        .id,
+                                                                ),
+                                                            );
+                                                        }
+                                                    }}
+                                                    className="font-bold text-blue-600 hover:text-blue-700"
+                                                >
+                                                    {row.status === "not_started"
+                                                        ? "Write"
+                                                        : EDITABLE_REPORT_STATUSES.has(
+                                                            row.status,
+                                                        )
+                                                            ? row.status ===
+                                                                "draft"
+                                                                ? "Continue"
+                                                                : "Correct"
+                                                            : "View"}
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
+                )}
+            </section>
 
             <section className="rounded-2xl border bg-white p-6">
                 <h2 className="text-xl font-bold text-slate-950">
@@ -772,6 +1240,19 @@ export default function TeacherReportsPage() {
                                         value={String(student.id)}
                                     >
                                         {student.full_name}
+                                        {(() => {
+                                            const row = completionRows.find(
+                                                (item) =>
+                                                    item.student.id ===
+                                                    student.id,
+                                            );
+
+                                            return row
+                                                ? ` · ${getStatusLabel(
+                                                    row.status,
+                                                )}`
+                                                : "";
+                                        })()}
                                     </option>
                                 ))}
                             </select>
@@ -954,6 +1435,7 @@ export default function TeacherReportsPage() {
                                             type="button"
                                             onClick={() =>
                                                 void handleCheckQuality()
+
                                             }
                                             disabled={
                                                 checkingQuality ||
@@ -1298,8 +1780,11 @@ export default function TeacherReportsPage() {
                                         </h3>
 
                                         <p className="mt-1 text-base text-slate-500">
-                                            Student ID: {report.student_id} ·{" "}
-                                            {report.academic_year}
+                                            {students.find(
+                                                (student) =>
+                                                    student.id === report.student_id,
+                                            )?.full_name ?? "Selected pupil"}{" "}
+                                            · {report.academic_year}
                                             {report.term
                                                 ? ` · ${report.term}`
                                                 : ""}
@@ -1311,7 +1796,7 @@ export default function TeacherReportsPage() {
                                             report.status,
                                         )}`}
                                     >
-                                        {report.status}
+                                        {getStatusLabel(report.status)}
                                     </span>
                                 </div>
 
@@ -1373,7 +1858,9 @@ export default function TeacherReportsPage() {
                                         Created {formatDate(report.created_at)}
                                     </span>
 
-                                    {report.status === "draft" ? (
+                                    {EDITABLE_REPORT_STATUSES.has(
+                                        report.status as TeacherFacingStatus,
+                                    ) ? (
                                         <div className="flex gap-4">
                                             <button
                                                 type="button"
@@ -1401,9 +1888,20 @@ export default function TeacherReportsPage() {
                                         <span className="font-medium text-slate-600">
                                             {report.status === "submitted"
                                                 ? "Awaiting review"
-                                                : report.status === "approved"
-                                                    ? "Approved and awaiting publication"
-                                                    : "Published"}
+                                                : report.status === "tutor_review"
+                                                    ? "Under tutor review"
+                                                    : report.status ===
+                                                        "ready_for_smt"
+                                                        ? "Awaiting SMT review"
+                                                        : report.status ===
+                                                            "approved"
+                                                            ? "Approved and awaiting publication"
+                                                            : report.status ===
+                                                                "published"
+                                                                ? "Published"
+                                                                : getStatusLabel(
+                                                                    report.status,
+                                                                )}
                                         </span>
                                     )}
                                 </div>

@@ -20,6 +20,7 @@ from app.repositories.student_reports import (
     create_student_report,
     delete_student_report,
     get_student_report,
+    get_student_report_completion_overview,
     get_student_report_dashboard_counts,
     list_reports_for_student,
     list_student_report_review_queue,
@@ -34,6 +35,7 @@ from app.repositories.student_reports import (
     user_can_tutor_review_student,
 )
 from app.schemas.student_report import (
+    StudentReportCompletionOverview,
     StudentReportCreate,
     StudentReportRead,
     StudentReportReviewDashboard,
@@ -864,6 +866,67 @@ async def return_report_endpoint(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Teacher completion overview
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/completion-overview",
+    response_model=StudentReportCompletionOverview,
+)
+async def completion_overview_endpoint(
+    class_id: int,
+    report_session_id: int,
+    teacher_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StudentReportCompletionOverview:
+    """
+    Return the complete class roster alongside the latest matching report.
+
+    Pupils without a report are included with ``report_id=None`` and the
+    synthetic status ``not_started``. This makes the endpoint authoritative
+    for teacher completion tracking rather than relying only on reports that
+    already exist.
+    """
+
+    school_id = _require_school_id(current_user)
+    _require_school_staff(current_user)
+
+    if class_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Class ID must be a positive integer.",
+        )
+
+    if report_session_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Report session ID must be a positive integer.",
+        )
+
+    resolved_teacher_id = teacher_id
+
+    if (
+        resolved_teacher_id is None
+        and _user_has_role(current_user, UserRole.TEACHER)
+        and not _user_has_role(current_user, UserRole.SCHOOL_ADMIN)
+        and not _user_has_role(current_user, UserRole.PLATFORM_ADMIN)
+    ):
+        resolved_teacher_id = current_user.id
+
+    overview = await get_student_report_completion_overview(
+        db,
+        school_id=school_id,
+        class_id=class_id,
+        report_session_id=report_session_id,
+        teacher_id=resolved_teacher_id,
+    )
+
+    return StudentReportCompletionOverview(**overview)
 
 
 # ---------------------------------------------------------------------------
