@@ -1,4 +1,10 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
+import {
+    apiDelete,
+    apiGet,
+    apiGetBlob,
+    apiPatch,
+    apiPost,
+} from "@/lib/api";
 
 export type ReportSession = {
     id: number;
@@ -56,5 +62,12 @@ export async function deleteReportSession(
 ): Promise<void> {
     return apiDelete<void>(
         `/report-sessions/${sessionId}`,
+    );
+}
+export async function exportReportSessionZip(
+    reportSessionId: number,
+): Promise<Blob> {
+    return apiGetBlob(
+        `/student-reports/export-session/${reportSessionId}`,
     );
 }

@@ -157,7 +157,55 @@ export async function apiGet<T>(
         }),
     );
 }
+export async function apiGetBlob(
+    path: string,
+    token?: string,
+): Promise<Blob> {
+    const res = await fetch(buildUrl(path), {
+        method: "GET",
+        headers: buildHeaders(token),
+        cache: "no-store",
+    });
 
+    if (!res.ok) {
+        let message = `API error ${res.status}`;
+
+        try {
+            const contentType =
+                res.headers.get("content-type") ?? "";
+
+            if (contentType.includes("application/json")) {
+                const data = await res.json();
+
+                if (typeof data?.detail === "string") {
+                    message = data.detail;
+                } else if (typeof data?.message === "string") {
+                    message = data.message;
+                } else if (typeof data?.error === "string") {
+                    message = data.error;
+                } else {
+                    message = JSON.stringify(data);
+                }
+            } else {
+                const responseText = await res.text();
+
+                if (responseText.trim()) {
+                    message = responseText;
+                }
+            }
+        } catch {
+            // Keep the default error message.
+        }
+
+        if (res.status === 401 || res.status === 403) {
+            clearToken();
+        }
+
+        throw new Error(message);
+    }
+
+    return res.blob();
+}
 export async function apiPost<T>(
     path: string,
     body?: unknown,

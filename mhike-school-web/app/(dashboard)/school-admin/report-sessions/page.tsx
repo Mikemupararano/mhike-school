@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
     createReportSession,
     deleteReportSession,
+    exportReportSessionZip,
     listReportSessions,
     updateReportSession,
     type ReportSession,
@@ -134,6 +135,9 @@ export default function SchoolAdminReportSessionsPage() {
     );
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [exportingSessionId, setExportingSessionId] = useState<number | null>(
+        null,
+    );
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -302,6 +306,46 @@ export default function SchoolAdminReportSessionsPage() {
                     ? err.message
                     : "Failed to delete report session.",
             );
+        }
+    }
+
+    async function handleExport(session: ReportSession) {
+        try {
+            setExportingSessionId(session.id);
+            setError(null);
+            setSuccessMessage(null);
+
+            const archive = await exportReportSessionZip(session.id);
+            const objectUrl = URL.createObjectURL(archive);
+
+            const safeTitle = session.title
+                .trim()
+                .replace(/[^a-zA-Z0-9-_]+/g, "-")
+                .replace(/^-+|-+$/g, "")
+                .toLowerCase();
+
+            const link = document.createElement("a");
+
+            link.href = objectUrl;
+            link.download = `${safeTitle || "report-session"}-reports.zip`;
+
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+
+            window.setTimeout(() => {
+                URL.revokeObjectURL(objectUrl);
+            }, 0);
+
+            setSuccessMessage("Report ZIP downloaded.");
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to export report session.",
+            );
+        } finally {
+            setExportingSessionId(null);
         }
     }
 
@@ -566,6 +610,21 @@ export default function SchoolAdminReportSessionsPage() {
                                 </div>
 
                                 <div className="mt-4 flex flex-wrap gap-3 border-t pt-4">
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            void handleExport(session)
+                                        }
+                                        disabled={
+                                            exportingSessionId === session.id
+                                        }
+                                        className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        {exportingSessionId === session.id
+                                            ? "Exporting..."
+                                            : "Export ZIP"}
+                                    </button>
+
                                     <button
                                         type="button"
                                         onClick={() => startEdit(session)}
