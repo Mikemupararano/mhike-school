@@ -204,16 +204,18 @@ CURRICULUM_FILLER_PHRASES = [
 ]
 
 PROMPT_LEAKAGE_PATTERNS = [
-    r"use these teacher notes as the main evidence.*",
-    r"use the teacher notes as the main evidence.*",
-    r"write a professional school report.*",
-    r"generate a professional school report.*",
-    r"do not invent information.*",
-    r"use the pupil'?s first name only.*",
-    r"use the student'?s first name only.*",
-    r"avoid repeating the work covered.*",
-    r"include a clear next step.*",
-    r"return only the report.*",
+    r"use these teacher notes as the main evidence(?: for the pupil report)?",
+    r"use the teacher notes as the main evidence(?: for the pupil report)?",
+    r"prioritise these details when writing the student comment",
+    r"prioritize these details when writing the student comment",
+    r"write a professional school report(?: comment)?",
+    r"generate a professional school report(?: comment)?",
+    r"do not invent information",
+    r"use the pupil'?s first name only",
+    r"use the student'?s first name only",
+    r"avoid repeating the work covered",
+    r"include a clear next step",
+    r"return only the report(?: text)?",
 ]
 
 MEMORY_EXCLUSION_PHRASES = [
@@ -293,24 +295,28 @@ def join_items(items: Iterable[str]) -> str:
 
 
 def _remove_prompt_leakage(text: str) -> str:
-    cleaned_lines: list[str] = []
+    """Remove report-writing instructions wherever they appear in the input."""
 
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
+    cleaned = text.replace("\r\n", "\n").replace("\r", "\n")
 
-        if not line:
-            continue
+    for pattern in PROMPT_LEAKAGE_PATTERNS:
+        cleaned = re.sub(
+            rf"(?i)\b{pattern}\b\s*[:\-–—]?\s*",
+            " ",
+            cleaned,
+        )
 
-        lower_line = line.lower()
+    cleaned = re.sub(
+        r"(?i)\b(?:based on|using)\s+(?:the\s+)?(?:following\s+)?notes\s*[:\-–—]?\s*",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"([,;:]){2,}", r"\1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
-        if any(
-            re.fullmatch(pattern, lower_line) for pattern in PROMPT_LEAKAGE_PATTERNS
-        ):
-            continue
-
-        cleaned_lines.append(line)
-
-    return "\n".join(cleaned_lines).strip()
+    return cleaned.strip(" \n,;:-")
 
 
 def _normalise_bullets(text: str) -> list[str]:
@@ -330,6 +336,45 @@ def _normalise_bullets(text: str) -> list[str]:
     return items
 
 
+def _looks_like_curriculum_only(text: str) -> bool:
+    lower_text = text.lower()
+
+    curriculum_signals = (
+        "the pupils have covered",
+        "pupils have covered",
+        "the pupils have completed",
+        "pupils have completed",
+        "the following topics",
+        "end of topic test",
+        "end-of-topic test",
+        "end of topic assessment",
+        "end-of-topic assessment",
+        "in aqa gcse",
+        "in ocr gcse",
+        "in edexcel gcse",
+    )
+    individual_signals = (
+        "hardworking",
+        "hard working",
+        "positive attitude",
+        "engaged",
+        "independent",
+        "confidence",
+        "progress",
+        "homework",
+        "participat",
+        "practical",
+        "%",
+        "should",
+        "needs to",
+        "must",
+    )
+
+    return any(signal in lower_text for signal in curriculum_signals) and not any(
+        signal in lower_text for signal in individual_signals
+    )
+
+
 def split_generation_notes(notes: str) -> tuple[str, str]:
     cleaned_notes = _remove_prompt_leakage(notes)
 
@@ -341,6 +386,9 @@ def split_generation_notes(notes: str) -> tuple[str, str]:
     )
 
     if not markers:
+        if _looks_like_curriculum_only(cleaned_notes):
+            return cleaned_notes.strip(), ""
+
         return "", cleaned_notes.strip()
 
     sections: dict[str, list[str]] = {}
@@ -491,9 +539,14 @@ def build_teacher_evidence_sentence(*, first_name: str, teacher_notes: str) -> s
     if evidence_parts:
         return " ".join(evidence_parts)
 
-    cleaned_items = [item.rstrip(".") for item in items if len(item.split()) >= 2]
+    cleaned_items = [
+        item.rstrip(".")
+        for item in items
+        if len(item.split()) >= 2 and not _looks_like_curriculum_only(item)
+    ]
+
     if cleaned_items:
-        return f"They have shown {join_items(cleaned_items[:3])}."
+        return f"They have demonstrated {join_items(cleaned_items[:3])}."
 
     return ""
 
@@ -773,6 +826,7 @@ def generate_report_comment(
     similar_reports: list[str] | None = None,
     used_phrases: set[str] | None = None,
 ) -> str:
+    # Retained for backwards compatibility; historical wording is not copied.
     del similar_reports, used_phrases
 
     cleaned_notes = _remove_prompt_leakage(notes)
@@ -846,4 +900,12 @@ def generate_report_comment(
         ],
     )
 
-    return re.sub(r"\s+", " ", " ".join(parts).strip())
+    report = re.sub(r"\s+", " ", " ".join(parts).strip())
+    report = _remove_prompt_leakage(report)
+    report = re.sub(r"\s+([,.;:!?])", r"\1", report)
+    report = re.sub(r"([.!?]){2,}", r"\1", report)
+
+    if report and report[-1] not in ".!?":
+        report += "."
+
+    return report
