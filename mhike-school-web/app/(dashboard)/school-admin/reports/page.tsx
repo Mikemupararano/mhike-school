@@ -57,12 +57,10 @@ const EMPTY_DASHBOARD: StudentReportReviewDashboard = {
     published: 0,
 };
 
-const REVIEWABLE_STATUSES = new Set([
+const APPROVABLE_STATUSES = new Set([
     STATUS_SUBMITTED,
-    STATUS_TUTOR_REVIEW,
     STATUS_READY_FOR_SMT,
 ]);
-
 const STATUS_OPTIONS: Array<{
     value: StatusFilter;
     label: string;
@@ -991,7 +989,7 @@ export default function SchoolAdminReportsPage() {
                                                             Open Full Report
                                                         </button>
 
-                                                        {REVIEWABLE_STATUSES.has(
+                                                        {APPROVABLE_STATUSES.has(
                                                             report.status,
                                                         ) &&
                                                             !published && (

@@ -1236,6 +1236,9 @@ async def test_review_dashboard_returns_correct_counts(
         headers=auth_headers(school_admin_user),
     )
 
+    print("STATUS:", response.status_code)
+    print("BODY:", response.text)
+
     assert response.status_code == 200
 
     data = response.json()
@@ -1243,10 +1246,13 @@ async def test_review_dashboard_returns_correct_counts(
     assert data == {
         "draft": 1,
         "submitted": 1,
+        "tutor_review": 0,
+        "returned_by_tutor": 0,
+        "ready_for_smt": 0,
+        "returned_by_smt": 0,
         "approved": 1,
         "published": 1,
     }
-
 
 @pytest.mark.asyncio
 async def test_teacher_cannot_access_review_queue(

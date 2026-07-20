@@ -1,24 +1,35 @@
 /* ==========================================================
    Dashboard Buttons
-   Only style normal dashboard buttons.
-   Login/auth pages use their own Tailwind styling.
+   Provide dashboard defaults without overriding Tailwind
+   utility classes used by individual pages and components.
    ========================================================== */
 
-.dashboard-theme main button:not([data-custom-button="true"]) {
-    background: var(--mhike-button) !important;
-    color: #ffffff !important;
-    font-weight: 700 !important;
-    border: 1px solid var(--mhike-button) !important;
-    transition: background-color .2s ease;
+:where(.dashboard-theme main button:not([data-custom-button="true"])) {
+    background: var(--mhike-button);
+    color: #ffffff;
+    font-weight: 700;
+    border: 1px solid var(--mhike-button);
+    transition:
+        background-color 0.2s ease,
+        border-color 0.2s ease,
+        color 0.2s ease,
+        opacity 0.2s ease,
+        transform 0.2s ease;
 }
 
-.dashboard-theme main button:not([data-custom-button="true"]):hover {
-    background: var(--mhike-button-hover) !important;
+:where(.dashboard-theme main button:not([data-custom-button="true"]):hover) {
+    background: var(--mhike-button-hover);
+}
+
+:where(.dashboard-theme main button:not([data-custom-button="true"]):disabled) {
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 /* ==========================================================
    Authentication Page Protection
-   Prevent dashboard theme overriding login page styles.
+   Prevent dashboard theme rules from overriding the dedicated
+   Tailwind styling used by login and authentication pages.
    ========================================================== */
 
 .dashboard-theme main [data-auth-page="true"] {

@@ -104,23 +104,79 @@ def _user_has_role(user: User, role: UserRole) -> bool:
     return any(_normalise_role(user_role) == expected_role for user_role in user.roles)
 
 
-def _is_school_staff(user: User) -> bool:
+def _user_has_role_name(user: User, *role_names: str) -> bool:
+    expected = {name.strip().casefold() for name in role_names if name.strip()}
+
     return any(
-        _user_has_role(user, role)
-        for role in (
-            UserRole.SCHOOL_ADMIN,
-            UserRole.TEACHER,
-            UserRole.PLATFORM_ADMIN,
+        _normalise_role(user_role).strip().casefold() in expected
+        for user_role in user.roles
+    )
+
+
+def _is_head_of_year(user: User) -> bool:
+    return _user_has_role_name(
+        user,
+        "head_of_year",
+        "head of year",
+        "hoy",
+    )
+
+
+def _is_headmaster(user: User) -> bool:
+    return _user_has_role_name(
+        user,
+        "headmaster",
+        "headteacher",
+        "head_teacher",
+        "principal",
+    )
+
+
+def _is_custom_report_writer(user: User) -> bool:
+    """
+    Recognise common pastoral and boarding report-writer roles.
+
+    The report type configuration and repository remain responsible for
+    deciding which custom report types each role may write and which pupils
+    fall within that member of staff's scope.
+    """
+
+    return _user_has_role_name(
+        user,
+        "housemaster",
+        "housemistress",
+        "house_parent",
+        "boarding_staff",
+        "boarding staff",
+        "pastoral_staff",
+        "pastoral staff",
+    )
+
+
+def _is_school_staff(user: User) -> bool:
+    return (
+        any(
+            _user_has_role(user, role)
+            for role in (
+                UserRole.SCHOOL_ADMIN,
+                UserRole.TEACHER,
+                UserRole.PLATFORM_ADMIN,
+            )
         )
+        or _is_head_of_year(user)
+        or _is_headmaster(user)
+        or _is_custom_report_writer(user)
     )
 
 
 def _can_review_reports(user: User) -> bool:
     """
-    SMT-style report review.
+    Final SMT review and approval.
 
-    At present, School Admin and Platform Admin represent the users
-    permitted to perform the final review and approval stage.
+    School Admin currently represents school-level SMT. Platform Admin may
+    also complete the final review. Headmasters may read, write, edit, save,
+    print and download reports, but approval remains an SMT/Platform Admin
+    action unless they also hold School Admin.
     """
 
     return any(
@@ -142,19 +198,41 @@ def _can_publish_reports(user: User) -> bool:
     )
 
 
-def _can_attempt_tutor_review(user: User) -> bool:
+def _can_edit_any_school_report(user: User) -> bool:
     """
-    Teachers may be tutors, but their actual permission to review a
-    particular pupil is checked against tutor-group membership.
+    Users who may edit and save any non-published report in their school.
     """
 
-    return any(
-        _user_has_role(user, role)
-        for role in (
-            UserRole.TEACHER,
-            UserRole.SCHOOL_ADMIN,
-            UserRole.PLATFORM_ADMIN,
+    return _can_review_reports(user) or _is_headmaster(user)
+
+
+def _can_export_whole_school_or_session(user: User) -> bool:
+    """
+    Whole-session and whole-school downloads are restricted to the
+    Headmaster, SMT/School Admin and Platform Admin.
+    """
+
+    return _can_edit_any_school_report(user)
+
+
+def _can_attempt_tutor_review(user: User) -> bool:
+    """
+    Teachers may be tutors. Head-of-Year access is also admitted here, but
+    the repository must verify the pupil is in a tutor group or year group
+    under that user's leadership.
+    """
+
+    return (
+        any(
+            _user_has_role(user, role)
+            for role in (
+                UserRole.TEACHER,
+                UserRole.SCHOOL_ADMIN,
+                UserRole.PLATFORM_ADMIN,
+            )
         )
+        or _is_head_of_year(user)
+        or _is_headmaster(user)
     )
 
 
@@ -162,7 +240,7 @@ def _require_school_staff(user: User) -> None:
     if not _is_school_staff(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school staff can access student reports.",
+            detail="Only authorised school staff can access student reports.",
         )
 
 
@@ -170,7 +248,7 @@ def _require_report_reviewer(user: User) -> None:
     if not _can_review_reports(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school administrators can complete the SMT review.",
+            detail="Only SMT/School Admin or Platform Admin can approve reports.",
         )
 
 
@@ -178,7 +256,18 @@ def _require_report_publisher(user: User) -> None:
     if not _can_publish_reports(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school administrators can publish student reports.",
+            detail="Only SMT/School Admin or Platform Admin can publish reports.",
+        )
+
+
+def _require_batch_export_role(user: User) -> None:
+    if not _can_export_whole_school_or_session(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Only the Headmaster, SMT/School Admin or Platform Admin "
+                "can download a complete reporting session."
+            ),
         )
 
 
@@ -186,8 +275,15 @@ def _require_tutor_review_role(user: User) -> None:
     if not _can_attempt_tutor_review(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only tutors or school administrators can review reports.",
+            detail=(
+                "Only tutors, Heads of Year, the Headmaster or school "
+                "administrators can review reports."
+            ),
         )
+
+
+def _is_report_owner(*, user: User, report_teacher_id: int | None) -> bool:
+    return report_teacher_id == user.id
 
 
 def _require_teacher_report_ownership(
@@ -197,21 +293,19 @@ def _require_teacher_report_ownership(
     action: str,
 ) -> None:
     """
-    Teachers may only change reports they own.
+    Require ownership for author-only actions such as submitting or deleting.
 
-    School Admin and Platform Admin are not restricted by teacher ownership
-    because they may need to correct reports during administrative review.
+    Headmaster, School Admin and Platform Admin are not restricted by author
+    ownership when performing school-wide administrative work.
     """
 
-    if (
-        _user_has_role(user, UserRole.TEACHER)
-        and not _user_has_role(user, UserRole.SCHOOL_ADMIN)
-        and not _user_has_role(user, UserRole.PLATFORM_ADMIN)
-        and report_teacher_id != user.id
-    ):
+    if _can_edit_any_school_report(user):
+        return
+
+    if report_teacher_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Teachers can only {action} their own reports.",
+            detail=f"You can only {action} reports that you wrote.",
         )
 
 
@@ -223,13 +317,14 @@ async def _require_tutor_access_to_student(
     student_id: int,
 ) -> None:
     """
-    School and Platform Admin users may review any pupil within the school.
+    Check pupil-level pastoral access.
 
-    A teacher must be assigned as a tutor to the pupil's tutor group.
-    The repository performs the actual tutor-group membership lookup.
+    Headmaster, School Admin and Platform Admin may access any pupil in their
+    school. For tutors and Heads of Year, the repository must confirm that
+    the pupil belongs to an assigned tutor group or year-group scope.
     """
 
-    if _can_review_reports(user):
+    if _can_edit_any_school_report(user):
         return
 
     permitted = await user_can_tutor_review_student(
@@ -243,9 +338,60 @@ async def _require_tutor_access_to_student(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "You can only review reports for pupils in your own " "tutor group."
+                "You can only review or edit reports for pupils within "
+                "your assigned tutor-group or year-group responsibility."
             ),
         )
+
+
+async def _require_non_published_report_edit_access(
+    *,
+    db: AsyncSession,
+    user: User,
+    school_id: int,
+    report,
+) -> None:
+    """
+    Enforce role and pupil scope for editing while keeping published reports
+    locked.
+
+    Authors may edit their own draft or returned reports. Tutors and Heads of
+    Year may edit reports for pupils in their assigned scope. The Headmaster,
+    School Admin and Platform Admin may edit any non-published report in the
+    school.
+    """
+
+    if report.status == REPORT_STATUS_PUBLISHED or report.published:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Published reports cannot be edited.",
+        )
+
+    if _can_edit_any_school_report(user):
+        return
+
+    if _is_report_owner(user=user, report_teacher_id=report.teacher_id):
+        if report.status not in {
+            REPORT_STATUS_DRAFT,
+            REPORT_STATUS_RETURNED_BY_TUTOR,
+            REPORT_STATUS_RETURNED_BY_SMT,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A report author can edit only a draft or a report "
+                    "returned for correction."
+                ),
+            )
+
+        return
+
+    await _require_tutor_access_to_student(
+        db=db,
+        user=user,
+        school_id=school_id,
+        student_id=report.student_id,
+    )
 
 
 async def _get_report_or_404(
@@ -397,32 +543,50 @@ def _build_report_pdf_data(report) -> ReportPdfData:
     )
 
 
-async def _get_published_reports_for_session(
+async def _get_reports_for_session_export(
     *,
     db: AsyncSession,
     school_id: int,
     report_session_id: int,
+    export_status: str,
 ):
     """
-    Return all published reports for one reporting session.
+    Return school-scoped reports for a reporting-session export.
 
-    The repository query remains school-scoped so reports from another
-    school can never be included in the export.
+    ``export_status`` may be ``draft``, ``published`` or ``all``. Draft
+    export means every report that has not yet been published, including
+    submitted, review and approved reports.
     """
+
+    normalised_status = export_status.strip().casefold()
+
+    if normalised_status not in {"draft", "published", "all"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Export status must be draft, published or all.",
+        )
 
     reports = await list_student_reports(
         db,
         school_id=school_id,
         report_session_id=report_session_id,
-        published=True,
-        status=REPORT_STATUS_PUBLISHED,
     )
 
-    return [
-        report
-        for report in reports
-        if report.published and report.status == REPORT_STATUS_PUBLISHED
-    ]
+    if normalised_status == "published":
+        return [
+            report
+            for report in reports
+            if report.published and report.status == REPORT_STATUS_PUBLISHED
+        ]
+
+    if normalised_status == "draft":
+        return [
+            report
+            for report in reports
+            if not report.published and report.status != REPORT_STATUS_PUBLISHED
+        ]
+
+    return reports
 
 
 # ---------------------------------------------------------------------------
@@ -939,7 +1103,16 @@ async def review_dashboard_endpoint(
         report_session_id=report_session_id,
     )
 
-    return StudentReportReviewDashboard(**counts)
+    return StudentReportReviewDashboard(
+        draft=counts.get("draft", 0),
+        submitted=counts.get("submitted", 0),
+        tutor_review=counts.get("tutor_review", 0),
+        returned_by_tutor=counts.get("returned_by_tutor", 0),
+        ready_for_smt=counts.get("ready_for_smt", 0),
+        returned_by_smt=counts.get("returned_by_smt", 0),
+        approved=counts.get("approved", 0),
+        published=counts.get("published", 0),
+    )
 
 
 @router.patch(
@@ -975,6 +1148,9 @@ async def reviewer_edit_report_endpoint(
         )
 
     editable_statuses = {
+        REPORT_STATUS_DRAFT,
+        REPORT_STATUS_RETURNED_BY_TUTOR,
+        REPORT_STATUS_RETURNED_BY_SMT,
         REPORT_STATUS_SUBMITTED,
         REPORT_STATUS_TUTOR_REVIEW,
         REPORT_STATUS_READY_FOR_SMT,
@@ -984,10 +1160,7 @@ async def reviewer_edit_report_endpoint(
     if report.status not in editable_statuses:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Reviewer corrections can only be saved while a report is "
-                "submitted, under tutor review, ready for SMT, or approved."
-            ),
+            detail="This report is not in an editable workflow state.",
         )
 
     try:
@@ -1204,17 +1377,20 @@ async def publish_report_session_endpoint(
 )
 async def export_report_session_zip_endpoint(
     report_session_id: int,
+    export_status: str = "published",
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """
-    Download all published reports for one reporting session as a ZIP file.
+    Download a complete reporting session as a ZIP of pupil PDFs.
 
-    Only School Admin and Platform Admin users may export a complete session.
+    The Headmaster, SMT/School Admin and Platform Admin may export draft,
+    published or all reports. Each PDF includes the school name, pupil name,
+    report title/type and the name of the staff member who wrote it.
     """
 
     school_id = _require_school_id(current_user)
-    _require_report_publisher(current_user)
+    _require_batch_export_role(current_user)
 
     if report_session_id < 1:
         raise HTTPException(
@@ -1222,16 +1398,20 @@ async def export_report_session_zip_endpoint(
             detail="Report session ID must be a positive integer.",
         )
 
-    reports = await _get_published_reports_for_session(
+    reports = await _get_reports_for_session_export(
         db=db,
         school_id=school_id,
         report_session_id=report_session_id,
+        export_status=export_status,
     )
 
     if not reports:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No published reports were found for this reporting session.",
+            detail=(
+                "No reports matching the requested export status were found "
+                "for this reporting session."
+            ),
         )
 
     zip_items = [
@@ -1254,7 +1434,10 @@ async def export_report_session_zip_endpoint(
             detail="The report ZIP archive could not be generated.",
         ) from exc
 
-    filename = f"student_reports_session_{report_session_id}.zip"
+    safe_export_status = export_status.strip().casefold()
+    filename = (
+        f"student_reports_session_{report_session_id}_" f"{safe_export_status}.zip"
+    )
 
     return StreamingResponse(
         BytesIO(zip_bytes),
@@ -1277,10 +1460,11 @@ async def download_report_pdf_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """
-    Download one published student report as a PDF.
+    Download one student report as a print-ready PDF.
 
-    School staff may download published reports within their school. Parents
-    may download only published reports belonging to linked children.
+    Only published reports may be downloaded. Authorised staff may download
+    published reports within their permitted pupil scope. Parents may download
+    published reports only for linked children.
     """
 
     school_id = _require_school_id(current_user)
@@ -1291,21 +1475,38 @@ async def download_report_pdf_endpoint(
         school_id=school_id,
     )
 
-    if report.status != REPORT_STATUS_PUBLISHED or not report.published:
+    is_published = report.status == REPORT_STATUS_PUBLISHED and bool(report.published)
+
+    if not is_published:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only published reports can be downloaded as PDF.",
         )
 
-    if not await _user_can_download_published_report(
-        db=db,
-        user=current_user,
-        report=report,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to download this report.",
-        )
+    if _is_school_staff(current_user):
+        if not (
+            _can_edit_any_school_report(current_user)
+            or _is_report_owner(
+                user=current_user,
+                report_teacher_id=report.teacher_id,
+            )
+        ):
+            await _require_tutor_access_to_student(
+                db=db,
+                user=current_user,
+                school_id=school_id,
+                student_id=report.student_id,
+            )
+    else:
+        if not await _user_can_download_published_report(
+            db=db,
+            user=current_user,
+            report=report,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to download this report.",
+            )
 
     pdf_data = _build_report_pdf_data(report)
 
@@ -1380,26 +1581,12 @@ async def update_report_endpoint(
         school_id=school_id,
     )
 
-    _require_teacher_report_ownership(
+    await _require_non_published_report_edit_access(
+        db=db,
         user=current_user,
-        report_teacher_id=report.teacher_id,
-        action="edit",
+        school_id=school_id,
+        report=report,
     )
-
-    editable_statuses = {
-        REPORT_STATUS_DRAFT,
-        REPORT_STATUS_RETURNED_BY_TUTOR,
-        REPORT_STATUS_RETURNED_BY_SMT,
-    }
-
-    if report.status not in editable_statuses:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Only draft reports or reports returned for correction "
-                "can be edited by the subject teacher."
-            ),
-        )
 
     return await update_student_report(
         db,
