@@ -39,9 +39,17 @@ class StudentReport(Base):
     unpublished report when the assigned teacher or an earlier reviewer is
     unavailable.
 
-    Legacy fields such as ``grade``, ``term`` and ``work_covered`` are kept
-    temporarily while the application transitions to the expanded reporting
-    structure.
+    Shared class-level content, such as work covered, is stored separately
+    in ReportGroupContent and is scoped by:
+
+    - school;
+    - reporting session;
+    - class group;
+    - subject.
+
+    Legacy fields such as ``grade``, ``term`` and ``work_covered`` remain
+    temporarily for backward compatibility while existing data and API
+    consumers transition to the shared reporting structure.
     """
 
     __tablename__ = "student_reports"
@@ -50,10 +58,10 @@ class StudentReport(Base):
         UniqueConstraint(
             "school_id",
             "student_id",
-            "teacher_id",
             "report_session_id",
+            "class_group_id",
             "subject_name",
-            name="uq_student_report_session_teacher_subject",
+            name="uq_student_report_session_class_subject",
         ),
     )
 
@@ -61,31 +69,64 @@ class StudentReport(Base):
     # Identity and ownership
     # ------------------------------------------------------------------
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+    )
 
     school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey(
+            "schools.id",
+            ondelete="CASCADE",
+        ),
         index=True,
         nullable=False,
     )
 
     student_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
         index=True,
         nullable=False,
     )
 
     # The member of staff currently assigned responsibility for this
-    # subject report. It is nullable so that a report remains valid if a
-    # member of staff leaves and can later be reassigned.
+    # subject report.
+    #
+    # Teacher assignment is not part of report uniqueness because a report
+    # must remain the same report if responsibility is transferred to
+    # another authorised member of staff.
     teacher_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
 
     report_session_id: Mapped[int | None] = mapped_column(
-        ForeignKey("report_sessions.id", ondelete="SET NULL"),
+        ForeignKey(
+            "report_sessions.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+        nullable=True,
+    )
+
+    # The teaching class to which this pupil report belongs.
+    #
+    # This allows the report to resolve shared class-level content through
+    # ReportGroupContent using the reporting session, class and subject.
+    #
+    # It remains nullable during the transition so legacy reports can be
+    # migrated safely without immediately requiring a class assignment.
+    class_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "class_groups.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -119,9 +160,8 @@ class StudentReport(Base):
         nullable=True,
     )
 
-    # A subject identifier is required for reliable grouping and for
-    # allowing the same teacher to report on the same pupil in more than
-    # one subject during one reporting session.
+    # Subject remains part of the report identity because ClassGroup does
+    # not currently contain a dedicated subject field.
     subject_name: Mapped[str | None] = mapped_column(
         String(100),
         index=True,
@@ -132,7 +172,7 @@ class StudentReport(Base):
     # Teacher report content
     # ------------------------------------------------------------------
 
-    # The authoritative, teacher-approved and editable report comment.
+    # The authoritative, teacher-approved and editable pupil comment.
     # It may be written manually or copied from generated_report_text.
     report_text: Mapped[str] = mapped_column(
         Text,
@@ -141,23 +181,29 @@ class StudentReport(Base):
         nullable=False,
     )
 
-    # Teacher-provided notes, bullet points or a prompt about the pupil.
-    # These are optional and may be used to generate a suggested report.
+    # Teacher-provided notes, bullet points or prompts about this pupil.
     teacher_notes: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
 
     # The most recent raw suggestion produced from teacher_notes.
-    # This must never be required for saving or submitting a manually
-    # written report.
+    # This is never required when saving or submitting a manually written
+    # report.
     generated_report_text: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
 
-    # Retained until work covered is moved to shared class/subject/session
-    # configuration.
+    # Legacy pupil-level copy retained temporarily while existing data and
+    # API consumers transition to ReportGroupContent.
+    #
+    # New code should read and write shared work covered through:
+    #
+    # school_id
+    # report_session_id
+    # class_group_id
+    # subject_name
     work_covered: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
@@ -179,9 +225,6 @@ class StudentReport(Base):
         nullable=True,
     )
 
-    # These three fields form the standard grade panel shown at the top
-    # of the full report and in the grade card when enabled by the
-    # ReportSession configuration.
     effort_grade: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
@@ -197,7 +240,6 @@ class StudentReport(Base):
         nullable=True,
     )
 
-    # Optional assessment and predicted-grade fields.
     exam_grade: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
@@ -278,7 +320,10 @@ class StudentReport(Base):
     )
 
     submitted_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -293,7 +338,10 @@ class StudentReport(Base):
     )
 
     tutor_reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -309,7 +357,10 @@ class StudentReport(Base):
     )
 
     ready_for_smt_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -324,7 +375,10 @@ class StudentReport(Base):
     )
 
     reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -344,7 +398,10 @@ class StudentReport(Base):
     )
 
     head_of_year_reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -359,7 +416,10 @@ class StudentReport(Base):
     )
 
     headteacher_reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -382,7 +442,10 @@ class StudentReport(Base):
     )
 
     published_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -410,6 +473,7 @@ class StudentReport(Base):
 
     school = relationship(
         "School",
+        foreign_keys=[school_id],
         lazy="selectin",
     )
 
@@ -422,6 +486,18 @@ class StudentReport(Base):
     teacher = relationship(
         "User",
         foreign_keys=[teacher_id],
+        lazy="selectin",
+    )
+
+    report_session = relationship(
+        "ReportSession",
+        foreign_keys=[report_session_id],
+        lazy="selectin",
+    )
+
+    class_group = relationship(
+        "ClassGroup",
+        foreign_keys=[class_group_id],
         lazy="selectin",
     )
 
@@ -464,11 +540,5 @@ class StudentReport(Base):
     published_by = relationship(
         "User",
         foreign_keys=[published_by_id],
-        lazy="selectin",
-    )
-
-    report_session = relationship(
-        "ReportSession",
-        foreign_keys=[report_session_id],
         lazy="selectin",
     )
