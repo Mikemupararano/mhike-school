@@ -19,19 +19,28 @@ from app.db.base import Base
 
 class StudentReport(Base):
     """
-    Stores an individual student's report for one reporting session.
+    Stores one student's subject report for one reporting session.
 
-    The model supports the complete reporting workflow:
+    The report record is the single source of truth for:
 
-        draft
-        → submitted
-        → tutor review
-        → ready for SMT
-        → approved
-        → published
+    - the editable full written report;
+    - the compact grade card;
+    - the parent portal;
+    - PDF and print output;
+    - bulk ZIP exports.
 
-    Legacy fields such as ``grade``, ``term`` and ``work_covered`` are
-    retained while the application transitions to the expanded reporting
+    Teachers may either write ``report_text`` manually or generate a
+    suggestion from ``teacher_notes``. Generated text is never compulsory
+    and must remain fully editable.
+
+    Workflow audit fields record who performed an action. They must not be
+    treated as ownership locks: authorised tutors, Heads of Year, the
+    Headmaster, SMT, School Admin and Platform Admin may continue an
+    unpublished report when the assigned teacher or an earlier reviewer is
+    unavailable.
+
+    Legacy fields such as ``grade``, ``term`` and ``work_covered`` are kept
+    temporarily while the application transitions to the expanded reporting
     structure.
     """
 
@@ -43,7 +52,8 @@ class StudentReport(Base):
             "student_id",
             "teacher_id",
             "report_session_id",
-            name="uq_student_report_session_teacher",
+            "subject_name",
+            name="uq_student_report_session_teacher_subject",
         ),
     )
 
@@ -51,42 +61,31 @@ class StudentReport(Base):
     # Identity and ownership
     # ------------------------------------------------------------------
 
-    id: Mapped[int] = mapped_column(
-        primary_key=True,
-    )
+    id: Mapped[int] = mapped_column(primary_key=True)
 
     school_id: Mapped[int] = mapped_column(
-        ForeignKey(
-            "schools.id",
-            ondelete="CASCADE",
-        ),
+        ForeignKey("schools.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
     )
 
     student_id: Mapped[int] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="CASCADE",
-        ),
+        ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
     )
 
+    # The member of staff currently assigned responsibility for this
+    # subject report. It is nullable so that a report remains valid if a
+    # member of staff leaves and can later be reassigned.
     teacher_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
 
     report_session_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "report_sessions.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("report_sessions.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -106,14 +105,13 @@ class StudentReport(Base):
         nullable=False,
     )
 
-    # Retained for compatibility with existing reports, schemas,
-    # endpoints and frontend pages.
+    # Legacy reporting-period field retained for compatibility.
     term: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
     )
 
-    # Preferred reporting checkpoint field for new code.
+    # Preferred reporting checkpoint for new code.
     # Examples: Autumn 1, Spring 2, Progress Check 3.
     checkpoint_name: Mapped[str | None] = mapped_column(
         String(100),
@@ -121,8 +119,9 @@ class StudentReport(Base):
         nullable=True,
     )
 
-    # Optional subject identification. This allows reports to be grouped
-    # reliably without depending only on their title.
+    # A subject identifier is required for reliable grouping and for
+    # allowing the same teacher to report on the same pupil in more than
+    # one subject during one reporting session.
     subject_name: Mapped[str | None] = mapped_column(
         String(100),
         index=True,
@@ -133,7 +132,8 @@ class StudentReport(Base):
     # Teacher report content
     # ------------------------------------------------------------------
 
-    # The final teacher-written or approved subject report comment.
+    # The authoritative, teacher-approved and editable report comment.
+    # It may be written manually or copied from generated_report_text.
     report_text: Mapped[str] = mapped_column(
         Text,
         default="",
@@ -141,20 +141,23 @@ class StudentReport(Base):
         nullable=False,
     )
 
-    # Notes entered by the teacher before report generation.
+    # Teacher-provided notes, bullet points or a prompt about the pupil.
+    # These are optional and may be used to generate a suggested report.
     teacher_notes: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
 
-    # Text produced by the report-writing system from teacher notes.
+    # The most recent raw suggestion produced from teacher_notes.
+    # This must never be required for saving or submitting a manually
+    # written report.
     generated_report_text: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
 
-    # Retained temporarily until work covered is moved to a shared
-    # class-and-subject configuration model.
+    # Retained until work covered is moved to shared class/subject/session
+    # configuration.
     work_covered: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
@@ -169,9 +172,17 @@ class StudentReport(Base):
     # Assessment and grade information
     # ------------------------------------------------------------------
 
-    # Legacy grade field retained for backward compatibility.
+    # Legacy field retained for backward compatibility.
     # New code should use the structured fields below.
     grade: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    # These three fields form the standard grade panel shown at the top
+    # of the full report and in the grade card when enabled by the
+    # ReportSession configuration.
+    effort_grade: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
     )
@@ -181,16 +192,12 @@ class StudentReport(Base):
         nullable=True,
     )
 
-    effort_grade: Mapped[str | None] = mapped_column(
-        String(50),
-        nullable=True,
-    )
-
     target_grade: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
     )
 
+    # Optional assessment and predicted-grade fields.
     exam_grade: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
@@ -203,6 +210,11 @@ class StudentReport(Base):
 
     exam_max_mark: Mapped[int | None] = mapped_column(
         Integer,
+        nullable=True,
+    )
+
+    gcse_predicted_grade: Mapped[str | None] = mapped_column(
+        String(50),
         nullable=True,
     )
 
@@ -245,6 +257,9 @@ class StudentReport(Base):
     # approved
     # returned_by_smt
     # published
+    #
+    # These states indicate progress. They must not create a hard
+    # dependency on the person who completed the previous stage.
     status: Mapped[str] = mapped_column(
         String(50),
         default="draft",
@@ -263,10 +278,7 @@ class StudentReport(Base):
     )
 
     submitted_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -281,10 +293,7 @@ class StudentReport(Base):
     )
 
     tutor_reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -300,10 +309,7 @@ class StudentReport(Base):
     )
 
     ready_for_smt_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -318,10 +324,7 @@ class StudentReport(Base):
     )
 
     reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -341,10 +344,7 @@ class StudentReport(Base):
     )
 
     head_of_year_reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -359,10 +359,7 @@ class StudentReport(Base):
     )
 
     headteacher_reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -385,10 +382,7 @@ class StudentReport(Base):
     )
 
     published_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "users.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )

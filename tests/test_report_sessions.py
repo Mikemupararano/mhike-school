@@ -23,6 +23,7 @@ async def test_school_admin_can_create_report_session(
         "include_attainment_grade": True,
         "include_effort_grade": True,
         "include_target_grade": False,
+        "require_target_grade": False,
         "include_next_steps": True,
         "include_tutor_comment": False,
     }
@@ -33,13 +34,14 @@ async def test_school_admin_can_create_report_session(
         headers=auth_headers(school_admin_user),
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 201, response.text
 
     data = response.json()
 
     assert data["title"] == "Year 10 Autumn Reports"
     assert data["academic_year"] == "2026/27"
     assert data["term"] == "Autumn"
+    assert data["checkpoint_name"] == "Autumn"
     assert data["school_id"] == school_admin_user.school_id
     assert data["active"] is True
     assert data["include_work_covered"] is True
@@ -48,6 +50,7 @@ async def test_school_admin_can_create_report_session(
     assert data["include_attainment_grade"] is True
     assert data["include_effort_grade"] is True
     assert data["include_target_grade"] is False
+    assert data["require_target_grade"] is False
     assert data["include_next_steps"] is True
     assert data["include_tutor_comment"] is False
 
@@ -86,6 +89,7 @@ async def test_school_staff_can_list_report_sessions(
         title="Year 9 Spring Reports",
         academic_year="2026/27",
         term="Spring",
+        checkpoint_name="Spring",
         active=True,
         include_work_covered=True,
         include_student_comment=True,
@@ -93,6 +97,7 @@ async def test_school_staff_can_list_report_sessions(
         include_attainment_grade=True,
         include_effort_grade=True,
         include_target_grade=False,
+        require_target_grade=False,
         include_next_steps=True,
         include_tutor_comment=False,
     )
@@ -106,7 +111,7 @@ async def test_school_staff_can_list_report_sessions(
         headers=auth_headers(teacher_user),
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     data = response.json()
 
@@ -128,13 +133,17 @@ async def test_school_admin_can_update_report_session(
         title="Original Report Session",
         academic_year="2026/27",
         term="Autumn",
+        checkpoint_name="Autumn",
         active=True,
         include_work_covered=True,
         include_student_comment=True,
         include_exam_mark=False,
         include_attainment_grade=False,
+        require_attainment_grade=False,
         include_effort_grade=False,
+        require_effort_grade=False,
         include_target_grade=False,
+        require_target_grade=False,
         include_next_steps=False,
         include_tutor_comment=False,
     )
@@ -154,7 +163,7 @@ async def test_school_admin_can_update_report_session(
         headers=auth_headers(school_admin_user),
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     data = response.json()
 
@@ -177,13 +186,17 @@ async def test_teacher_cannot_update_report_session(
         title="Protected Report Session",
         academic_year="2026/27",
         term="Summer",
+        checkpoint_name="Summer",
         active=True,
         include_work_covered=True,
         include_student_comment=True,
         include_exam_mark=False,
         include_attainment_grade=False,
+        require_attainment_grade=False,
         include_effort_grade=False,
+        require_effort_grade=False,
         include_target_grade=False,
+        require_target_grade=False,
         include_next_steps=False,
         include_tutor_comment=False,
     )
@@ -213,13 +226,17 @@ async def test_school_admin_can_delete_report_session(
         title="Delete Report Session",
         academic_year="2026/27",
         term="Summer",
+        checkpoint_name="Summer",
         active=True,
         include_work_covered=True,
         include_student_comment=True,
         include_exam_mark=False,
         include_attainment_grade=False,
+        require_attainment_grade=False,
         include_effort_grade=False,
+        require_effort_grade=False,
         include_target_grade=False,
+        require_target_grade=False,
         include_next_steps=False,
         include_tutor_comment=False,
     )
@@ -252,13 +269,17 @@ async def test_teacher_cannot_delete_report_session(
         title="Teacher Cannot Delete",
         academic_year="2026/27",
         term="Summer",
+        checkpoint_name="Summer",
         active=True,
         include_work_covered=True,
         include_student_comment=True,
         include_exam_mark=False,
         include_attainment_grade=False,
+        require_attainment_grade=False,
         include_effort_grade=False,
+        require_effort_grade=False,
         include_target_grade=False,
+        require_target_grade=False,
         include_next_steps=False,
         include_tutor_comment=False,
     )
@@ -304,6 +325,7 @@ async def test_report_session_school_isolation(
         title="Other School Report Session",
         academic_year="2026/27",
         term="Autumn",
+        checkpoint_name="Autumn",
         active=True,
         include_work_covered=True,
         include_student_comment=True,
@@ -323,7 +345,7 @@ async def test_report_session_school_isolation(
         headers=auth_headers(school_admin_user),
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     data = response.json()
 
