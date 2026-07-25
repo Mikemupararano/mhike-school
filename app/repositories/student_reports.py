@@ -1,6 +1,3 @@
-# ---------------------------------------------------------------------------
-# Report-session helpers
-# ---------------------------------------------------------------------------
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -82,7 +79,7 @@ NON_PUBLISHED_EDITABLE_STATUSES = {
 
 
 # ---------------------------------------------------------------------------
-# Report kinds and custom report support
+# Report kinds and custom-report support
 # ---------------------------------------------------------------------------
 
 REPORT_KIND_SUBJECT = "subject"
@@ -129,9 +126,8 @@ ALL_CUSTOM_REPORT_SCOPES = {
 }
 
 
-# Custom report values will initially be stored only when matching model and
-# schema fields exist. This allows the repository code to be introduced before
-# the database migration is deployed.
+# Custom-report values are applied only when matching model fields exist.
+# This keeps the repository usable during staged database migrations.
 CUSTOM_REPORT_METADATA_FIELDS = {
     "report_kind",
     "report_type_id",
@@ -181,12 +177,13 @@ STUDENT_REPORT_EDITABLE_FIELDS = {
     "exam_grade",
     "exam_mark",
     "exam_max_mark",
+    "gcse_predicted_grade",
     "ucas_predicted_grade",
     # Additional reporting comments
     "tutor_comment",
     "head_of_year_comment",
     "headteacher_comment",
-    # Custom report preferences and values
+    # Custom-report preferences and values
     "custom_preferences",
     "custom_field_values",
     "display_order",
@@ -224,12 +221,13 @@ REVIEWER_EDITABLE_FIELDS = {
     "exam_grade",
     "exam_mark",
     "exam_max_mark",
+    "gcse_predicted_grade",
     "ucas_predicted_grade",
     # Review-stage comments
     "tutor_comment",
     "head_of_year_comment",
     "headteacher_comment",
-    # Custom report content
+    # Custom-report content
     "custom_preferences",
     "custom_field_values",
     "display_order",
@@ -255,6 +253,10 @@ PROTECTED_WORKFLOW_FIELDS = {
     "reviewed_at",
     "reviewed_by_id",
     "review_comments",
+    # Approval
+    "approved_at",
+    "approved_by_id",
+    "approval_comments",
     # Head of Year audit
     "head_of_year_reviewed_at",
     "head_of_year_reviewed_by_id",
@@ -305,7 +307,7 @@ def _normalise_code(
     fallback: str | None = None,
 ) -> str | None:
     """
-    Convert a report type, role or scope value into a stable lower-case code.
+    Convert a report type, role, status or scope value into a stable code.
     """
 
     if value is None:
@@ -329,8 +331,7 @@ def _set_model_value(
     """
     Set a value only when the SQLAlchemy model exposes the field.
 
-    This keeps the repository usable during staged migrations. Custom report
-    support can therefore be merged before all new columns are deployed.
+    This keeps the repository usable during staged migrations.
     """
 
     if hasattr(instance, field_name):
@@ -354,8 +355,7 @@ def _payload_to_dict(
     """
     Convert a Pydantic payload or mapping into a plain dictionary.
 
-    The helper remains compatible with Pydantic v2 while also making tests
-    with simple dictionary payloads easier.
+    The helper supports Pydantic v2 models and plain mappings used by tests.
     """
 
     excluded_fields = set(exclude or ())
@@ -409,10 +409,21 @@ def _clear_publication_fields(report: StudentReport) -> None:
 
 
 def _clear_approval_fields(report: StudentReport) -> None:
-    report.approved_at = None
-    report.approved_by_id = None
-
-    _set_model_value(report, "approval_comments", None)
+    _set_model_value(
+        report,
+        "approved_at",
+        None,
+    )
+    _set_model_value(
+        report,
+        "approved_by_id",
+        None,
+    )
+    _set_model_value(
+        report,
+        "approval_comments",
+        None,
+    )
 
 
 def _clear_smt_review_fields(report: StudentReport) -> None:
@@ -462,6 +473,7 @@ def _clear_headteacher_review_fields(
 def _clear_all_review_fields(report: StudentReport) -> None:
     _clear_tutor_review_fields(report)
     _clear_smt_review_fields(report)
+    _clear_approval_fields(report)
     _clear_head_of_year_review_fields(report)
     _clear_headteacher_review_fields(report)
 
@@ -473,10 +485,7 @@ def _clear_all_review_fields(report: StudentReport) -> None:
 
 def _infer_report_kind(report: StudentReport) -> str:
     """
-    Infer a report kind for legacy rows that do not yet have report_kind.
-
-    New reports should store report_kind explicitly once the model migration
-    has been applied.
+    Infer a report kind for legacy rows that do not have report_kind.
     """
 
     configured_kind = _normalise_code(
@@ -665,10 +674,6 @@ def _validate_custom_report_preferences(
 ) -> None:
     """
     Validate custom preferences and values when those fields are available.
-
-    Detailed field validation will eventually be driven by a ReportType and
-    ReportTypeField table. Until that migration exists, this validation
-    ensures the stored values have predictable container types.
     """
 
     custom_preferences = _get_model_value(
@@ -677,10 +682,7 @@ def _validate_custom_report_preferences(
         None,
     )
 
-    if custom_preferences is not None and not isinstance(
-        custom_preferences,
-        dict,
-    ):
+    if custom_preferences is not None and not isinstance(custom_preferences, dict):
         raise ValueError("Custom report preferences must be stored as an object.")
 
     custom_field_values = _get_model_value(
@@ -689,10 +691,7 @@ def _validate_custom_report_preferences(
         None,
     )
 
-    if custom_field_values is not None and not isinstance(
-        custom_field_values,
-        dict,
-    ):
+    if custom_field_values is not None and not isinstance(custom_field_values, dict):
         raise ValueError("Custom report field values must be stored as an object.")
 
     display_order = _get_model_value(
@@ -757,9 +756,9 @@ def _validate_custom_required_fields(
     report: StudentReport,
 ) -> None:
     """
-    Validate custom fields declared as required in custom_preferences.
+    Validate fields declared as required in custom_preferences.
 
-    Expected staged structure:
+    Expected structure:
 
         {
             "required_fields": [
@@ -825,8 +824,6 @@ def _validate_custom_required_fields(
             + ", ".join(sorted(missing_fields))
             + "."
         )
-
-
 # ---------------------------------------------------------------------------
 # Backward-compatibility helpers
 # ---------------------------------------------------------------------------
@@ -924,9 +921,8 @@ def _apply_payload_to_report(
 
     _synchronise_legacy_fields(report)
     _validate_custom_report_preferences(report)
-# ---------------------------------------------------------------------------
-# Report-session helpers
-# ---------------------------------------------------------------------------
+
+
 # ---------------------------------------------------------------------------
 # Report-session helpers
 # ---------------------------------------------------------------------------
@@ -1030,6 +1026,29 @@ def _session_is_published(
     return bool(published_at is not None or published is True)
 
 
+def _normalise_session_collection(
+    configured_values: Any,
+) -> list[Any] | tuple[Any, ...] | set[Any] | None:
+    """
+    Normalise a session option that may be stored as a collection or as a
+    comma-separated string.
+    """
+
+    if configured_values is None:
+        return None
+
+    if isinstance(configured_values, str):
+        return [item.strip() for item in configured_values.split(",") if item.strip()]
+
+    if isinstance(
+        configured_values,
+        (list, tuple, set),
+    ):
+        return configured_values
+
+    return None
+
+
 def _session_accepts_report_kind(
     report_session: ReportSession | None,
     report_kind: str,
@@ -1037,8 +1056,8 @@ def _session_accepts_report_kind(
     """
     Determine whether the session accepts the requested report kind.
 
-    Older ReportSession models may not yet expose report-kind configuration.
-    In that case, all report kinds remain allowed for backward compatibility.
+    Older ReportSession models may not expose report-kind configuration.
+    In that case, all report kinds remain allowed for backwards compatibility.
     """
 
     if report_session is None:
@@ -1057,21 +1076,21 @@ def _session_accepts_report_kind(
             None,
         )
 
+    configured_kinds = _normalise_session_collection(
+        configured_kinds,
+    )
+
     if configured_kinds is None:
         return True
 
-    if isinstance(configured_kinds, str):
-        configured_kinds = [
-            item.strip() for item in configured_kinds.split(",") if item.strip()
-        ]
+    normalised_kinds = {
+        normalised_kind
+        for item in configured_kinds
+        if (normalised_kind := _normalise_code(item)) is not None
+    }
 
-    if not isinstance(
-        configured_kinds,
-        (list, tuple, set),
-    ):
+    if not normalised_kinds:
         return True
-
-    normalised_kinds = {_normalise_code(item) for item in configured_kinds}
 
     return report_kind in normalised_kinds
 
@@ -1104,26 +1123,21 @@ def _session_accepts_report_type(
             None,
         )
 
+    allowed_type_ids = _normalise_session_collection(
+        allowed_type_ids,
+    )
+
     if allowed_type_ids is not None and report_type_id is not None:
-        if isinstance(allowed_type_ids, str):
-            allowed_type_ids = [
-                item.strip() for item in allowed_type_ids.split(",") if item.strip()
-            ]
+        normalised_ids: set[int] = set()
 
-        if isinstance(
-            allowed_type_ids,
-            (list, tuple, set),
-        ):
-            normalised_ids: set[int] = set()
+        for value in allowed_type_ids:
+            try:
+                normalised_ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
 
-            for value in allowed_type_ids:
-                try:
-                    normalised_ids.add(int(value))
-                except (TypeError, ValueError):
-                    continue
-
-            if normalised_ids and report_type_id not in normalised_ids:
-                return False
+        if normalised_ids and report_type_id not in normalised_ids:
+            return False
 
     allowed_type_codes = getattr(
         report_session,
@@ -1138,24 +1152,23 @@ def _session_accepts_report_type(
             None,
         )
 
+    allowed_type_codes = _normalise_session_collection(
+        allowed_type_codes,
+    )
+
     if allowed_type_codes is not None and report_type_code is not None:
-        if isinstance(allowed_type_codes, str):
-            allowed_type_codes = [
-                item.strip() for item in allowed_type_codes.split(",") if item.strip()
-            ]
+        normalised_codes = {
+            normalised_code
+            for value in allowed_type_codes
+            if (normalised_code := _normalise_code(value)) is not None
+        }
 
-        if isinstance(
-            allowed_type_codes,
-            (list, tuple, set),
-        ):
-            normalised_codes = {_normalise_code(value) for value in allowed_type_codes}
+        normalised_report_type_code = _normalise_code(
+            report_type_code,
+        )
 
-            normalised_report_type_code = _normalise_code(
-                report_type_code,
-            )
-
-            if normalised_codes and normalised_report_type_code not in normalised_codes:
-                return False
+        if normalised_codes and normalised_report_type_code not in normalised_codes:
+            return False
 
     return True
 
@@ -1167,25 +1180,31 @@ def _apply_session_defaults(
     if report_session is None:
         return
 
-    session_academic_year = getattr(
-        report_session,
-        "academic_year",
-        None,
+    session_academic_year = _clean_optional_text(
+        getattr(
+            report_session,
+            "academic_year",
+            None,
+        )
     )
 
-    session_checkpoint_name = getattr(
-        report_session,
-        "checkpoint_name",
-        None,
+    session_checkpoint_name = _clean_optional_text(
+        getattr(
+            report_session,
+            "checkpoint_name",
+            None,
+        )
     )
 
-    session_term = getattr(
-        report_session,
-        "term",
-        None,
+    session_term = _clean_optional_text(
+        getattr(
+            report_session,
+            "term",
+            None,
+        )
     )
 
-    if session_academic_year:
+    if session_academic_year is not None:
         _set_model_value(
             report,
             "academic_year",
@@ -1194,7 +1213,7 @@ def _apply_session_defaults(
 
     checkpoint_name = session_checkpoint_name or session_term
 
-    if checkpoint_name:
+    if checkpoint_name is not None:
         _set_model_value(
             report,
             "checkpoint_name",
@@ -1283,6 +1302,20 @@ def _validate_report_session_assignment(
 # ---------------------------------------------------------------------------
 
 
+def _coerce_numeric_value(
+    value: Any,
+    *,
+    field_label: str,
+) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_label} must be a number.")
+
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_label} must be a number.") from exc
+
+
 def _validate_exam_values(report: StudentReport) -> None:
     exam_mark = _get_model_value(
         report,
@@ -1294,26 +1327,23 @@ def _validate_exam_values(report: StudentReport) -> None:
         "exam_max_mark",
     )
 
-    if exam_mark is not None:
-        if isinstance(exam_mark, bool):
-            raise ValueError("Exam mark must be a number.")
+    exam_mark_value: float | None = None
+    exam_max_mark_value: float | None = None
 
-        try:
-            exam_mark_value = float(exam_mark)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Exam mark must be a number.") from exc
+    if exam_mark is not None:
+        exam_mark_value = _coerce_numeric_value(
+            exam_mark,
+            field_label="Exam mark",
+        )
 
         if exam_mark_value < 0:
             raise ValueError("Exam mark cannot be negative.")
 
     if exam_max_mark is not None:
-        if isinstance(exam_max_mark, bool):
-            raise ValueError("Exam maximum mark must be a number.")
-
-        try:
-            exam_max_mark_value = float(exam_max_mark)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Exam maximum mark must be a number.") from exc
+        exam_max_mark_value = _coerce_numeric_value(
+            exam_max_mark,
+            field_label="Exam maximum mark",
+        )
 
         if exam_max_mark_value <= 0:
             raise ValueError("Exam maximum mark must be greater than zero.")
@@ -1322,9 +1352,9 @@ def _validate_exam_values(report: StudentReport) -> None:
         raise ValueError("Exam maximum mark cannot be entered without an exam mark.")
 
     if (
-        exam_mark is not None
-        and exam_max_mark is not None
-        and float(exam_mark) > float(exam_max_mark)
+        exam_mark_value is not None
+        and exam_max_mark_value is not None
+        and exam_mark_value > exam_max_mark_value
     ):
         raise ValueError("Exam mark cannot be greater than the exam maximum mark.")
 
@@ -1335,14 +1365,37 @@ def _validate_text_length(
     field_label: str,
     maximum_length: int | None,
 ) -> None:
-    if value is None or maximum_length is None:
-        return
-
-    if maximum_length < 1:
+    if value is None or maximum_length is None or maximum_length < 1:
         return
 
     if len(value) > maximum_length:
-        raise ValueError(f"{field_label} cannot exceed {maximum_length} characters.")
+        raise ValueError(
+            f"{field_label} cannot exceed " f"{maximum_length} characters."
+        )
+
+
+def _normalise_positive_integer_option(
+    value: Any,
+) -> int | None:
+    """
+    Convert a configurable maximum length to a positive integer.
+
+    Invalid, zero and negative configuration values are ignored so a malformed
+    optional setting does not block all reports.
+    """
+
+    if value is None or isinstance(value, bool):
+        return None
+
+    try:
+        normalised_value = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if normalised_value < 1:
+        return None
+
+    return normalised_value
 
 
 def _validate_report_identity(report: StudentReport) -> None:
@@ -1359,6 +1412,12 @@ def _validate_report_identity(report: StudentReport) -> None:
     if len(title) > 200:
         raise ValueError("The report title cannot exceed 200 characters.")
 
+    _set_model_value(
+        report,
+        "title",
+        title,
+    )
+
     academic_year = _clean_optional_text(
         _get_model_value(
             report,
@@ -1366,8 +1425,15 @@ def _validate_report_identity(report: StudentReport) -> None:
         )
     )
 
-    if academic_year is not None and len(academic_year) > 20:
-        raise ValueError("Academic year cannot exceed 20 characters.")
+    if academic_year is not None:
+        if len(academic_year) > 20:
+            raise ValueError("Academic year cannot exceed 20 characters.")
+
+        _set_model_value(
+            report,
+            "academic_year",
+            academic_year,
+        )
 
     term = _clean_optional_text(
         _get_model_value(
@@ -1376,8 +1442,15 @@ def _validate_report_identity(report: StudentReport) -> None:
         )
     )
 
-    if term is not None and len(term) > 50:
-        raise ValueError("Term cannot exceed 50 characters.")
+    if term is not None:
+        if len(term) > 50:
+            raise ValueError("Term cannot exceed 50 characters.")
+
+        _set_model_value(
+            report,
+            "term",
+            term,
+        )
 
     checkpoint_name = _clean_optional_text(
         _get_model_value(
@@ -1386,8 +1459,15 @@ def _validate_report_identity(report: StudentReport) -> None:
         )
     )
 
-    if checkpoint_name is not None and len(checkpoint_name) > 100:
-        raise ValueError("Checkpoint name cannot exceed 100 characters.")
+    if checkpoint_name is not None:
+        if len(checkpoint_name) > 100:
+            raise ValueError("Checkpoint name cannot exceed 100 characters.")
+
+        _set_model_value(
+            report,
+            "checkpoint_name",
+            checkpoint_name,
+        )
 
     subject_name = _clean_optional_text(
         _get_model_value(
@@ -1396,24 +1476,44 @@ def _validate_report_identity(report: StudentReport) -> None:
         )
     )
 
-    if subject_name is not None and len(subject_name) > 150:
-        raise ValueError("Subject name cannot exceed 150 characters.")
+    if subject_name is not None:
+        if len(subject_name) > 150:
+            raise ValueError("Subject name cannot exceed 150 characters.")
+
+        _set_model_value(
+            report,
+            "subject_name",
+            subject_name,
+        )
 
     report_kind = _infer_report_kind(report)
 
     if report_kind not in ALL_REPORT_KINDS:
         raise ValueError(f"Unsupported report kind: {report_kind}.")
 
+    _set_model_value(
+        report,
+        "report_kind",
+        report_kind,
+    )
+
     report_scope = _normalise_code(
         _get_model_value(
             report,
             "report_scope",
             CUSTOM_REPORT_SCOPE_STUDENT,
-        )
+        ),
+        fallback=CUSTOM_REPORT_SCOPE_STUDENT,
     )
 
     if report_scope not in ALL_CUSTOM_REPORT_SCOPES:
         raise ValueError(f"Unsupported report scope: {report_scope}.")
+
+    _set_model_value(
+        report,
+        "report_scope",
+        report_scope,
+    )
 
     if report_kind == REPORT_KIND_SUBJECT and subject_name is None:
         raise ValueError("A subject name is required for a subject report.")
@@ -1425,8 +1525,32 @@ def _validate_report_identity(report: StudentReport) -> None:
         )
     )
 
-    if report_type_name is not None and len(report_type_name) > 150:
-        raise ValueError("Report type name cannot exceed 150 characters.")
+    if report_type_name is not None:
+        if len(report_type_name) > 150:
+            raise ValueError("Report type name cannot exceed 150 characters.")
+
+        _set_model_value(
+            report,
+            "report_type_name",
+            report_type_name,
+        )
+
+    report_type_label = _clean_optional_text(
+        _get_model_value(
+            report,
+            "report_type_label",
+        )
+    )
+
+    if report_type_label is not None:
+        if len(report_type_label) > 150:
+            raise ValueError("Report type label cannot exceed 150 characters.")
+
+        _set_model_value(
+            report,
+            "report_type_label",
+            report_type_label,
+        )
 
     writer_label = _clean_optional_text(
         _get_model_value(
@@ -1435,8 +1559,38 @@ def _validate_report_identity(report: StudentReport) -> None:
         )
     )
 
-    if writer_label is not None and len(writer_label) > 100:
-        raise ValueError("Writer label cannot exceed 100 characters.")
+    if writer_label is not None:
+        if len(writer_label) > 100:
+            raise ValueError("Writer label cannot exceed 100 characters.")
+
+        _set_model_value(
+            report,
+            "writer_label",
+            writer_label,
+        )
+
+
+def _validate_required_text_field(
+    report: StudentReport,
+    *,
+    field_name: str,
+    error_message: str,
+) -> None:
+    field_value = _clean_optional_text(
+        _get_model_value(
+            report,
+            field_name,
+        )
+    )
+
+    if field_value is None:
+        raise ValueError(error_message)
+
+    _set_model_value(
+        report,
+        field_name,
+        field_value,
+    )
 
 
 def _validate_required_session_fields(
@@ -1483,99 +1637,81 @@ def _validate_required_session_fields(
         report_session,
         "include_effort_grade",
     ):
-        effort_grade = _clean_optional_text(
-            _get_model_value(
-                report,
-                "effort_grade",
-            )
+        _validate_required_text_field(
+            report,
+            field_name="effort_grade",
+            error_message=("An effort grade is required before submission."),
         )
-
-        if effort_grade is None:
-            raise ValueError("An effort grade is required before submission.")
 
     if _session_option_enabled(
         report_session,
         "include_target_grade",
     ):
-        target_grade = _clean_optional_text(
-            _get_model_value(
-                report,
-                "target_grade",
-            )
+        _validate_required_text_field(
+            report,
+            field_name="target_grade",
+            error_message=("A target grade is required before submission."),
         )
-
-        if target_grade is None:
-            raise ValueError("A target grade is required before submission.")
 
     if _session_option_enabled(
         report_session,
         "include_exam_grade",
     ):
-        exam_grade = _clean_optional_text(
-            _get_model_value(
-                report,
-                "exam_grade",
-            )
+        _validate_required_text_field(
+            report,
+            field_name="exam_grade",
+            error_message=("An exam grade is required before submission."),
         )
 
-        if exam_grade is None:
-            raise ValueError("An exam grade is required before submission.")
+    if _session_option_enabled(
+        report_session,
+        "include_gcse_predicted_grade",
+    ):
+        _validate_required_text_field(
+            report,
+            field_name="gcse_predicted_grade",
+            error_message=("A GCSE predicted grade is required before submission."),
+        )
 
     if _session_option_enabled(
         report_session,
         "include_ucas_predicted_grade",
     ):
-        ucas_predicted_grade = _clean_optional_text(
-            _get_model_value(
-                report,
-                "ucas_predicted_grade",
-            )
+        _validate_required_text_field(
+            report,
+            field_name="ucas_predicted_grade",
+            error_message=("A UCAS predicted grade is required before submission."),
         )
-
-        if ucas_predicted_grade is None:
-            raise ValueError("A UCAS predicted grade is required before submission.")
 
     if _session_option_enabled(
         report_session,
         "include_teacher_comment",
     ):
-        report_text = _clean_optional_text(
-            _get_model_value(
-                report,
-                "report_text",
-            )
+        _validate_required_text_field(
+            report,
+            field_name="report_text",
+            error_message=("The report comment is required before submission."),
         )
-
-        if report_text is None:
-            raise ValueError("The report comment is required before submission.")
 
     if _session_option_enabled(
         report_session,
         "include_next_steps",
     ):
-        next_steps = _clean_optional_text(
-            _get_model_value(
-                report,
-                "next_steps",
-            )
+        _validate_required_text_field(
+            report,
+            field_name="next_steps",
+            error_message=("Next steps are required before submission."),
         )
-
-        if next_steps is None:
-            raise ValueError("Next steps are required before submission.")
 
     if _session_option_enabled(
         report_session,
         "include_work_covered",
     ):
-        work_covered = _clean_optional_text(
-            _get_model_value(
-                report,
-                "work_covered",
-            )
+        _validate_required_text_field(
+            report,
+            field_name="work_covered",
+            error_message=("Work covered is required before submission."),
         )
-
-        if work_covered is None:
-            raise ValueError("Work covered is required before submission.")
 
     report_comment_max_length = _session_option_value(
         report_session,
@@ -1590,11 +1726,9 @@ def _validate_required_session_fields(
             default=None,
         )
 
-    if report_comment_max_length is not None:
-        try:
-            report_comment_max_length = int(report_comment_max_length)
-        except (TypeError, ValueError):
-            report_comment_max_length = None
+    report_comment_max_length = _normalise_positive_integer_option(
+        report_comment_max_length,
+    )
 
     _validate_text_length(
         value=_get_model_value(
@@ -1605,17 +1739,13 @@ def _validate_required_session_fields(
         maximum_length=report_comment_max_length,
     )
 
-    next_steps_max_length = _session_option_value(
-        report_session,
-        "next_steps_max_length",
-        default=None,
+    next_steps_max_length = _normalise_positive_integer_option(
+        _session_option_value(
+            report_session,
+            "next_steps_max_length",
+            default=None,
+        )
     )
-
-    if next_steps_max_length is not None:
-        try:
-            next_steps_max_length = int(next_steps_max_length)
-        except (TypeError, ValueError):
-            next_steps_max_length = None
 
     _validate_text_length(
         value=_get_model_value(
@@ -1624,6 +1754,23 @@ def _validate_required_session_fields(
         ),
         field_label="Next steps",
         maximum_length=next_steps_max_length,
+    )
+
+    work_covered_max_length = _normalise_positive_integer_option(
+        _session_option_value(
+            report_session,
+            "work_covered_max_length",
+            default=None,
+        )
+    )
+
+    _validate_text_length(
+        value=_get_model_value(
+            report,
+            "work_covered",
+        ),
+        field_label="Work covered",
+        maximum_length=work_covered_max_length,
     )
 
     _validate_custom_required_fields(report)
@@ -1637,6 +1784,7 @@ def _validate_report_before_save(
     """
 
     _normalise_report_metadata(report)
+    _synchronise_legacy_fields(report)
     _validate_report_identity(report)
     _validate_exam_values(report)
     _validate_custom_report_preferences(report)
@@ -1654,7 +1802,9 @@ async def _validate_report_for_submission(
     )
 
     _normalise_report_metadata(report)
+    _synchronise_legacy_fields(report)
     _validate_report_identity(report)
+
     _validate_report_session_assignment(
         report,
         report_session,
@@ -1677,7 +1827,11 @@ async def _validate_report_for_submission(
         raise ValueError("The report text must be completed before submission.")
 
     if report_text is not None:
-        report.report_text = report_text
+        _set_model_value(
+            report,
+            "report_text",
+            report_text,
+        )
 
     _validate_exam_values(report)
 
@@ -1687,8 +1841,6 @@ async def _validate_report_for_submission(
     )
 
     return report_session
-
-
 # ---------------------------------------------------------------------------
 # Create helpers
 # ---------------------------------------------------------------------------
@@ -1731,11 +1883,74 @@ def _report_identity_filter_values(
             report_kind,
         )
 
+    if report_type_code is None and report_kind == REPORT_KIND_CUSTOM:
+        report_type_code = "custom"
+
     return (
         report_type_id,
         report_type_code,
         report_kind,
     )
+
+
+def _candidate_matches_report_identity(
+    candidate: StudentReport,
+    *,
+    report_type_id: int | None,
+    report_type_code: str | None,
+    report_kind: str,
+    subject_name: str | None,
+) -> bool:
+    """
+    Confirm that a candidate row represents the same logical report.
+
+    This Python-side check is retained for staged migrations where some of the
+    report-type columns may not yet be available on the database model.
+    """
+
+    candidate_type_id = _get_model_value(
+        candidate,
+        "report_type_id",
+        None,
+    )
+
+    candidate_type_code = _normalise_code(
+        _get_model_value(
+            candidate,
+            "report_type_code",
+            None,
+        )
+    )
+
+    candidate_kind = _infer_report_kind(
+        candidate,
+    )
+
+    if report_type_id is not None and candidate_type_id == report_type_id:
+        return True
+
+    if report_type_code is not None and candidate_type_code == report_type_code:
+        return True
+
+    if (
+        report_type_id is None
+        and report_type_code is None
+        and candidate_kind == report_kind
+    ):
+        if report_kind != REPORT_KIND_SUBJECT:
+            return True
+
+        candidate_subject_name = _clean_optional_text(
+            _get_model_value(
+                candidate,
+                "subject_name",
+                None,
+            )
+        )
+
+        return candidate_subject_name == subject_name
+
+    return False
 
 
 async def _find_existing_author_report(
@@ -1748,6 +1963,7 @@ async def _find_existing_author_report(
     report_type_id: int | None,
     report_type_code: str | None,
     report_kind: str,
+    subject_name: str | None = None,
 ) -> StudentReport | None:
     """
     Find the author's matching report without collapsing different report
@@ -1799,12 +2015,17 @@ async def _find_existing_author_report(
             StudentReport.report_kind == report_kind,
         )
 
-        if report_kind == REPORT_KIND_SUBJECT and hasattr(
-            StudentReport, "subject_name"
+        if (
+            report_kind == REPORT_KIND_SUBJECT
+            and subject_name is not None
+            and hasattr(
+                StudentReport,
+                "subject_name",
+            )
         ):
-            # Subject name is added by the caller below when the model does
-            # not yet have a dedicated report type.
-            pass
+            statement = statement.where(
+                StudentReport.subject_name == subject_name,
+            )
 
     statement = statement.order_by(
         StudentReport.updated_at.desc(),
@@ -1819,38 +2040,82 @@ async def _find_existing_author_report(
         return None
 
     for candidate in candidates:
-        candidate_type_id = _get_model_value(
+        if _candidate_matches_report_identity(
             candidate,
-            "report_type_id",
-            None,
-        )
-
-        candidate_type_code = _normalise_code(
-            _get_model_value(
-                candidate,
-                "report_type_code",
-                None,
-            )
-        )
-
-        candidate_kind = _infer_report_kind(
-            candidate,
-        )
-
-        if report_type_id is not None and candidate_type_id == report_type_id:
-            return candidate
-
-        if report_type_code is not None and candidate_type_code == report_type_code:
-            return candidate
-
-        if (
-            report_type_id is None
-            and report_type_code is None
-            and candidate_kind == report_kind
+            report_type_id=report_type_id,
+            report_type_code=report_type_code,
+            report_kind=report_kind,
+            subject_name=subject_name,
         ):
             return candidate
 
     return None
+
+
+def _prepare_create_payload(
+    payload: StudentReportCreate,
+) -> dict[str, Any]:
+    """
+    Convert and normalise a create payload before database access.
+    """
+
+    payload_data = _payload_to_dict(
+        payload,
+        exclude={"teacher_id"},
+    )
+
+    student_id = payload_data.get(
+        "student_id",
+    )
+
+    if student_id is None:
+        raise ValueError("A student ID is required.")
+
+    try:
+        payload_data["student_id"] = int(student_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Student ID must be a valid integer.") from exc
+
+    report_session_id = payload_data.get(
+        "report_session_id",
+    )
+
+    if report_session_id is not None:
+        try:
+            payload_data["report_session_id"] = int(report_session_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Report session ID must be a valid integer.") from exc
+
+    report_type_id = payload_data.get(
+        "report_type_id",
+    )
+
+    if report_type_id is not None:
+        try:
+            payload_data["report_type_id"] = int(report_type_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Report type ID must be a valid integer.") from exc
+
+    return payload_data
+
+
+def _reset_report_to_editable_draft(
+    report: StudentReport,
+) -> None:
+    """
+    Clear workflow metadata after an editable draft is overwritten.
+
+    The report remains in its current editable status so returned reports do
+    not silently lose the fact that they were returned.
+    """
+
+    _clear_all_review_fields(
+        report,
+    )
+
+    _clear_publication_fields(
+        report,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1875,17 +2140,11 @@ async def create_student_report(
     reporting session.
     """
 
-    payload_data = _payload_to_dict(
+    payload_data = _prepare_create_payload(
         payload,
-        exclude={"teacher_id"},
     )
 
-    student_id = payload_data.get(
-        "student_id",
-    )
-
-    if student_id is None:
-        raise ValueError("A student ID is required.")
+    student_id = payload_data["student_id"]
 
     report_session_id = payload_data.get(
         "report_session_id",
@@ -1912,6 +2171,12 @@ async def create_student_report(
         payload_data=payload_data,
     )
 
+    subject_name = _clean_optional_text(
+        payload_data.get(
+            "subject_name",
+        )
+    )
+
     payload_data["report_kind"] = report_kind
 
     if report_type_id is not None:
@@ -1919,6 +2184,9 @@ async def create_student_report(
 
     if report_type_code is not None:
         payload_data["report_type_code"] = report_type_code
+
+    if subject_name is not None:
+        payload_data["subject_name"] = subject_name
 
     existing_report = await _find_existing_author_report(
         db,
@@ -1929,6 +2197,7 @@ async def create_student_report(
         report_type_id=report_type_id,
         report_type_code=report_type_code,
         report_kind=report_kind,
+        subject_name=subject_name,
     )
 
     if existing_report is not None:
@@ -1963,11 +2232,7 @@ async def create_student_report(
             existing_report,
         )
 
-        _clear_all_review_fields(
-            existing_report,
-        )
-
-        _clear_publication_fields(
+        _reset_report_to_editable_draft(
             existing_report,
         )
 
@@ -1978,32 +2243,27 @@ async def create_student_report(
         )
 
         await db.commit()
+
         await db.refresh(
             existing_report,
         )
 
-        return existing_report
-
-    title = payload_data.get(
-        "title",
-    )
-
-    report_text = payload_data.get(
-        "report_text",
-    )
-
-    academic_year = payload_data.get(
-        "academic_year",
-    )
+        return _normalise_loaded_report(existing_report)
 
     report = StudentReport(
         school_id=school_id,
         student_id=student_id,
         teacher_id=teacher_id,
         report_session_id=report_session_id,
-        title=title,
-        report_text=report_text,
-        academic_year=academic_year,
+        title=payload_data.get(
+            "title",
+        ),
+        report_text=payload_data.get(
+            "report_text",
+        ),
+        academic_year=payload_data.get(
+            "academic_year",
+        ),
         status=REPORT_STATUS_DRAFT,
         submitted_at=None,
         submitted_by_id=None,
@@ -2058,12 +2318,9 @@ async def create_student_report(
     await db.commit()
     await db.refresh(report)
 
-    return report
+    return _normalise_loaded_report(report)
 # ---------------------------------------------------------------------------
-# Read and list
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Read and list
+# Read, list and export queries
 # ---------------------------------------------------------------------------
 
 
@@ -2072,6 +2329,12 @@ def _validate_pagination(
     limit: int,
     offset: int,
 ) -> None:
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise ValueError("Limit must be an integer.")
+
+    if isinstance(offset, bool) or not isinstance(offset, int):
+        raise ValueError("Offset must be an integer.")
+
     if limit < 1:
         raise ValueError("Limit must be greater than zero.")
 
@@ -2080,6 +2343,15 @@ def _validate_pagination(
 
     if offset < 0:
         raise ValueError("Offset cannot be negative.")
+
+
+def _validate_positive_identifier(
+    value: int,
+    *,
+    field_label: str,
+) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{field_label} must be a positive integer.")
 
 
 def _apply_report_type_filters(
@@ -2097,17 +2369,27 @@ def _apply_report_type_filters(
     introduced through staged migrations.
     """
 
-    if report_type_id is not None and hasattr(StudentReport, "report_type_id"):
-        statement = statement.where(
-            StudentReport.report_type_id == report_type_id,
+    if report_type_id is not None:
+        _validate_positive_identifier(
+            report_type_id,
+            field_label="Report type ID",
         )
+
+        if hasattr(
+            StudentReport,
+            "report_type_id",
+        ):
+            statement = statement.where(
+                StudentReport.report_type_id == report_type_id,
+            )
 
     normalised_report_type_code = _normalise_code(
         report_type_code,
     )
 
     if normalised_report_type_code is not None and hasattr(
-        StudentReport, "report_type_code"
+        StudentReport,
+        "report_type_code",
     ):
         statement = statement.where(
             StudentReport.report_type_code == normalised_report_type_code,
@@ -2119,9 +2401,12 @@ def _apply_report_type_filters(
 
     if normalised_report_kind is not None:
         if normalised_report_kind not in ALL_REPORT_KINDS:
-            raise ValueError(f"Unsupported report kind: {normalised_report_kind}.")
+            raise ValueError(f"Unsupported report kind: " f"{normalised_report_kind}.")
 
-        if hasattr(StudentReport, "report_kind"):
+        if hasattr(
+            StudentReport,
+            "report_kind",
+        ):
             statement = statement.where(
                 StudentReport.report_kind == normalised_report_kind,
             )
@@ -2154,6 +2439,26 @@ def _apply_include_in_final_report_filter(
     return statement
 
 
+def _apply_report_status_filter(
+    statement,
+    *,
+    status: str | None,
+):
+    if status is None:
+        return statement
+
+    normalised_status = _normalise_code(
+        status,
+    )
+
+    if normalised_status not in ALL_REPORT_STATUSES:
+        raise ValueError(f"Unsupported report status: " f"{normalised_status}.")
+
+    return statement.where(
+        StudentReport.status == normalised_status,
+    )
+
+
 def _normalise_loaded_report(
     report: StudentReport,
 ) -> StudentReport:
@@ -2164,8 +2469,13 @@ def _normalise_loaded_report(
     returned through schemas or passed to the PDF service.
     """
 
-    _normalise_report_metadata(report)
-    _synchronise_legacy_fields(report)
+    _normalise_report_metadata(
+        report,
+    )
+
+    _synchronise_legacy_fields(
+        report,
+    )
 
     return report
 
@@ -2174,6 +2484,44 @@ def _normalise_loaded_reports(
     reports: Iterable[StudentReport],
 ) -> list[StudentReport]:
     return [_normalise_loaded_report(report) for report in reports]
+
+
+def _report_export_order_by():
+    """
+    Return a stable ordering for PDF and ZIP exports.
+
+    Reports are grouped by pupil first, then by optional display order and
+    finally by creation order.
+    """
+
+    expressions = [
+        StudentReport.student_id.asc(),
+    ]
+
+    if hasattr(
+        StudentReport,
+        "display_order",
+    ):
+        expressions.append(
+            StudentReport.display_order.asc(),
+        )
+
+    if hasattr(
+        StudentReport,
+        "subject_name",
+    ):
+        expressions.append(
+            StudentReport.subject_name.asc(),
+        )
+
+    expressions.extend(
+        [
+            StudentReport.created_at.asc(),
+            StudentReport.id.asc(),
+        ]
+    )
+
+    return expressions
 
 
 async def get_student_report(
@@ -2188,6 +2536,16 @@ async def get_student_report(
     Both the report ID and school ID are required so a valid report ID from a
     different school cannot be used to bypass school isolation.
     """
+
+    _validate_positive_identifier(
+        report_id,
+        field_label="Report ID",
+    )
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
 
     result = await db.execute(
         select(StudentReport).where(
@@ -2226,6 +2584,11 @@ async def list_student_reports(
     report-type filters.
     """
 
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
     _validate_pagination(
         limit=limit,
         offset=offset,
@@ -2236,16 +2599,31 @@ async def list_student_reports(
     )
 
     if teacher_id is not None:
+        _validate_positive_identifier(
+            teacher_id,
+            field_label="Teacher ID",
+        )
+
         statement = statement.where(
             StudentReport.teacher_id == teacher_id,
         )
 
     if student_id is not None:
+        _validate_positive_identifier(
+            student_id,
+            field_label="Student ID",
+        )
+
         statement = statement.where(
             StudentReport.student_id == student_id,
         )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
@@ -2255,17 +2633,10 @@ async def list_student_reports(
             StudentReport.published.is_(published),
         )
 
-    if status is not None:
-        normalised_status = _normalise_code(
-            status,
-        )
-
-        if normalised_status not in ALL_REPORT_STATUSES:
-            raise ValueError(f"Unsupported report status: {normalised_status}.")
-
-        statement = statement.where(
-            StudentReport.status == normalised_status,
-        )
+    statement = _apply_report_status_filter(
+        statement,
+        status=status,
+    )
 
     statement = _apply_report_type_filters(
         statement,
@@ -2314,12 +2685,27 @@ async def list_reports_for_student(
     repository function is called.
     """
 
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        student_id,
+        field_label="Student ID",
+    )
+
     statement = select(StudentReport).where(
         StudentReport.school_id == school_id,
         StudentReport.student_id == student_id,
     )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
@@ -2349,7 +2735,9 @@ async def list_reports_for_student(
         StudentReport,
         "display_order",
     ):
-        display_order_expressions.append(StudentReport.display_order.asc())
+        display_order_expressions.append(
+            StudentReport.display_order.asc(),
+        )
 
     display_order_expressions.extend(
         [
@@ -2376,6 +2764,7 @@ async def list_reports_for_session(
     report_type_id: int | None = None,
     report_type_code: str | None = None,
     report_kind: str | None = None,
+    subject_name: str | None = None,
     limit: int = 5000,
     offset: int = 0,
 ) -> list[StudentReport]:
@@ -2386,6 +2775,11 @@ async def list_reports_for_session(
     PDF/ZIP exports.
     """
 
+    _validate_positive_identifier(
+        report_session_id,
+        field_label="Report session ID",
+    )
+
     return await list_student_reports(
         db,
         school_id=school_id,
@@ -2395,6 +2789,7 @@ async def list_reports_for_session(
         report_type_id=report_type_id,
         report_type_code=report_type_code,
         report_kind=report_kind,
+        subject_name=subject_name,
         include_in_final_report=include_in_final_report,
         limit=limit,
         offset=offset,
@@ -2408,8 +2803,13 @@ async def list_reports_written_by_user(
     writer_id: int,
     report_session_id: int | None = None,
     student_id: int | None = None,
+    published: bool | None = None,
+    status: str | None = None,
     report_kind: str | None = None,
     report_type_id: int | None = None,
+    report_type_code: str | None = None,
+    subject_name: str | None = None,
+    include_in_final_report: bool | None = None,
     limit: int = 500,
     offset: int = 0,
 ) -> list[StudentReport]:
@@ -2421,17 +2821,445 @@ async def list_reports_written_by_user(
     Head of Year, Headmaster, Housemaster or another configured role.
     """
 
+    _validate_positive_identifier(
+        writer_id,
+        field_label="Writer ID",
+    )
+
     return await list_student_reports(
         db,
         school_id=school_id,
         teacher_id=writer_id,
         student_id=student_id,
         report_session_id=report_session_id,
+        published=published,
+        status=status,
         report_kind=report_kind,
         report_type_id=report_type_id,
+        report_type_code=report_type_code,
+        subject_name=subject_name,
+        include_in_final_report=include_in_final_report,
         limit=limit,
         offset=offset,
     )
+
+
+async def list_reports_for_session_export(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    report_session_id: int,
+    published: bool | None = None,
+    status: str | None = None,
+    include_in_final_report: bool | None = True,
+    report_type_id: int | None = None,
+    report_type_code: str | None = None,
+    report_kind: str | None = None,
+    subject_name: str | None = None,
+) -> list[StudentReport]:
+    """
+    Return a complete, consistently ordered reporting-session export.
+
+    The PDF and ZIP services can consume this result without implementing
+    their own school, workflow or report-type filtering.
+    """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        report_session_id,
+        field_label="Report session ID",
+    )
+
+    statement = select(StudentReport).where(
+        StudentReport.school_id == school_id,
+        StudentReport.report_session_id == report_session_id,
+    )
+
+    if published is not None:
+        statement = statement.where(
+            StudentReport.published.is_(published),
+        )
+
+    statement = _apply_report_status_filter(
+        statement,
+        status=status,
+    )
+
+    statement = _apply_report_type_filters(
+        statement,
+        report_type_id=report_type_id,
+        report_type_code=report_type_code,
+        report_kind=report_kind,
+        subject_name=subject_name,
+    )
+
+    statement = _apply_include_in_final_report_filter(
+        statement,
+        include_in_final_report=include_in_final_report,
+    )
+
+    statement = statement.order_by(*_report_export_order_by())
+
+    result = await db.execute(statement)
+
+    return _normalise_loaded_reports(result.scalars().all())
+
+
+async def list_reports_for_writer_export(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    writer_id: int,
+    report_session_id: int | None = None,
+    published: bool | None = None,
+    status: str | None = None,
+    include_in_final_report: bool | None = True,
+    report_type_id: int | None = None,
+    report_type_code: str | None = None,
+    report_kind: str | None = None,
+    subject_name: str | None = None,
+) -> list[StudentReport]:
+    """
+    Return reports written by one staff member for PDF or ZIP export.
+    """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        writer_id,
+        field_label="Writer ID",
+    )
+
+    statement = select(StudentReport).where(
+        StudentReport.school_id == school_id,
+        StudentReport.teacher_id == writer_id,
+    )
+
+    if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
+        statement = statement.where(
+            StudentReport.report_session_id == report_session_id,
+        )
+
+    if published is not None:
+        statement = statement.where(
+            StudentReport.published.is_(published),
+        )
+
+    statement = _apply_report_status_filter(
+        statement,
+        status=status,
+    )
+
+    statement = _apply_report_type_filters(
+        statement,
+        report_type_id=report_type_id,
+        report_type_code=report_type_code,
+        report_kind=report_kind,
+        subject_name=subject_name,
+    )
+
+    statement = _apply_include_in_final_report_filter(
+        statement,
+        include_in_final_report=include_in_final_report,
+    )
+
+    statement = statement.order_by(*_report_export_order_by())
+
+    result = await db.execute(statement)
+
+    return _normalise_loaded_reports(result.scalars().all())
+
+
+async def _get_export_class_group(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    class_id: int,
+) -> ClassGroup:
+    """
+    Return a class only when it belongs to the selected school.
+    """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        class_id,
+        field_label="Class ID",
+    )
+
+    result = await db.execute(
+        select(ClassGroup).where(
+            ClassGroup.id == class_id,
+            ClassGroup.school_id == school_id,
+        ),
+    )
+
+    class_group = result.scalar_one_or_none()
+
+    if class_group is None:
+        raise ValueError("The selected class does not exist for this school.")
+
+    return class_group
+
+
+def _class_student_ids_query(
+    *,
+    school_id: int,
+    class_id: int,
+):
+    """
+    Build a school-scoped pupil query for one class.
+    """
+
+    return (
+        select(Enrollment.user_id)
+        .join(
+            ClassGroup,
+            Enrollment.class_id == ClassGroup.id,
+        )
+        .where(
+            Enrollment.class_id == class_id,
+            ClassGroup.school_id == school_id,
+        )
+        .distinct()
+    )
+
+
+async def list_reports_for_class_export(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    class_id: int,
+    report_session_id: int | None = None,
+    teacher_id: int | None = None,
+    published: bool | None = None,
+    status: str | None = None,
+    include_in_final_report: bool | None = True,
+    report_type_id: int | None = None,
+    report_type_code: str | None = None,
+    report_kind: str | None = None,
+    subject_name: str | None = None,
+) -> list[StudentReport]:
+    """
+    Return reports for pupils enrolled in one school class.
+
+    This query is suitable for class PDF and class ZIP downloads. It does not
+    depend on the report author being the class tutor.
+    """
+
+    await _get_export_class_group(
+        db,
+        school_id=school_id,
+        class_id=class_id,
+    )
+
+    pupil_ids = _class_student_ids_query(
+        school_id=school_id,
+        class_id=class_id,
+    )
+
+    statement = select(StudentReport).where(
+        StudentReport.school_id == school_id,
+        StudentReport.student_id.in_(pupil_ids),
+    )
+
+    if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
+        statement = statement.where(
+            StudentReport.report_session_id == report_session_id,
+        )
+
+    if teacher_id is not None:
+        _validate_positive_identifier(
+            teacher_id,
+            field_label="Teacher ID",
+        )
+
+        statement = statement.where(
+            StudentReport.teacher_id == teacher_id,
+        )
+
+    if published is not None:
+        statement = statement.where(
+            StudentReport.published.is_(published),
+        )
+
+    statement = _apply_report_status_filter(
+        statement,
+        status=status,
+    )
+
+    statement = _apply_report_type_filters(
+        statement,
+        report_type_id=report_type_id,
+        report_type_code=report_type_code,
+        report_kind=report_kind,
+        subject_name=subject_name,
+    )
+
+    statement = _apply_include_in_final_report_filter(
+        statement,
+        include_in_final_report=include_in_final_report,
+    )
+
+    statement = statement.order_by(*_report_export_order_by())
+
+    result = await db.execute(statement)
+
+    return _normalise_loaded_reports(result.scalars().all())
+
+
+def _resolve_class_group_year_column():
+    """
+    Resolve the available ClassGroup year-group column.
+
+    The staged project has used different names while the reporting model has
+    evolved. The first available mapped column is used.
+    """
+
+    for field_name in (
+        "year_group",
+        "year_group_name",
+        "year",
+    ):
+        if hasattr(
+            ClassGroup,
+            field_name,
+        ):
+            return getattr(
+                ClassGroup,
+                field_name,
+            )
+
+    return None
+
+
+async def list_reports_for_year_group_export(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    year_group: str,
+    report_session_id: int | None = None,
+    teacher_id: int | None = None,
+    published: bool | None = None,
+    status: str | None = None,
+    include_in_final_report: bool | None = True,
+    report_type_id: int | None = None,
+    report_type_code: str | None = None,
+    report_kind: str | None = None,
+    subject_name: str | None = None,
+) -> list[StudentReport]:
+    """
+    Return reports for all pupils in a school year group.
+
+    The query supports ``ClassGroup.year_group``, ``year_group_name`` or
+    ``year`` during the staged schema migration.
+    """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    cleaned_year_group = _clean_optional_text(
+        year_group,
+    )
+
+    if cleaned_year_group is None:
+        raise ValueError("A year group is required.")
+
+    year_group_column = _resolve_class_group_year_column()
+
+    if year_group_column is None:
+        raise ValueError(
+            "The ClassGroup model does not currently expose a " "year-group field."
+        )
+
+    pupil_ids = (
+        select(Enrollment.user_id)
+        .join(
+            ClassGroup,
+            Enrollment.class_id == ClassGroup.id,
+        )
+        .where(
+            ClassGroup.school_id == school_id,
+            year_group_column == cleaned_year_group,
+        )
+        .distinct()
+    )
+
+    statement = select(StudentReport).where(
+        StudentReport.school_id == school_id,
+        StudentReport.student_id.in_(pupil_ids),
+    )
+
+    if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
+        statement = statement.where(
+            StudentReport.report_session_id == report_session_id,
+        )
+
+    if teacher_id is not None:
+        _validate_positive_identifier(
+            teacher_id,
+            field_label="Teacher ID",
+        )
+
+        statement = statement.where(
+            StudentReport.teacher_id == teacher_id,
+        )
+
+    if published is not None:
+        statement = statement.where(
+            StudentReport.published.is_(published),
+        )
+
+    statement = _apply_report_status_filter(
+        statement,
+        status=status,
+    )
+
+    statement = _apply_report_type_filters(
+        statement,
+        report_type_id=report_type_id,
+        report_type_code=report_type_code,
+        report_kind=report_kind,
+        subject_name=subject_name,
+    )
+
+    statement = _apply_include_in_final_report_filter(
+        statement,
+        include_in_final_report=include_in_final_report,
+    )
+
+    statement = statement.order_by(*_report_export_order_by())
+
+    result = await db.execute(statement)
+
+    return _normalise_loaded_reports(result.scalars().all())
 
 
 async def list_student_report_review_queue(
@@ -2450,9 +3278,14 @@ async def list_student_report_review_queue(
     """
     Return reports awaiting SMT review.
 
-    Reports may arrive directly from submission or after tutor/Head-of-Year
+    Reports may arrive directly from submission or after tutor or pastoral
     review, depending on the report type's configured workflow.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
 
     _validate_pagination(
         limit=limit,
@@ -2466,16 +3299,31 @@ async def list_student_report_review_queue(
     )
 
     if teacher_id is not None:
+        _validate_positive_identifier(
+            teacher_id,
+            field_label="Teacher ID",
+        )
+
         statement = statement.where(
             StudentReport.teacher_id == teacher_id,
         )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
 
     if student_id is not None:
+        _validate_positive_identifier(
+            student_id,
+            field_label="Student ID",
+        )
+
         statement = statement.where(
             StudentReport.student_id == student_id,
         )
@@ -2487,21 +3335,20 @@ async def list_student_report_review_queue(
         report_kind=report_kind,
     )
 
-    statement = statement.order_by(
-        StudentReport.ready_for_smt_at.asc(),
-        StudentReport.submitted_at.asc(),
-        StudentReport.created_at.asc(),
-        StudentReport.id.asc(),
+    statement = (
+        statement.order_by(
+            StudentReport.ready_for_smt_at.asc(),
+            StudentReport.submitted_at.asc(),
+            StudentReport.created_at.asc(),
+            StudentReport.id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
     )
-
-    statement = statement.offset(offset).limit(limit)
 
     result = await db.execute(statement)
 
     return _normalise_loaded_reports(result.scalars().all())
-# ---------------------------------------------------------------------------
-# Tutor access and tutor queues
-# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Tutor, Head of Year and pastoral access
 # ---------------------------------------------------------------------------
@@ -2522,6 +3369,21 @@ async def user_can_tutor_review_student(
     ``ClassGroup.tutor_id``. Future Head-of-Year and pastoral scope columns can
     be added without changing the endpoint contract.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        tutor_id,
+        field_label="Tutor ID",
+    )
+
+    _validate_positive_identifier(
+        student_id,
+        field_label="Student ID",
+    )
 
     result = await db.execute(
         select(Enrollment.user_id)
@@ -2553,6 +3415,16 @@ async def list_students_for_tutor_scope(
     current ClassGroup model continues to use ``tutor_id`` as its available
     responsibility field.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        staff_id,
+        field_label="Staff ID",
+    )
 
     statement = (
         select(Enrollment.user_id)
@@ -2597,12 +3469,33 @@ async def user_can_access_student_by_scope(
 
     Until dedicated year-group and house assignment tables are introduced,
     those scopes fall back to the current ClassGroup responsibility lookup.
+
+    A school-wide scope must be authorised by the endpoint and therefore is
+    not granted automatically by this repository helper.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        staff_id,
+        field_label="Staff ID",
+    )
+
+    _validate_positive_identifier(
+        student_id,
+        field_label="Student ID",
+    )
 
     normalised_scope = _normalise_code(
         scope,
         fallback=CUSTOM_REPORT_SCOPE_TUTOR_GROUP,
     )
+
+    if normalised_scope not in ALL_CUSTOM_REPORT_SCOPES:
+        return False
 
     if normalised_scope == CUSTOM_REPORT_SCOPE_STUDENT:
         return True
@@ -2610,14 +3503,35 @@ async def user_can_access_student_by_scope(
     if normalised_scope == CUSTOM_REPORT_SCOPE_SCHOOL:
         return False
 
-    if normalised_scope not in ALL_CUSTOM_REPORT_SCOPES:
-        return False
-
     return await user_can_tutor_review_student(
         db,
         school_id=school_id,
         tutor_id=staff_id,
         student_id=student_id,
+    )
+
+
+def _pupil_scope_ids_query(
+    *,
+    school_id: int,
+    staff_id: int,
+):
+    """
+    Build a school-scoped query containing pupils assigned to a member of
+    staff through the current ClassGroup tutor relationship.
+    """
+
+    return (
+        select(Enrollment.user_id)
+        .join(
+            ClassGroup,
+            Enrollment.class_id == ClassGroup.id,
+        )
+        .where(
+            ClassGroup.school_id == school_id,
+            ClassGroup.tutor_id == staff_id,
+        )
+        .distinct()
     )
 
 
@@ -2632,21 +3546,48 @@ def _apply_pupil_scope_filter(
     of staff.
     """
 
-    pupil_ids = (
-        select(Enrollment.user_id)
-        .join(
-            ClassGroup,
-            Enrollment.class_id == ClassGroup.id,
-        )
-        .where(
-            ClassGroup.school_id == school_id,
-            ClassGroup.tutor_id == staff_id,
-        )
+    pupil_ids = _pupil_scope_ids_query(
+        school_id=school_id,
+        staff_id=staff_id,
     )
 
     return statement.where(
         StudentReport.student_id.in_(pupil_ids),
     )
+
+
+def _normalise_status_collection(
+    statuses: Iterable[str] | None,
+    *,
+    default_statuses: Iterable[str],
+) -> set[str]:
+    """
+    Validate and normalise a collection of report workflow statuses.
+    """
+
+    source_statuses = statuses if statuses is not None else default_statuses
+
+    resolved_statuses: set[str] = set()
+
+    for report_status in source_statuses:
+        normalised_status = _normalise_code(
+            report_status,
+        )
+
+        if normalised_status is not None:
+            resolved_statuses.add(normalised_status)
+
+    if not resolved_statuses:
+        raise ValueError("At least one report status is required.")
+
+    invalid_statuses = resolved_statuses - ALL_REPORT_STATUSES
+
+    if invalid_statuses:
+        raise ValueError(
+            "Unsupported report statuses: " + ", ".join(sorted(invalid_statuses)) + "."
+        )
+
+    return resolved_statuses
 
 
 async def list_tutor_student_report_review_queue(
@@ -2660,6 +3601,7 @@ async def list_tutor_student_report_review_queue(
     report_type_id: int | None = None,
     report_type_code: str | None = None,
     report_kind: str | None = None,
+    subject_name: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[StudentReport]:
@@ -2667,9 +3609,21 @@ async def list_tutor_student_report_review_queue(
     Return submitted reports available for tutor or pastoral review.
 
     School Admin, Platform Admin and the Headmaster may request all matching
-    school reports by passing ``include_all_school_reports=True``. Other users
-    are restricted to pupils in their assigned groups.
+    school reports by passing ``include_all_school_reports=True``. Endpoint
+    permission checks must be completed before enabling that override.
+
+    Other users are restricted to pupils in their assigned class groups.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        tutor_id,
+        field_label="Tutor ID",
+    )
 
     _validate_pagination(
         limit=limit,
@@ -2690,11 +3644,21 @@ async def list_tutor_student_report_review_queue(
         )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
 
     if student_id is not None:
+        _validate_positive_identifier(
+            student_id,
+            field_label="Student ID",
+        )
+
         statement = statement.where(
             StudentReport.student_id == student_id,
         )
@@ -2704,6 +3668,7 @@ async def list_tutor_student_report_review_queue(
         report_type_id=report_type_id,
         report_type_code=report_type_code,
         report_kind=report_kind,
+        subject_name=subject_name,
     )
 
     statement = (
@@ -2733,6 +3698,7 @@ async def list_head_of_year_report_queue(
     report_type_id: int | None = None,
     report_type_code: str | None = None,
     report_kind: str | None = None,
+    subject_name: str | None = None,
     statuses: Iterable[str] | None = None,
     limit: int = 100,
     offset: int = 0,
@@ -2742,32 +3708,36 @@ async def list_head_of_year_report_queue(
 
     The current database schema does not yet expose a dedicated year-group
     leader assignment. Until that migration is introduced, this uses the same
-    pupil-scope query as tutor access. The public function is separate so its
-    implementation can later move to a YearGroup or StaffYearGroup table
-    without changing endpoint code.
+    pupil-scope query as tutor access.
+
+    The public function remains separate so its implementation can later move
+    to a YearGroup or StaffYearGroup table without changing endpoint code.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        head_of_year_id,
+        field_label="Head of Year ID",
+    )
 
     _validate_pagination(
         limit=limit,
         offset=offset,
     )
 
-    resolved_statuses = set(
-        statuses
-        or {
+    resolved_statuses = _normalise_status_collection(
+        statuses,
+        default_statuses={
             REPORT_STATUS_SUBMITTED,
             REPORT_STATUS_TUTOR_REVIEW,
             REPORT_STATUS_READY_FOR_SMT,
             REPORT_STATUS_APPROVED,
-        }
+        },
     )
-
-    invalid_statuses = resolved_statuses - ALL_REPORT_STATUSES
-
-    if invalid_statuses:
-        raise ValueError(
-            "Unsupported report statuses: " + ", ".join(sorted(invalid_statuses)) + "."
-        )
 
     statement = select(StudentReport).where(
         StudentReport.school_id == school_id,
@@ -2783,11 +3753,21 @@ async def list_head_of_year_report_queue(
         )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
 
     if student_id is not None:
+        _validate_positive_identifier(
+            student_id,
+            field_label="Student ID",
+        )
+
         statement = statement.where(
             StudentReport.student_id == student_id,
         )
@@ -2797,6 +3777,7 @@ async def list_head_of_year_report_queue(
         report_type_id=report_type_id,
         report_type_code=report_type_code,
         report_kind=report_kind,
+        subject_name=subject_name,
     )
 
     statement = (
@@ -2824,15 +3805,31 @@ async def list_reports_for_staff_scope(
     report_type_id: int | None = None,
     report_type_code: str | None = None,
     report_kind: str | None = None,
+    subject_name: str | None = None,
     include_published: bool = True,
     include_all_school_reports: bool = False,
+    statuses: Iterable[str] | None = None,
+    include_in_final_report: bool | None = None,
     limit: int = 500,
     offset: int = 0,
 ) -> list[StudentReport]:
     """
     General-purpose scoped report listing for tutors, Heads of Year,
     Housemasters, boarding staff and other configured pastoral writers.
+
+    Endpoint permission checks must authorise
+    ``include_all_school_reports=True`` before this function is called.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        staff_id,
+        field_label="Staff ID",
+    )
 
     _validate_pagination(
         limit=limit,
@@ -2857,13 +3854,33 @@ async def list_reports_for_staff_scope(
         )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
 
     if student_id is not None:
+        _validate_positive_identifier(
+            student_id,
+            field_label="Student ID",
+        )
+
         statement = statement.where(
             StudentReport.student_id == student_id,
+        )
+
+    if statuses is not None:
+        resolved_statuses = _normalise_status_collection(
+            statuses,
+            default_statuses=ALL_REPORT_STATUSES,
+        )
+
+        statement = statement.where(
+            StudentReport.status.in_(resolved_statuses),
         )
 
     statement = _apply_report_type_filters(
@@ -2871,6 +3888,12 @@ async def list_reports_for_staff_scope(
         report_type_id=report_type_id,
         report_type_code=report_type_code,
         report_kind=report_kind,
+        subject_name=subject_name,
+    )
+
+    statement = _apply_include_in_final_report_filter(
+        statement,
+        include_in_final_report=include_in_final_report,
     )
 
     statement = (
@@ -2886,10 +3909,89 @@ async def list_reports_for_staff_scope(
     result = await db.execute(statement)
 
     return _normalise_loaded_reports(result.scalars().all())
-# ---------------------------------------------------------------------------
-# Dashboard
-# ---------------------------------------------------------------------------
 
+
+async def list_reports_for_staff_scope_export(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    staff_id: int,
+    report_session_id: int | None = None,
+    report_type_id: int | None = None,
+    report_type_code: str | None = None,
+    report_kind: str | None = None,
+    subject_name: str | None = None,
+    published: bool | None = None,
+    status: str | None = None,
+    include_all_school_reports: bool = False,
+    include_in_final_report: bool | None = True,
+) -> list[StudentReport]:
+    """
+    Return staff-scoped reports in stable PDF/ZIP export order.
+
+    This supports tutor-group, Head-of-Year, house and boarding-report exports
+    while preserving the current ClassGroup-based scope fallback.
+    """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        staff_id,
+        field_label="Staff ID",
+    )
+
+    statement = select(StudentReport).where(
+        StudentReport.school_id == school_id,
+    )
+
+    if not include_all_school_reports:
+        statement = _apply_pupil_scope_filter(
+            statement,
+            school_id=school_id,
+            staff_id=staff_id,
+        )
+
+    if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
+        statement = statement.where(
+            StudentReport.report_session_id == report_session_id,
+        )
+
+    if published is not None:
+        statement = statement.where(
+            StudentReport.published.is_(published),
+        )
+
+    statement = _apply_report_status_filter(
+        statement,
+        status=status,
+    )
+
+    statement = _apply_report_type_filters(
+        statement,
+        report_type_id=report_type_id,
+        report_type_code=report_type_code,
+        report_kind=report_kind,
+        subject_name=subject_name,
+    )
+
+    statement = _apply_include_in_final_report_filter(
+        statement,
+        include_in_final_report=include_in_final_report,
+    )
+
+    statement = statement.order_by(*_report_export_order_by())
+
+    result = await db.execute(statement)
+
+    return _normalise_loaded_reports(result.scalars().all())
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
@@ -2913,6 +4015,11 @@ async def get_student_report_dashboard_counts(
     of zero. This gives the frontend a predictable dashboard structure.
     """
 
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
     statement = select(
         StudentReport.status,
         func.count(StudentReport.id),
@@ -2921,16 +4028,31 @@ async def get_student_report_dashboard_counts(
     )
 
     if teacher_id is not None:
+        _validate_positive_identifier(
+            teacher_id,
+            field_label="Teacher ID",
+        )
+
         statement = statement.where(
             StudentReport.teacher_id == teacher_id,
         )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
 
     if student_id is not None:
+        _validate_positive_identifier(
+            student_id,
+            field_label="Student ID",
+        )
+
         statement = statement.where(
             StudentReport.student_id == student_id,
         )
@@ -2983,6 +4105,7 @@ async def get_student_report_status_count(
     report_session_id: int | None = None,
     teacher_id: int | None = None,
     report_type_id: int | None = None,
+    report_type_code: str | None = None,
     report_kind: str | None = None,
 ) -> int:
     """
@@ -2992,12 +4115,17 @@ async def get_student_report_status_count(
     complete dashboard payload.
     """
 
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
     normalised_status = _normalise_code(
         report_status,
     )
 
     if normalised_status not in ALL_REPORT_STATUSES:
-        raise ValueError(f"Unsupported report status: {normalised_status}.")
+        raise ValueError(f"Unsupported report status: " f"{normalised_status}.")
 
     statement = select(func.count(StudentReport.id)).where(
         StudentReport.school_id == school_id,
@@ -3005,11 +4133,21 @@ async def get_student_report_status_count(
     )
 
     if report_session_id is not None:
+        _validate_positive_identifier(
+            report_session_id,
+            field_label="Report session ID",
+        )
+
         statement = statement.where(
             StudentReport.report_session_id == report_session_id,
         )
 
     if teacher_id is not None:
+        _validate_positive_identifier(
+            teacher_id,
+            field_label="Teacher ID",
+        )
+
         statement = statement.where(
             StudentReport.teacher_id == teacher_id,
         )
@@ -3017,6 +4155,7 @@ async def get_student_report_status_count(
     statement = _apply_report_type_filters(
         statement,
         report_type_id=report_type_id,
+        report_type_code=report_type_code,
         report_kind=report_kind,
     )
 
@@ -3064,7 +4203,7 @@ def _student_display_name(
             first_name,
             last_name,
         )
-        if isinstance(part, str) and part.strip()
+        if (isinstance(part, str) and part.strip())
     )
 
     if combined_name:
@@ -3094,6 +4233,16 @@ async def _get_class_group_for_school(
     This prevents a valid class ID belonging to another school from being used
     in the completion-overview endpoint.
     """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        class_id,
+        field_label="Class ID",
+    )
 
     result = await db.execute(
         select(ClassGroup).where(
@@ -3128,7 +4277,10 @@ async def _list_class_students(
         )
     )
 
-    if hasattr(User, "full_name"):
+    if hasattr(
+        User,
+        "full_name",
+    ):
         statement = statement.order_by(
             User.full_name.asc(),
             User.id.asc(),
@@ -3189,6 +4341,72 @@ async def _find_latest_matching_student_report(
     return _normalise_loaded_report(report)
 
 
+def _completion_status_counts() -> dict[str, int]:
+    """
+    Return a fresh completion-dashboard count structure.
+    """
+
+    return {
+        "not_started": 0,
+        REPORT_STATUS_DRAFT: 0,
+        REPORT_STATUS_RETURNED_BY_TUTOR: 0,
+        REPORT_STATUS_RETURNED_BY_SMT: 0,
+        REPORT_STATUS_SUBMITTED: 0,
+        REPORT_STATUS_TUTOR_REVIEW: 0,
+        REPORT_STATUS_READY_FOR_SMT: 0,
+        REPORT_STATUS_APPROVED: 0,
+        REPORT_STATUS_PUBLISHED: 0,
+    }
+
+
+def _completed_report_statuses() -> set[str]:
+    """
+    Return statuses regarded as complete from the report author's perspective.
+    """
+
+    return {
+        REPORT_STATUS_SUBMITTED,
+        REPORT_STATUS_TUTOR_REVIEW,
+        REPORT_STATUS_READY_FOR_SMT,
+        REPORT_STATUS_APPROVED,
+        REPORT_STATUS_PUBLISHED,
+    }
+
+
+def _calculate_completion_summary(
+    *,
+    counts: Mapping[str, int],
+    total_students: int,
+) -> tuple[int, int, float]:
+    completed = sum(
+        counts.get(
+            report_status,
+            0,
+        )
+        for report_status in _completed_report_statuses()
+    )
+
+    outstanding = max(
+        total_students - completed,
+        0,
+    )
+
+    completion_percentage = (
+        0.0
+        if total_students == 0
+        else round(
+            completed * 100 / total_students,
+            1,
+        )
+    )
+
+    return (
+        completed,
+        outstanding,
+        completion_percentage,
+    )
+
+
 async def get_student_report_completion_overview(
     db: AsyncSession,
     *,
@@ -3225,6 +4443,18 @@ async def get_student_report_completion_overview(
     if report_session is None:
         raise ValueError("The selected report session could not be found.")
 
+    if teacher_id is not None:
+        _validate_positive_identifier(
+            teacher_id,
+            field_label="Teacher ID",
+        )
+
+    if report_type_id is not None:
+        _validate_positive_identifier(
+            report_type_id,
+            field_label="Report type ID",
+        )
+
     normalised_report_kind = _normalise_code(
         report_kind,
     )
@@ -3233,7 +4463,7 @@ async def get_student_report_completion_overview(
         normalised_report_kind is not None
         and normalised_report_kind not in ALL_REPORT_KINDS
     ):
-        raise ValueError(f"Unsupported report kind: {normalised_report_kind}.")
+        raise ValueError(f"Unsupported report kind: " f"{normalised_report_kind}.")
 
     students = await _list_class_students(
         db,
@@ -3243,25 +4473,7 @@ async def get_student_report_completion_overview(
 
     rows: list[StudentReportCompletionRow] = []
 
-    counts = {
-        "not_started": 0,
-        REPORT_STATUS_DRAFT: 0,
-        REPORT_STATUS_RETURNED_BY_TUTOR: 0,
-        REPORT_STATUS_RETURNED_BY_SMT: 0,
-        REPORT_STATUS_SUBMITTED: 0,
-        REPORT_STATUS_TUTOR_REVIEW: 0,
-        REPORT_STATUS_READY_FOR_SMT: 0,
-        REPORT_STATUS_APPROVED: 0,
-        REPORT_STATUS_PUBLISHED: 0,
-    }
-
-    completed_statuses = {
-        REPORT_STATUS_SUBMITTED,
-        REPORT_STATUS_TUTOR_REVIEW,
-        REPORT_STATUS_READY_FOR_SMT,
-        REPORT_STATUS_APPROVED,
-        REPORT_STATUS_PUBLISHED,
-    }
+    counts = _completion_status_counts()
 
     for student in students:
         report = await _find_latest_matching_student_report(
@@ -3295,19 +4507,13 @@ async def get_student_report_completion_overview(
 
     total_students = len(rows)
 
-    completed = sum(
-        counts.get(report_status, 0) for report_status in completed_statuses
-    )
-
-    outstanding = total_students - completed
-
-    completion_percentage = (
-        0.0
-        if total_students == 0
-        else round(
-            completed * 100 / total_students,
-            1,
-        )
+    (
+        completed,
+        outstanding,
+        completion_percentage,
+    ) = _calculate_completion_summary(
+        counts=counts,
+        total_students=total_students,
     )
 
     overview_data: dict[str, Any] = {
@@ -3345,6 +4551,37 @@ async def get_staff_scope_completion_overview(
     responsibility may span several class groups.
     """
 
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        staff_id,
+        field_label="Staff ID",
+    )
+
+    _validate_positive_identifier(
+        report_session_id,
+        field_label="Report session ID",
+    )
+
+    if report_type_id is not None:
+        _validate_positive_identifier(
+            report_type_id,
+            field_label="Report type ID",
+        )
+
+    normalised_report_kind = _normalise_code(
+        report_kind,
+    )
+
+    if (
+        normalised_report_kind is not None
+        and normalised_report_kind not in ALL_REPORT_KINDS
+    ):
+        raise ValueError(f"Unsupported report kind: " f"{normalised_report_kind}.")
+
     report_session = await _get_report_session(
         db,
         school_id=school_id,
@@ -3360,17 +4597,7 @@ async def get_staff_scope_completion_overview(
         staff_id=staff_id,
     )
 
-    counts = {
-        "not_started": 0,
-        REPORT_STATUS_DRAFT: 0,
-        REPORT_STATUS_RETURNED_BY_TUTOR: 0,
-        REPORT_STATUS_RETURNED_BY_SMT: 0,
-        REPORT_STATUS_SUBMITTED: 0,
-        REPORT_STATUS_TUTOR_REVIEW: 0,
-        REPORT_STATUS_READY_FOR_SMT: 0,
-        REPORT_STATUS_APPROVED: 0,
-        REPORT_STATUS_PUBLISHED: 0,
-    }
+    counts = _completion_status_counts()
 
     rows: list[dict[str, Any]] = []
 
@@ -3395,47 +4622,39 @@ async def get_staff_scope_completion_overview(
             teacher_id=staff_id,
             report_type_id=report_type_id,
             report_type_code=report_type_code,
-            report_kind=report_kind,
+            report_kind=normalised_report_kind,
             subject_name=None,
         )
 
         row_status = "not_started" if report is None else report.status
 
-        counts[row_status] = counts.get(row_status, 0) + 1
+        counts[row_status] = (
+            counts.get(
+                row_status,
+                0,
+            )
+            + 1
+        )
 
         rows.append(
             {
                 "student_id": student_id,
-                "student_name": _student_display_name(student),
+                "student_name": (_student_display_name(student)),
                 "report_id": (None if report is None else report.id),
                 "status": row_status,
                 "last_updated": (None if report is None else report.updated_at),
             }
         )
 
-    completed_statuses = {
-        REPORT_STATUS_SUBMITTED,
-        REPORT_STATUS_TUTOR_REVIEW,
-        REPORT_STATUS_READY_FOR_SMT,
-        REPORT_STATUS_APPROVED,
-        REPORT_STATUS_PUBLISHED,
-    }
-
     total_students = len(rows)
 
-    completed = sum(
-        counts.get(report_status, 0) for report_status in completed_statuses
-    )
-
-    outstanding = total_students - completed
-
-    completion_percentage = (
-        0.0
-        if total_students == 0
-        else round(
-            completed * 100 / total_students,
-            1,
-        )
+    (
+        completed,
+        outstanding,
+        completion_percentage,
+    ) = _calculate_completion_summary(
+        counts=counts,
+        total_students=total_students,
     )
 
     return {
@@ -3448,9 +4667,6 @@ async def get_staff_scope_completion_overview(
         "students": rows,
         **counts,
     }
-# ---------------------------------------------------------------------------
-# Update
-# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Update
 # ---------------------------------------------------------------------------
@@ -3546,7 +4762,7 @@ async def update_student_report(
     current_user: User | None = None,
 ) -> StudentReport:
     """
-    Update a report through its ordinary author-editing path.
+    Update a report through its ordinary editing path.
 
     This function is intended for:
         - the original report author;
@@ -3664,6 +4880,9 @@ async def update_student_report_as_author(
         action_label="edited by its author",
     )
 
+    if author_id < 1:
+        raise ValueError("A valid report author is required.")
+
     if report.teacher_id != author_id:
         raise ValueError(
             "Only the recorded report author can use the author-edit path."
@@ -3688,6 +4907,13 @@ async def update_student_report_as_author(
         school_id=report.school_id,
         report_session_id=new_report_session_id,
     )
+
+    if (
+        new_report_session_id != report.report_session_id
+        and report_session is not None
+        and _session_is_published(report_session)
+    ):
+        raise ValueError("A report cannot be moved into a published reporting session.")
 
     _apply_payload_to_report(
         report,
@@ -3746,6 +4972,14 @@ async def update_student_report_as_scoped_editor(
         action_label="edited",
     )
 
+    if editor_id < 1:
+        raise ValueError("A valid report editor is required.")
+
+    normalised_editor_role = _normalise_code(
+        editor_role,
+        fallback="scoped_editor",
+    )
+
     update_data = _payload_to_dict(
         payload,
         exclude_unset=True,
@@ -3787,10 +5021,10 @@ async def update_student_report_as_scoped_editor(
     _set_edit_audit(
         report,
         edited_by_id=editor_id,
-        edited_role=editor_role,
+        edited_role=normalised_editor_role,
     )
 
-    if _normalise_code(editor_role) in {
+    if normalised_editor_role in {
         "head_of_year",
         "hoy",
     }:
@@ -3806,7 +5040,7 @@ async def update_student_report_as_scoped_editor(
             editor_id,
         )
 
-    if _normalise_code(editor_role) in {
+    if normalised_editor_role in {
         "headteacher",
         "headmaster",
         "principal",
@@ -3850,6 +5084,9 @@ async def update_student_report_as_reviewer(
         allowed_statuses=NON_PUBLISHED_EDITABLE_STATUSES,
         action_label="edited by a reviewer",
     )
+
+    if reviewer_id < 1:
+        raise ValueError("A valid reviewer is required.")
 
     update_data = _payload_to_dict(
         payload,
@@ -3953,10 +5190,7 @@ async def update_student_report_as_reviewer(
 
     return _normalise_loaded_report(report)
 # ---------------------------------------------------------------------------
-# Teacher submission
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Report submission
+# Submission workflow
 # ---------------------------------------------------------------------------
 
 
@@ -3964,11 +5198,10 @@ def _submission_requires_tutor_review(
     report: StudentReport,
 ) -> bool:
     """
-    Determine whether the report should pass through tutor review.
+    Determine whether the report must pass through tutor review.
 
-    Subject reports default to tutor review. Tutor, Head-of-Year,
-    Headteacher and custom reports may override this through their stored
-    custom preferences.
+    Subject reports default to requiring tutor review. Custom report types may
+    override this through their stored preferences.
     """
 
     configured_value = _custom_preference_value(
@@ -3976,6 +5209,13 @@ def _submission_requires_tutor_review(
         "requires_tutor_review",
         default=None,
     )
+
+    if configured_value is None:
+        configured_value = _custom_preference_value(
+            report,
+            "tutor_review_required",
+            default=None,
+        )
 
     if configured_value is not None:
         return bool(configured_value)
@@ -3989,10 +5229,7 @@ def _submission_requires_smt_review(
     report: StudentReport,
 ) -> bool:
     """
-    Determine whether the report requires SMT approval before publication.
-
-    Reports require SMT approval by default unless their configured report
-    type explicitly disables it.
+    Determine whether SMT approval is required before publication.
     """
 
     configured_value = _custom_preference_value(
@@ -4020,9 +5257,8 @@ def _submission_requires_publication(
     """
     Determine whether the report is expected to enter the publication stage.
 
-    The value is stored as configuration metadata for future workflow
-    routing. The existing publication endpoint continues to publish only
-    approved reports.
+    Publication remains an explicit workflow action even when this value is
+    stored as report-type configuration metadata.
     """
 
     configured_value = _custom_preference_value(
@@ -4041,17 +5277,10 @@ def _initial_submitted_status(
     report: StudentReport,
 ) -> str:
     """
-    Resolve the first workflow status after an author submits a report.
+    Resolve the first workflow status after submission.
 
-    Current workflow:
-        author submits;
-        tutor review may follow;
-        SMT approval follows;
-        publication follows.
-
-    Reports that do not require tutor review still enter ``submitted`` so SMT
-    may review them directly. The endpoint and review queue already allow SMT
-    to approve submitted reports.
+    Reports enter ``submitted`` whether or not tutor review is required. The
+    review queues and approval validation decide the next permitted action.
     """
 
     return REPORT_STATUS_SUBMITTED
@@ -4068,12 +5297,11 @@ def _prepare_report_for_resubmission(
     report: StudentReport,
 ) -> None:
     """
-    Clear stale downstream workflow information before a returned report is
-    submitted again.
+    Clear stale downstream workflow information before a report is submitted
+    or resubmitted.
 
-    Previous review comments remain only where required for audit and user
-    feedback. Review timestamps and decisions are reset so the new submission
-    is treated as a fresh workflow pass.
+    Review decisions from a previous workflow pass must not remain active
+    after the author has corrected the report.
     """
 
     previous_status = report.status
@@ -4083,17 +5311,24 @@ def _prepare_report_for_resubmission(
         report.ready_for_smt_by_id = None
 
         _clear_smt_review_fields(report)
+
         _clear_head_of_year_review_fields(report)
+
         _clear_headteacher_review_fields(report)
 
     elif previous_status == REPORT_STATUS_RETURNED_BY_SMT:
         _clear_tutor_review_fields(report)
+
         _clear_smt_review_fields(report)
+
         _clear_head_of_year_review_fields(report)
+
         _clear_headteacher_review_fields(report)
 
     else:
         _clear_all_review_fields(report)
+
+    _clear_approval_fields(report)
 
     _clear_publication_fields(report)
 
@@ -4107,9 +5342,8 @@ async def submit_student_report(
     """
     Submit a draft or corrected report into the review workflow.
 
-    The endpoint must confirm that ``submitted_by_id`` is the report author or
-    another authorised school-wide user. This repository function validates
-    workflow state, session configuration and report completeness.
+    The endpoint must confirm that the submitting user is the report author or
+    another authorised school-wide user.
     """
 
     _validate_update_status(
@@ -4137,9 +5371,8 @@ async def submit_student_report(
     )
 
     _synchronise_legacy_fields(report)
-    _normalise_report_metadata(report)
 
-    now = _utc_now()
+    _normalise_report_metadata(report)
 
     cleaned_report_text = _clean_optional_text(
         _get_model_value(
@@ -4151,9 +5384,9 @@ async def submit_student_report(
     if cleaned_report_text is not None:
         report.report_text = cleaned_report_text
 
-    _prepare_report_for_resubmission(
-        report,
-    )
+    _prepare_report_for_resubmission(report)
+
+    now = _utc_now()
 
     report.status = _initial_submitted_status(report)
 
@@ -4197,10 +5430,7 @@ async def resubmit_student_report(
     submitted_by_id: int,
 ) -> StudentReport:
     """
-    Explicit resubmission alias for reports returned by a tutor or SMT.
-
-    This provides a clearer service-layer function for future endpoints while
-    retaining ``submit_student_report`` as the existing endpoint dependency.
+    Resubmit a report returned by either a tutor or SMT.
     """
 
     if report.status not in {
@@ -4219,45 +5449,8 @@ async def resubmit_student_report(
     )
 
 
-async def withdraw_submitted_report(
-    db: AsyncSession,
-    *,
-    report: StudentReport,
-    withdrawn_by_id: int,
-) -> StudentReport:
-    """
-    Move a newly submitted report back to draft before review begins.
-
-    This function is not yet exposed by the current endpoint but provides a
-    safe repository operation for a future Withdraw Submission action.
-    """
-
-    if report.published or report.status == REPORT_STATUS_PUBLISHED:
-        raise ValueError("Published reports cannot be withdrawn.")
-
-    if report.status != REPORT_STATUS_SUBMITTED:
-        raise ValueError(
-            "Only a submitted report that has not entered review can " "be withdrawn."
-        )
-
-    report.status = REPORT_STATUS_DRAFT
-
-    _clear_submission_fields(report)
-    _clear_all_review_fields(report)
-    _clear_publication_fields(report)
-
-    _set_edit_audit(
-        report,
-        edited_by_id=withdrawn_by_id,
-        edited_role="submission_withdrawn",
-    )
-
-    await db.commit()
-    await db.refresh(report)
-
-    return _normalise_loaded_report(report)
 # ---------------------------------------------------------------------------
-# Tutor review
+# Tutor-review workflow
 # ---------------------------------------------------------------------------
 
 
@@ -4265,11 +5458,20 @@ def _validate_tutor_review_status(
     report: StudentReport,
     *,
     action_label: str,
+    allowed_statuses: set[str] | None = None,
 ) -> None:
+    """
+    Validate that a report is available for tutor review.
+    """
+
     if report.published or report.status == REPORT_STATUS_PUBLISHED:
         raise ValueError("Published reports cannot enter tutor review.")
 
-    if report.status not in TUTOR_REVIEWABLE_STATUSES:
+    resolved_statuses = (
+        TUTOR_REVIEWABLE_STATUSES if allowed_statuses is None else allowed_statuses
+    )
+
+    if report.status not in resolved_statuses:
         raise ValueError(
             f"This report cannot be {action_label} while its status is "
             f"'{report.status}'."
@@ -4282,13 +5484,22 @@ def _record_tutor_review(
     tutor_id: int,
     comments: str | None = None,
 ) -> None:
+    """
+    Record tutor-review metadata without choosing the next status.
+    """
+
+    if tutor_id < 1:
+        raise ValueError("A valid tutor is required.")
+
     now = _utc_now()
 
     report.tutor_reviewed_at = now
     report.tutor_reviewed_by_id = tutor_id
 
+    cleaned_comments = _clean_optional_text(comments)
+
     if comments is not None:
-        report.tutor_review_comments = _clean_optional_text(comments)
+        report.tutor_review_comments = cleaned_comments
 
     _set_edit_audit(
         report,
@@ -4305,17 +5516,15 @@ async def begin_tutor_review(
 ) -> StudentReport:
     """
     Move a submitted report into active tutor review.
-
-    The endpoint must first confirm that the tutor has responsibility for the
-    pupil. School-wide administrators and the Headmaster may also begin review
-    after their endpoint permissions have been checked.
     """
 
-    if report.published or report.status == REPORT_STATUS_PUBLISHED:
-        raise ValueError("Published reports cannot enter tutor review.")
-
-    if report.status != REPORT_STATUS_SUBMITTED:
-        raise ValueError("Only submitted reports can enter tutor review.")
+    _validate_tutor_review_status(
+        report,
+        action_label="placed into tutor review",
+        allowed_statuses={
+            REPORT_STATUS_SUBMITTED,
+        },
+    )
 
     if tutor_id < 1:
         raise ValueError("A valid tutor is required.")
@@ -4332,9 +5541,7 @@ async def begin_tutor_review(
 
     _clear_smt_review_fields(report)
 
-    _clear_head_of_year_review_fields(report)
-
-    _clear_headteacher_review_fields(report)
+    _clear_approval_fields(report)
 
     _clear_publication_fields(report)
 
@@ -4354,16 +5561,12 @@ async def correct_student_report_as_tutor(
     tutor_comment: str | None = None,
 ) -> StudentReport:
     """
-    Correct report wording during tutor review without changing the author.
-
-    The report author remains stored in ``teacher_id``. Tutor identity and
-    editing activity are recorded in the tutor-review and general audit
-    fields.
+    Correct report wording during tutor review without advancing to SMT.
     """
 
     _validate_tutor_review_status(
         report,
-        action_label="corrected during tutor review",
+        action_label="corrected by its tutor",
     )
 
     if tutor_id < 1:
@@ -4375,6 +5578,7 @@ async def correct_student_report_as_tutor(
         raise ValueError("The corrected report text cannot be empty.")
 
     report.report_text = cleaned_report_text
+
     report.status = REPORT_STATUS_TUTOR_REVIEW
 
     _record_tutor_review(
@@ -4399,6 +5603,8 @@ async def correct_student_report_as_tutor(
 
     _clear_headteacher_review_fields(report)
 
+    _clear_approval_fields(report)
+
     _clear_publication_fields(report)
 
     _validate_report_before_save(report)
@@ -4418,16 +5624,18 @@ async def update_student_report_during_tutor_review(
     tutor_role: str = "tutor",
 ) -> StudentReport:
     """
-    Save structured tutor corrections, including grades and configured report
-    fields, without advancing the workflow.
+    Save structured tutor corrections without advancing the workflow.
 
     Pupil-scope permission must be checked before this function is called.
     """
 
     _validate_tutor_review_status(
         report,
-        action_label="edited during tutor review",
+        action_label=("edited during tutor review"),
     )
+
+    if tutor_id < 1:
+        raise ValueError("A valid tutor is required.")
 
     update_data = _payload_to_dict(
         payload,
@@ -4444,7 +5652,7 @@ async def update_student_report_during_tutor_review(
     report_session = await _get_report_session(
         db,
         school_id=report.school_id,
-        report_session_id=report.report_session_id,
+        report_session_id=(report.report_session_id),
     )
 
     _apply_session_defaults(
@@ -4483,6 +5691,8 @@ async def update_student_report_during_tutor_review(
 
     _clear_smt_review_fields(report)
 
+    _clear_approval_fields(report)
+
     _clear_publication_fields(report)
 
     await db.commit()
@@ -4506,8 +5716,11 @@ async def return_student_report_to_teacher(
 
     _validate_tutor_review_status(
         report,
-        action_label="returned to its author",
+        action_label=("returned to its author"),
     )
+
+    if tutor_id < 1:
+        raise ValueError("A valid tutor is required.")
 
     cleaned_comments = _clean_optional_text(tutor_review_comments)
 
@@ -4531,6 +5744,8 @@ async def return_student_report_to_teacher(
 
     _clear_headteacher_review_fields(report)
 
+    _clear_approval_fields(report)
+
     _clear_publication_fields(report)
 
     await db.commit()
@@ -4549,13 +5764,12 @@ async def mark_student_report_ready_for_smt(
     """
     Complete tutor review and send the report to SMT.
 
-    This function does not approve the report. Approval remains an SMT,
-    School Admin or Platform Admin action.
+    This action does not approve or publish the report.
     """
 
     _validate_tutor_review_status(
         report,
-        action_label="marked ready for SMT",
+        action_label=("marked ready for SMT"),
     )
 
     if tutor_id < 1:
@@ -4575,7 +5789,7 @@ async def mark_student_report_ready_for_smt(
 
     cleaned_comments = _clean_optional_text(tutor_review_comments)
 
-    if cleaned_comments is not None:
+    if tutor_review_comments is not None:
         report.tutor_review_comments = cleaned_comments
 
     report.ready_for_smt_at = now
@@ -4583,9 +5797,7 @@ async def mark_student_report_ready_for_smt(
 
     _clear_smt_review_fields(report)
 
-    _clear_head_of_year_review_fields(report)
-
-    _clear_headteacher_review_fields(report)
+    _clear_approval_fields(report)
 
     _clear_publication_fields(report)
 
@@ -4599,161 +5811,9 @@ async def mark_student_report_ready_for_smt(
     await db.refresh(report)
 
     return _normalise_loaded_report(report)
-
-
-async def record_head_of_year_review(
-    db: AsyncSession,
-    *,
-    report: StudentReport,
-    head_of_year_id: int,
-    head_of_year_comment: str | None = None,
-    review_comments: str | None = None,
-    mark_ready_for_smt: bool = False,
-) -> StudentReport:
-    """
-    Record a Head-of-Year review while preserving the same main workflow.
-
-    The Head of Year may edit and save, but cannot approve or publish. When
-    ``mark_ready_for_smt`` is true, the report moves to ``ready_for_smt``.
-    Otherwise it remains in tutor review.
-    """
-
-    _validate_tutor_review_status(
-        report,
-        action_label="reviewed by the Head of Year",
-    )
-
-    if head_of_year_id < 1:
-        raise ValueError("A valid Head of Year is required.")
-
-    cleaned_head_of_year_comment = _clean_optional_text(head_of_year_comment)
-
-    if head_of_year_comment is not None:
-        _set_model_value(
-            report,
-            "head_of_year_comment",
-            cleaned_head_of_year_comment,
-        )
-
-    cleaned_review_comments = _clean_optional_text(review_comments)
-
-    now = _utc_now()
-
-    _set_model_value(
-        report,
-        "head_of_year_reviewed_at",
-        now,
-    )
-
-    _set_model_value(
-        report,
-        "head_of_year_reviewed_by_id",
-        head_of_year_id,
-    )
-
-    if cleaned_review_comments is not None:
-        report.tutor_review_comments = cleaned_review_comments
-
-    if mark_ready_for_smt:
-        await _validate_report_for_submission(
-            db,
-            report=report,
-        )
-
-        report.status = REPORT_STATUS_READY_FOR_SMT
-        report.ready_for_smt_at = now
-        report.ready_for_smt_by_id = head_of_year_id
-    else:
-        report.status = REPORT_STATUS_TUTOR_REVIEW
-        report.ready_for_smt_at = None
-        report.ready_for_smt_by_id = None
-
-    _clear_smt_review_fields(report)
-
-    _clear_headteacher_review_fields(report)
-
-    _clear_publication_fields(report)
-
-    _set_edit_audit(
-        report,
-        edited_by_id=head_of_year_id,
-        edited_role="head_of_year",
-    )
-
-    await db.commit()
-    await db.refresh(report)
-
-    return _normalise_loaded_report(report)
-
-
-async def return_student_report_as_head_of_year(
-    db: AsyncSession,
-    *,
-    report: StudentReport,
-    head_of_year_id: int,
-    review_comments: str,
-) -> StudentReport:
-    """
-    Return a report to its author from the Head-of-Year review stage.
-    """
-
-    _validate_tutor_review_status(
-        report,
-        action_label="returned by the Head of Year",
-    )
-
-    cleaned_comments = _clean_optional_text(review_comments)
-
-    if cleaned_comments is None:
-        raise ValueError("Review comments are required when returning a report.")
-
-    now = _utc_now()
-
-    report.status = REPORT_STATUS_RETURNED_BY_TUTOR
-    report.tutor_review_comments = cleaned_comments
-    report.tutor_reviewed_at = now
-    report.tutor_reviewed_by_id = head_of_year_id
-
-    _set_model_value(
-        report,
-        "head_of_year_reviewed_at",
-        now,
-    )
-
-    _set_model_value(
-        report,
-        "head_of_year_reviewed_by_id",
-        head_of_year_id,
-    )
-
-    report.ready_for_smt_at = None
-    report.ready_for_smt_by_id = None
-
-    _clear_smt_review_fields(report)
-
-    _clear_headteacher_review_fields(report)
-
-    _clear_publication_fields(report)
-
-    _set_edit_audit(
-        report,
-        edited_by_id=head_of_year_id,
-        edited_role="head_of_year",
-    )
-
-    await db.commit()
-    await db.refresh(report)
-
-    return _normalise_loaded_report(report)
 # ---------------------------------------------------------------------------
-# SMT review
+# SMT review and approval
 # ---------------------------------------------------------------------------
-
-
-SMT_REVIEWABLE_STATUSES: set[str] = {
-    REPORT_STATUS_SUBMITTED,
-    REPORT_STATUS_READY_FOR_SMT,
-}
 
 
 def _validate_smt_review_status(
@@ -4763,11 +5823,11 @@ def _validate_smt_review_status(
     allowed_statuses: set[str] | None = None,
 ) -> None:
     """
-    Validate that a report may enter an SMT review action.
+    Validate that a report is available for SMT-style review.
     """
 
     if report.published or report.status == REPORT_STATUS_PUBLISHED:
-        raise ValueError("Published reports cannot be changed through SMT review.")
+        raise ValueError("Published reports cannot enter SMT review.")
 
     resolved_statuses = (
         SMT_REVIEWABLE_STATUSES if allowed_statuses is None else allowed_statuses
@@ -4784,16 +5844,18 @@ def _record_smt_review(
     report: StudentReport,
     *,
     reviewer_id: int,
-    reviewer_role: str,
+    reviewer_role: str = "smt",
     review_comments: str | None = None,
 ) -> None:
     """
-    Record SMT review metadata using both the current and staged field names.
+    Record SMT or senior-review metadata without selecting the next status.
     """
+
+    if reviewer_id < 1:
+        raise ValueError("A valid reviewer is required.")
 
     now = _utc_now()
 
-    # Current/legacy workflow fields used by the API schemas and tests.
     report.reviewed_at = now
     report.reviewed_by_id = reviewer_id
 
@@ -4801,26 +5863,6 @@ def _record_smt_review(
 
     if review_comments is not None:
         report.review_comments = cleaned_comments
-
-    # Staged SMT-specific fields, when the model exposes them.
-    _set_model_value(
-        report,
-        "smt_reviewed_at",
-        now,
-    )
-
-    _set_model_value(
-        report,
-        "smt_reviewed_by_id",
-        reviewer_id,
-    )
-
-    if review_comments is not None:
-        _set_model_value(
-            report,
-            "smt_review_comments",
-            cleaned_comments,
-        )
 
     _set_edit_audit(
         report,
@@ -4834,6 +5876,7 @@ def _record_smt_review(
         ),
     )
 
+
 async def begin_smt_review(
     db: AsyncSession,
     *,
@@ -4842,30 +5885,30 @@ async def begin_smt_review(
     reviewer_role: str = "smt",
 ) -> StudentReport:
     """
-    Record that an authorised SMT reviewer has opened the report.
+    Record the start of SMT review without changing the workflow status.
 
-    The report remains in its current workflow status. This allows review
-    activity to be audited without introducing an additional status.
+    ``ready_for_smt`` remains the visible queue status while the review is in
+    progress.
     """
 
     _validate_smt_review_status(
         report,
-        action_label="opened for SMT review",
+        action_label="placed into SMT review",
         allowed_statuses={
             REPORT_STATUS_SUBMITTED,
-            REPORT_STATUS_TUTOR_REVIEW,
             REPORT_STATUS_READY_FOR_SMT,
         },
     )
-
-    if reviewer_id < 1:
-        raise ValueError("A valid SMT reviewer is required.")
 
     _record_smt_review(
         report,
         reviewer_id=reviewer_id,
         reviewer_role=reviewer_role,
     )
+
+    _clear_approval_fields(report)
+
+    _clear_publication_fields(report)
 
     await db.commit()
     await db.refresh(report)
@@ -4880,22 +5923,29 @@ async def update_student_report_during_smt_review(
     payload: StudentReportUpdate,
     reviewer_id: int,
     reviewer_role: str = "smt",
+    review_comments: str | None = None,
 ) -> StudentReport:
     """
-    Save SMT corrections without approving or publishing the report.
+    Save structured corrections during SMT review.
 
-    The original report author remains unchanged. The current workflow status
-    is preserved unless it was already approved and the correction invalidates
-    that approval, in which case it returns to ``ready_for_smt``.
+    Editing an already approved report revokes its approval and returns it to
+    ``ready_for_smt``.
     """
 
     _validate_smt_review_status(
         report,
         action_label="edited during SMT review",
+        allowed_statuses={
+            REPORT_STATUS_SUBMITTED,
+            REPORT_STATUS_READY_FOR_SMT,
+            REPORT_STATUS_APPROVED,
+        },
     )
 
     if reviewer_id < 1:
         raise ValueError("A valid SMT reviewer is required.")
+
+    previous_status = report.status
 
     update_data = _payload_to_dict(
         payload,
@@ -4903,8 +5953,6 @@ async def update_student_report_during_smt_review(
     )
 
     _validate_reviewer_update_fields(update_data)
-
-    previous_status = report.status
 
     _apply_reviewer_payload(
         report,
@@ -4914,7 +5962,7 @@ async def update_student_report_during_smt_review(
     report_session = await _get_report_session(
         db,
         school_id=report.school_id,
-        report_session_id=report.report_session_id,
+        report_session_id=(report.report_session_id),
     )
 
     _apply_session_defaults(
@@ -4940,6 +5988,7 @@ async def update_student_report_during_smt_review(
         report,
         reviewer_id=reviewer_id,
         reviewer_role=reviewer_role,
+        review_comments=review_comments,
     )
 
     await db.commit()
@@ -4958,14 +6007,24 @@ async def correct_student_report_as_smt(
     reviewer_role: str = "smt",
 ) -> StudentReport:
     """
-    Correct the main report text during SMT review without changing the
-    recorded author.
+    Correct the principal report wording during SMT review.
+
+    If an approved report is corrected, its approval is removed and it returns
+    to ``ready_for_smt``.
     """
 
     _validate_smt_review_status(
         report,
         action_label="corrected during SMT review",
+        allowed_statuses={
+            REPORT_STATUS_SUBMITTED,
+            REPORT_STATUS_READY_FOR_SMT,
+            REPORT_STATUS_APPROVED,
+        },
     )
+
+    if reviewer_id < 1:
+        raise ValueError("A valid SMT reviewer is required.")
 
     cleaned_report_text = _clean_optional_text(report_text)
 
@@ -5020,6 +6079,11 @@ async def return_student_report_from_smt(
     _validate_smt_review_status(
         report,
         action_label="returned by SMT",
+        allowed_statuses={
+            REPORT_STATUS_SUBMITTED,
+            REPORT_STATUS_READY_FOR_SMT,
+            REPORT_STATUS_APPROVED,
+        },
     )
 
     if reviewer_id < 1:
@@ -5073,8 +6137,8 @@ async def return_student_report_to_tutor_review(
     Return a report from SMT to the tutor-review stage rather than directly to
     the original author.
 
-    This is useful where the report wording is acceptable but tutor or pastoral
-    sections require further work.
+    This is useful where the report wording is acceptable but tutor or
+    pastoral sections require further work.
     """
 
     _validate_smt_review_status(
@@ -5085,6 +6149,9 @@ async def return_student_report_to_tutor_review(
             REPORT_STATUS_APPROVED,
         },
     )
+
+    if reviewer_id < 1:
+        raise ValueError("A valid SMT reviewer is required.")
 
     cleaned_comments = _clean_optional_text(review_comments)
 
@@ -5160,9 +6227,7 @@ async def approve_student_report(
 
     requires_tutor_review = _submission_requires_tutor_review(report)
 
-    if requires_tutor_review and report.status in {
-        REPORT_STATUS_SUBMITTED,
-    }:
+    if requires_tutor_review and report.status == REPORT_STATUS_SUBMITTED:
         raise ValueError("This report requires tutor review before it can be approved.")
 
     now = _utc_now()
@@ -5171,7 +6236,7 @@ async def approve_student_report(
 
     report.approved_at = now
     report.approved_by_id = reviewed_by_id
-    
+
     cleaned_comments = _clean_optional_text(review_comments)
 
     if review_comments is not None:
@@ -5196,6 +6261,105 @@ async def approve_student_report(
     return _normalise_loaded_report(report)
 
 
+async def approve_student_reports(
+    db: AsyncSession,
+    *,
+    reports: Iterable[StudentReport],
+    reviewed_by_id: int,
+    review_comments: str | None = None,
+    reviewer_role: str = "smt",
+) -> list[StudentReport]:
+    """
+    Approve multiple reports in one transaction.
+
+    All reports are validated before the transaction is committed. A failure
+    therefore prevents a partial bulk approval.
+    """
+
+    reports = list(reports)
+
+    if not reports:
+        return []
+
+    if reviewed_by_id < 1:
+        raise ValueError("A valid approving user is required.")
+
+    cleaned_comments = _clean_optional_text(review_comments)
+
+    now = _utc_now()
+
+    for report in reports:
+        _validate_smt_review_status(
+            report,
+            action_label="approved",
+            allowed_statuses={
+                REPORT_STATUS_SUBMITTED,
+                REPORT_STATUS_TUTOR_REVIEW,
+                REPORT_STATUS_READY_FOR_SMT,
+            },
+        )
+
+        report_session = await _validate_report_for_submission(
+            db,
+            report=report,
+        )
+
+        _apply_session_defaults(
+            report,
+            report_session,
+        )
+
+        _validate_report_session_assignment(
+            report,
+            report_session,
+        )
+
+        requires_tutor_review = _submission_requires_tutor_review(report)
+
+        if requires_tutor_review and report.status == REPORT_STATUS_SUBMITTED:
+            raise ValueError(
+                "One or more reports require tutor review before approval."
+            )
+
+    for report in reports:
+        report.status = REPORT_STATUS_APPROVED
+
+        report.approved_at = now
+        report.approved_by_id = reviewed_by_id
+
+        if review_comments is not None:
+            _set_model_value(
+                report,
+                "approval_comments",
+                cleaned_comments,
+            )
+
+        report.reviewed_at = now
+        report.reviewed_by_id = reviewed_by_id
+
+        if review_comments is not None:
+            report.review_comments = cleaned_comments
+
+        _set_edit_audit(
+            report,
+            edited_by_id=reviewed_by_id,
+            edited_role=reviewer_role,
+        )
+
+        _clear_publication_fields(report)
+
+    await db.commit()
+
+    refreshed_reports: list[StudentReport] = []
+
+    for report in reports:
+        await db.refresh(report)
+
+        refreshed_reports.append(_normalise_loaded_report(report))
+
+    return refreshed_reports
+
+
 async def revoke_student_report_approval(
     db: AsyncSession,
     *,
@@ -5215,6 +6379,9 @@ async def revoke_student_report_approval(
 
     if report.status != REPORT_STATUS_APPROVED:
         raise ValueError("Only an approved report can have its approval revoked.")
+
+    if revoked_by_id < 1:
+        raise ValueError("A valid reviewer is required.")
 
     report.status = REPORT_STATUS_READY_FOR_SMT
 
@@ -5255,6 +6422,72 @@ async def revoke_student_report_approval(
     return _normalise_loaded_report(report)
 
 
+async def record_head_of_year_review(
+    db: AsyncSession,
+    *,
+    report: StudentReport,
+    head_of_year_id: int,
+    head_of_year_comment: str | None = None,
+    review_comments: str | None = None,
+) -> StudentReport:
+    """
+    Record a Head-of-Year review without approving or publishing the report.
+
+    Pupil year-group scope must be checked before this function is called.
+    """
+
+    _validate_smt_review_status(
+        report,
+        action_label="reviewed by the Head of Year",
+        allowed_statuses={
+            REPORT_STATUS_SUBMITTED,
+            REPORT_STATUS_TUTOR_REVIEW,
+            REPORT_STATUS_READY_FOR_SMT,
+            REPORT_STATUS_APPROVED,
+        },
+    )
+
+    if head_of_year_id < 1:
+        raise ValueError("A valid Head of Year is required.")
+
+    cleaned_comment = _clean_optional_text(head_of_year_comment)
+
+    if head_of_year_comment is not None:
+        _set_model_value(
+            report,
+            "head_of_year_comment",
+            cleaned_comment,
+        )
+
+    now = _utc_now()
+
+    _set_model_value(
+        report,
+        "head_of_year_reviewed_at",
+        now,
+    )
+
+    _set_model_value(
+        report,
+        "head_of_year_reviewed_by_id",
+        head_of_year_id,
+    )
+
+    _record_smt_review(
+        report,
+        reviewer_id=head_of_year_id,
+        reviewer_role="head_of_year",
+        review_comments=review_comments,
+    )
+
+    _clear_publication_fields(report)
+
+    await db.commit()
+    await db.refresh(report)
+
+    return _normalise_loaded_report(report)
+
+
 async def record_headteacher_review(
     db: AsyncSession,
     *,
@@ -5273,6 +6506,12 @@ async def record_headteacher_review(
     _validate_smt_review_status(
         report,
         action_label="reviewed by the Headteacher",
+        allowed_statuses={
+            REPORT_STATUS_SUBMITTED,
+            REPORT_STATUS_TUTOR_REVIEW,
+            REPORT_STATUS_READY_FOR_SMT,
+            REPORT_STATUS_APPROVED,
+        },
     )
 
     if headteacher_id < 1:
@@ -5331,7 +6570,7 @@ def _validate_publication_status(
     allowed_statuses: set[str] | None = None,
 ) -> None:
     """
-    Validate that a report may be published or unpublished.
+    Validate that a report may enter the requested publication action.
     """
 
     resolved_statuses = (
@@ -5349,14 +6588,19 @@ def _record_publication(
     report: StudentReport,
     *,
     published_by_id: int,
+    published_at: datetime | None = None,
 ) -> None:
     """
-    Record publication metadata.
+    Record publication metadata and lock the report into published status.
     """
 
-    now = _utc_now()
+    if published_by_id < 1:
+        raise ValueError("A valid publishing user is required.")
+
+    now = published_at if published_at is not None else _utc_now()
 
     report.status = REPORT_STATUS_PUBLISHED
+
     report.published = True
     report.published_at = now
     report.published_by_id = published_by_id
@@ -5368,17 +6612,19 @@ def _record_publication(
     )
 
 
-async def publish_student_report(
+async def _validate_report_for_publication(
     db: AsyncSession,
     *,
     report: StudentReport,
-    published_by_id: int,
-) -> StudentReport:
+) -> ReportSession:
     """
-    Publish an approved report.
+    Validate one approved report before it is published.
 
-    Only School Admins and Platform Admins should reach this repository
-    function. Endpoint permission checks remain responsible for authorisation.
+    Publication requires:
+        - an approved workflow status;
+        - a valid reporting session in the same school;
+        - an unlocked reporting session;
+        - a complete and internally valid report.
     """
 
     _validate_publication_status(
@@ -5386,13 +6632,13 @@ async def publish_student_report(
         action_label="published",
     )
 
-    if published_by_id < 1:
-        raise ValueError("A valid publishing user is required.")
+    if report.published:
+        raise ValueError("This report has already been published.")
 
     report_session = await _get_report_session(
         db,
         school_id=report.school_id,
-        report_session_id=report.report_session_id,
+        report_session_id=(report.report_session_id),
     )
 
     if report_session is None:
@@ -5400,11 +6646,37 @@ async def publish_student_report(
 
     if _session_is_locked(report_session):
         raise ValueError(
-            "Reports cannot be published while the reporting session is locked."
+            "Reports cannot be published while the reporting session is " "locked."
         )
 
-    _validate_report_before_save(
-        report,
+    _synchronise_legacy_fields(report)
+
+    _normalise_report_metadata(report)
+
+    _validate_report_before_save(report)
+
+    return report_session
+
+
+async def publish_student_report(
+    db: AsyncSession,
+    *,
+    report: StudentReport,
+    published_by_id: int,
+) -> StudentReport:
+    """
+    Publish one approved report.
+
+    Only an endpoint that has confirmed School Admin, Platform Admin or
+    another configured publisher role should call this function.
+    """
+
+    if published_by_id < 1:
+        raise ValueError("A valid publishing user is required.")
+
+    await _validate_report_for_publication(
+        db,
+        report=report,
     )
 
     _record_publication(
@@ -5425,7 +6697,11 @@ async def publish_student_reports(
     published_by_id: int,
 ) -> list[StudentReport]:
     """
-    Publish multiple approved reports within one transaction.
+    Publish several approved reports in one transaction.
+
+    Every report is validated before any publication changes are applied.
+    This prevents partial publication when one report in the selection is
+    invalid.
     """
 
     reports = list(reports)
@@ -5433,41 +6709,31 @@ async def publish_student_reports(
     if not reports:
         return []
 
+    if published_by_id < 1:
+        raise ValueError("A valid publishing user is required.")
+
+    seen_report_ids: set[int] = set()
+
+    for report in reports:
+        if report.id in seen_report_ids:
+            raise ValueError(
+                "The publication selection contains the same report more " "than once."
+            )
+
+        seen_report_ids.add(report.id)
+
+        await _validate_report_for_publication(
+            db,
+            report=report,
+        )
+
     now = _utc_now()
 
     for report in reports:
-        _validate_publication_status(
+        _record_publication(
             report,
-            action_label="published",
-        )
-
-        report_session = await _get_report_session(
-            db,
-            school_id=report.school_id,
-            report_session_id=report.report_session_id,
-        )
-
-        if report_session is None:
-            raise ValueError("A reporting session could not be found.")
-
-        if _session_is_locked(report_session):
-            raise ValueError(
-                "One or more reports belong to a locked reporting session."
-            )
-
-        _validate_report_before_save(
-            report,
-        )
-
-        report.status = REPORT_STATUS_PUBLISHED
-        report.published = True
-        report.published_at = now
-        report.published_by_id = published_by_id
-
-        _set_edit_audit(
-            report,
-            edited_by_id=published_by_id,
-            edited_role="publisher",
+            published_by_id=published_by_id,
+            published_at=now,
         )
 
     await db.commit()
@@ -5476,9 +6742,215 @@ async def publish_student_reports(
 
     for report in reports:
         await db.refresh(report)
+
         refreshed_reports.append(_normalise_loaded_report(report))
 
     return refreshed_reports
+
+
+async def publish_reports_for_session(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    report_session_id: int,
+    published_by_id: int,
+) -> int:
+    """
+    Publish all approved and currently unpublished reports in one reporting
+    session.
+
+    Returns the number of reports published.
+
+    This function name is retained because it is already imported by the API
+    routes.
+    """
+
+    _validate_positive_identifier(
+        school_id,
+        field_label="School ID",
+    )
+
+    _validate_positive_identifier(
+        report_session_id,
+        field_label="Report session ID",
+    )
+
+    _validate_positive_identifier(
+        published_by_id,
+        field_label="Publishing user ID",
+    )
+
+    report_session = await _get_report_session(
+        db,
+        school_id=school_id,
+        report_session_id=report_session_id,
+    )
+
+    if report_session is None:
+        raise ValueError("The reporting session could not be found.")
+
+    if _session_is_locked(report_session):
+        raise ValueError(
+            "Reports cannot be published while the reporting session is " "locked."
+        )
+
+    result = await db.execute(
+        select(StudentReport).where(
+            StudentReport.school_id == school_id,
+            StudentReport.report_session_id == report_session_id,
+            StudentReport.status == REPORT_STATUS_APPROVED,
+            StudentReport.published.is_(False),
+        )
+    )
+
+    reports = list(result.scalars().all())
+
+    if not reports:
+        return 0
+
+    published_reports = await publish_student_reports(
+        db,
+        reports=reports,
+        published_by_id=published_by_id,
+    )
+
+    return len(published_reports)
+
+
+async def publish_report_session(
+    db: AsyncSession,
+    *,
+    school_id: int,
+    report_session_id: int,
+    published_by_id: int,
+) -> int:
+    """
+    Compatibility alias for session-wide report publication.
+
+    The API currently imports ``publish_reports_for_session``. This alias
+    supports newer service code without changing the existing route.
+    """
+
+    return await publish_reports_for_session(
+        db,
+        school_id=school_id,
+        report_session_id=report_session_id,
+        published_by_id=published_by_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Unpublishing
+# ---------------------------------------------------------------------------
+
+
+UNPUBLISH_RETURN_STATUSES: set[str] = {
+    REPORT_STATUS_DRAFT,
+    REPORT_STATUS_READY_FOR_SMT,
+    REPORT_STATUS_APPROVED,
+}
+
+
+def _validate_unpublish_return_status(
+    return_status: str,
+) -> str:
+    normalised_status = _normalise_code(
+        return_status,
+        fallback=REPORT_STATUS_DRAFT,
+    )
+
+    if normalised_status not in UNPUBLISH_RETURN_STATUSES:
+        raise ValueError(
+            "An unpublished report can only return to draft, "
+            "ready_for_smt or approved status."
+        )
+
+    return normalised_status
+
+
+def _record_unpublication_audit(
+    report: StudentReport,
+    *,
+    unpublished_by_id: int,
+    reason: str | None,
+) -> None:
+    """
+    Store optional unpublication audit fields when the model exposes them.
+    """
+
+    now = _utc_now()
+
+    _set_model_value(
+        report,
+        "unpublished_at",
+        now,
+    )
+
+    _set_model_value(
+        report,
+        "unpublished_by_id",
+        unpublished_by_id,
+    )
+
+    _set_model_value(
+        report,
+        "unpublish_reason",
+        _clean_optional_text(reason),
+    )
+
+    _set_model_value(
+        report,
+        "unpublication_reason",
+        _clean_optional_text(reason),
+    )
+
+
+def _prepare_unpublished_report(
+    report: StudentReport,
+    *,
+    unpublished_by_id: int,
+    reason: str | None,
+    return_status: str,
+) -> None:
+    """
+    Remove publication metadata and restore the selected editable workflow
+    state.
+    """
+
+    resolved_return_status = _validate_unpublish_return_status(return_status)
+
+    _record_unpublication_audit(
+        report,
+        unpublished_by_id=unpublished_by_id,
+        reason=reason,
+    )
+
+    _clear_publication_fields(report)
+
+    report.status = resolved_return_status
+
+    if resolved_return_status == REPORT_STATUS_DRAFT:
+        _clear_submission_fields(report)
+
+        _clear_all_review_fields(report)
+
+        _clear_approval_fields(report)
+
+    elif resolved_return_status == REPORT_STATUS_READY_FOR_SMT:
+        _clear_approval_fields(report)
+
+    elif resolved_return_status == REPORT_STATUS_APPROVED:
+        if report.approved_at is None or report.approved_by_id is None:
+            raise ValueError(
+                "A report cannot return to approved status because its "
+                "approval metadata is incomplete."
+            )
+
+    _set_edit_audit(
+        report,
+        edited_by_id=unpublished_by_id,
+        edited_role="unpublisher",
+    )
 
 
 async def unpublish_student_report(
@@ -5490,57 +6962,26 @@ async def unpublish_student_report(
     return_status: str = REPORT_STATUS_DRAFT,
 ) -> StudentReport:
     """
-    Unpublish a report.
+    Unpublish one report.
 
-    By agreement this returns the report to Draft so that further corrections
-    may be made before repeating the approval workflow.
+    The established default is to return the report to Draft so corrections
+    can be made before it repeats the submission, review, approval and
+    publication workflow.
     """
 
     if not report.published and report.status != REPORT_STATUS_PUBLISHED:
         raise ValueError("Only published reports can be unpublished.")
 
-    allowed_return_statuses = {
-        REPORT_STATUS_DRAFT,
-        REPORT_STATUS_READY_FOR_SMT,
-        REPORT_STATUS_APPROVED,
-    }
+    if unpublished_by_id < 1:
+        raise ValueError("A valid unpublishing user is required.")
 
-    if return_status not in allowed_return_statuses:
-        raise ValueError("Unsupported return status after unpublishing.")
+    cleaned_reason = _clean_optional_text(reason)
 
-    report.status = return_status
-    report.published = False
-
-    _set_model_value(
+    _prepare_unpublished_report(
         report,
-        "unpublished_at",
-        _utc_now(),
-    )
-
-    _set_model_value(
-        report,
-        "unpublished_by_id",
-        unpublished_by_id,
-    )
-
-    _set_model_value(
-        report,
-        "unpublished_reason",
-        _clean_optional_text(reason),
-    )
-
-    report.published_at = None
-    report.published_by_id = None
-
-    if return_status != REPORT_STATUS_APPROVED:
-        _clear_approval_fields(
-            report,
-        )
-
-    _set_edit_audit(
-        report,
-        edited_by_id=unpublished_by_id,
-        edited_role="unpublisher",
+        unpublished_by_id=unpublished_by_id,
+        reason=cleaned_reason,
+        return_status=return_status,
     )
 
     await db.commit()
@@ -5549,17 +6990,18 @@ async def unpublish_student_report(
     return _normalise_loaded_report(report)
 
 
-async def bulk_unpublish_student_reports(
+async def unpublish_student_reports(
     db: AsyncSession,
     *,
     reports: Iterable[StudentReport],
     unpublished_by_id: int,
     reason: str | None = None,
+    return_status: str = REPORT_STATUS_DRAFT,
 ) -> list[StudentReport]:
     """
-    Unpublish multiple reports.
+    Unpublish several reports in one transaction.
 
-    All reports are returned to Draft in accordance with the agreed workflow.
+    All selected reports are validated before any changes are committed.
     """
 
     reports = list(reports)
@@ -5567,43 +7009,40 @@ async def bulk_unpublish_student_reports(
     if not reports:
         return []
 
-    now = _utc_now()
+    if unpublished_by_id < 1:
+        raise ValueError("A valid unpublishing user is required.")
+
+    resolved_return_status = _validate_unpublish_return_status(return_status)
+
+    cleaned_reason = _clean_optional_text(reason)
+
+    seen_report_ids: set[int] = set()
 
     for report in reports:
+        if report.id in seen_report_ids:
+            raise ValueError(
+                "The unpublish selection contains the same report more " "than once."
+            )
+
+        seen_report_ids.add(report.id)
+
         if not report.published and report.status != REPORT_STATUS_PUBLISHED:
-            raise ValueError("All selected reports must already be published.")
+            raise ValueError("One or more selected reports are not published.")
 
-        report.status = REPORT_STATUS_DRAFT
-        report.published = False
-        report.published_at = None
-        report.published_by_id = None
+        if resolved_return_status == REPORT_STATUS_APPROVED and (
+            report.approved_at is None or report.approved_by_id is None
+        ):
+            raise ValueError(
+                "One or more reports cannot return to approved status "
+                "because approval metadata is incomplete."
+            )
 
-        _clear_approval_fields(
+    for report in reports:
+        _prepare_unpublished_report(
             report,
-        )
-
-        _set_model_value(
-            report,
-            "unpublished_at",
-            now,
-        )
-
-        _set_model_value(
-            report,
-            "unpublished_by_id",
-            unpublished_by_id,
-        )
-
-        _set_model_value(
-            report,
-            "unpublished_reason",
-            _clean_optional_text(reason),
-        )
-
-        _set_edit_audit(
-            report,
-            edited_by_id=unpublished_by_id,
-            edited_role="unpublisher",
+            unpublished_by_id=unpublished_by_id,
+            reason=cleaned_reason,
+            return_status=resolved_return_status,
         )
 
     await db.commit()
@@ -5612,99 +7051,13 @@ async def bulk_unpublish_student_reports(
 
     for report in reports:
         await db.refresh(report)
+
         refreshed_reports.append(_normalise_loaded_report(report))
 
     return refreshed_reports
-
-
-async def mark_reporting_session_published(
-    db: AsyncSession,
-    *,
-    report_session: ReportSession,
-    published_by_id: int,
-) -> ReportSession:
-    """
-    Mark an entire reporting session as published.
-
-    This does not automatically publish individual reports. It records the
-    reporting-session publication event.
-    """
-
-    _set_model_value(
-        report_session,
-        "published",
-        True,
-    )
-
-    _set_model_value(
-        report_session,
-        "published_at",
-        _utc_now(),
-    )
-
-    _set_model_value(
-        report_session,
-        "published_by_id",
-        published_by_id,
-    )
-
-    await db.commit()
-    await db.refresh(report_session)
-
-    return report_session
-
-
-async def reopen_reporting_session(
-    db: AsyncSession,
-    *,
-    report_session: ReportSession,
-    reopened_by_id: int,
-) -> ReportSession:
-    """
-    Reopen a reporting session after publication.
-
-    Existing published reports remain published. This simply allows further
-    editing and publishing activity.
-    """
-
-    _set_model_value(
-        report_session,
-        "published",
-        False,
-    )
-
-    _set_model_value(
-        report_session,
-        "published_at",
-        None,
-    )
-
-    _set_model_value(
-        report_session,
-        "published_by_id",
-        None,
-    )
-
-    _set_model_value(
-        report_session,
-        "reopened_at",
-        _utc_now(),
-    )
-
-    _set_model_value(
-        report_session,
-        "reopened_by_id",
-        reopened_by_id,
-    )
-
-    await db.commit()
-    await db.refresh(report_session)
-
-    return report_session
 # ---------------------------------------------------------------------------
 # Delete
 # ---------------------------------------------------------------------------
-
 
 DELETABLE_REPORT_STATUSES: set[str] = {
     REPORT_STATUS_DRAFT,
@@ -5733,7 +7086,7 @@ def _validate_report_can_be_deleted(
 
     if not allow_non_draft and report.status not in DELETABLE_REPORT_STATUSES:
         raise ValueError(
-            "Only draft reports or reports returned for correction can be " "deleted."
+            "Only draft reports or reports returned for correction can be deleted."
         )
 
 
@@ -5748,8 +7101,7 @@ async def delete_student_report(
     Permanently delete one report.
 
     Permission and pupil-scope checks remain the responsibility of the
-    endpoint. This repository function enforces publication and workflow
-    restrictions.
+    endpoint. This repository function enforces workflow restrictions.
     """
 
     _validate_report_can_be_deleted(
@@ -5776,9 +7128,10 @@ async def delete_student_reports(
     allow_non_draft: bool = False,
 ) -> int:
     """
-    Permanently delete several reports within one transaction.
+    Permanently delete multiple reports.
 
-    Validation is completed for every report before any deletion occurs.
+    Validation is completed before any deletion occurs so the operation
+    remains transactional.
     """
 
     resolved_reports = list(reports)
@@ -5839,350 +7192,19 @@ async def delete_reports_for_reporting_session(
 
 
 # ---------------------------------------------------------------------------
-# Export and download queries
-# ---------------------------------------------------------------------------
-
-
-EXPORT_STATUS_DRAFT = "draft"
-EXPORT_STATUS_PUBLISHED = "published"
-EXPORT_STATUS_ALL = "all"
-
-ALL_EXPORT_STATUSES: set[str] = {
-    EXPORT_STATUS_DRAFT,
-    EXPORT_STATUS_PUBLISHED,
-    EXPORT_STATUS_ALL,
-}
-
-
-def _apply_export_status_filter(
-    statement,
-    *,
-    export_status: str,
-):
-    """
-    Apply the requested draft, published or all export filter.
-    """
-
-    normalised_status = _normalise_code(
-        export_status,
-        fallback=EXPORT_STATUS_PUBLISHED,
-    )
-
-    if normalised_status not in ALL_EXPORT_STATUSES:
-        raise ValueError("Export status must be 'draft', 'published' or 'all'.")
-
-    if normalised_status == EXPORT_STATUS_PUBLISHED:
-        return statement.where(
-            StudentReport.status == REPORT_STATUS_PUBLISHED,
-            StudentReport.published.is_(True),
-        )
-
-    if normalised_status == EXPORT_STATUS_DRAFT:
-        return statement.where(
-            StudentReport.status != REPORT_STATUS_PUBLISHED,
-            StudentReport.published.is_(False),
-        )
-
-    return statement
-
-
-async def list_student_reports_for_export(
-    db: AsyncSession,
-    *,
-    school_id: int,
-    report_session_id: int | None = None,
-    student_id: int | None = None,
-    teacher_id: int | None = None,
-    report_type_id: int | None = None,
-    report_type_code: str | None = None,
-    report_kind: str | None = None,
-    export_status: str = EXPORT_STATUS_PUBLISHED,
-    include_in_final_report_only: bool = True,
-    limit: int = 5000,
-    offset: int = 0,
-) -> list[StudentReport]:
-    """
-    Return reports for PDF or ZIP export.
-
-    This supports draft, published and combined exports. Endpoint permission
-    checks determine which users may request each export mode.
-    """
-
-    _validate_pagination(
-        limit=limit,
-        offset=offset,
-    )
-
-    statement = select(StudentReport).where(
-        StudentReport.school_id == school_id,
-    )
-
-    statement = _apply_export_status_filter(
-        statement,
-        export_status=export_status,
-    )
-
-    if report_session_id is not None:
-        statement = statement.where(
-            StudentReport.report_session_id == report_session_id,
-        )
-
-    if student_id is not None:
-        statement = statement.where(
-            StudentReport.student_id == student_id,
-        )
-
-    if teacher_id is not None:
-        statement = statement.where(
-            StudentReport.teacher_id == teacher_id,
-        )
-
-    if include_in_final_report_only and hasattr(
-        StudentReport,
-        "include_in_final_report",
-    ):
-        statement = statement.where(
-            StudentReport.include_in_final_report.is_(True),
-        )
-
-    statement = _apply_report_type_filters(
-        statement,
-        report_type_id=report_type_id,
-        report_type_code=report_type_code,
-        report_kind=report_kind,
-    )
-
-    statement = (
-        statement.order_by(
-            StudentReport.student_id.asc(),
-            StudentReport.report_session_id.asc(),
-            (
-                StudentReport.report_type_id.asc()
-                if hasattr(
-                    StudentReport,
-                    "report_type_id",
-                )
-                else StudentReport.id.asc()
-            ),
-            StudentReport.created_at.asc(),
-            StudentReport.id.asc(),
-        )
-        .offset(offset)
-        .limit(limit)
-    )
-
-    result = await db.execute(statement)
-
-    return _normalise_loaded_reports(result.scalars().all())
-
-
-async def list_reports_for_student_pdf(
-    db: AsyncSession,
-    *,
-    school_id: int,
-    student_id: int,
-    report_session_id: int,
-    export_status: str = EXPORT_STATUS_PUBLISHED,
-    include_in_final_report_only: bool = True,
-) -> list[StudentReport]:
-    """
-    Return all ordered sections for one pupil's report PDF.
-    """
-
-    return await list_student_reports_for_export(
-        db,
-        school_id=school_id,
-        student_id=student_id,
-        report_session_id=report_session_id,
-        export_status=export_status,
-        include_in_final_report_only=include_in_final_report_only,
-        limit=5000,
-        offset=0,
-    )
-
-
-async def list_reports_for_session_export(
-    db: AsyncSession,
-    *,
-    school_id: int,
-    report_session_id: int,
-    export_status: str = EXPORT_STATUS_PUBLISHED,
-    report_type_id: int | None = None,
-    report_type_code: str | None = None,
-    report_kind: str | None = None,
-) -> list[StudentReport]:
-    """
-    Return all reports in a session for administrative ZIP export.
-    """
-
-    return await list_student_reports_for_export(
-        db,
-        school_id=school_id,
-        report_session_id=report_session_id,
-        report_type_id=report_type_id,
-        report_type_code=report_type_code,
-        report_kind=report_kind,
-        export_status=export_status,
-        include_in_final_report_only=True,
-        limit=5000,
-        offset=0,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Parent and pupil published-report access
-# ---------------------------------------------------------------------------
-
-
-async def list_published_reports_for_student(
-    db: AsyncSession,
-    *,
-    school_id: int,
-    student_id: int,
-    report_session_id: int | None = None,
-    limit: int = 500,
-    offset: int = 0,
-) -> list[StudentReport]:
-    """
-    Return published reports visible to a pupil or linked parent.
-    """
-
-    _validate_pagination(
-        limit=limit,
-        offset=offset,
-    )
-
-    statement = select(StudentReport).where(
-        StudentReport.school_id == school_id,
-        StudentReport.student_id == student_id,
-        StudentReport.status == REPORT_STATUS_PUBLISHED,
-        StudentReport.published.is_(True),
-    )
-
-    if report_session_id is not None:
-        statement = statement.where(
-            StudentReport.report_session_id == report_session_id,
-        )
-
-    if hasattr(
-        StudentReport,
-        "include_in_final_report",
-    ):
-        statement = statement.where(
-            StudentReport.include_in_final_report.is_(True),
-        )
-
-    statement = (
-        statement.order_by(
-            StudentReport.published_at.desc(),
-            StudentReport.created_at.asc(),
-            StudentReport.id.asc(),
-        )
-        .offset(offset)
-        .limit(limit)
-    )
-
-    result = await db.execute(statement)
-
-    return _normalise_loaded_reports(result.scalars().all())
-
-
-async def get_published_student_report(
-    db: AsyncSession,
-    *,
-    school_id: int,
-    student_id: int,
-    report_id: int,
-) -> StudentReport | None:
-    """
-    Return one published report for a pupil-facing or parent-facing endpoint.
-    """
-
-    result = await db.execute(
-        select(StudentReport).where(
-            StudentReport.id == report_id,
-            StudentReport.school_id == school_id,
-            StudentReport.student_id == student_id,
-            StudentReport.status == REPORT_STATUS_PUBLISHED,
-            StudentReport.published.is_(True),
-        ),
-    )
-
-    report = result.scalar_one_or_none()
-
-    if report is None:
-        return None
-
-    return _normalise_loaded_report(report)
-
-
-async def publish_reports_for_session(
-    db: AsyncSession,
-    *,
-    school_id: int,
-    report_session_id: int,
-    published_by_id: int,
-) -> int:
-    """
-    Publish all approved reports in one reporting session.
-
-    Returns the number of reports published.
-    """
-
-    if published_by_id < 1:
-        raise ValueError("A valid publishing user is required.")
-
-    report_session = await _get_report_session(
-        db,
-        school_id=school_id,
-        report_session_id=report_session_id,
-    )
-
-    if report_session is None:
-        raise ValueError("The reporting session could not be found.")
-
-    if _session_is_locked(report_session):
-        raise ValueError(
-            "Reports cannot be published while the reporting session is locked."
-        )
-
-    result = await db.execute(
-        select(StudentReport).where(
-            StudentReport.school_id == school_id,
-            StudentReport.report_session_id == report_session_id,
-            StudentReport.status == REPORT_STATUS_APPROVED,
-            StudentReport.published.is_(False),
-        )
-    )
-
-    reports = list(result.scalars().all())
-
-    if not reports:
-        return 0
-
-    await publish_student_reports(
-        db,
-        reports=reports,
-        published_by_id=published_by_id,
-    )
-
-    return len(reports)
-
-
-# ---------------------------------------------------------------------------
-# Compatibility aliases
+# Backward-compatible aliases
 # ---------------------------------------------------------------------------
 
 
 async def create_report(
     db: AsyncSession,
     *,
-    payload: StudentReportCreate,
     school_id: int,
     teacher_id: int,
+    payload: StudentReportCreate,
 ) -> StudentReport:
     """
-    Backward-compatible alias for older service and test imports.
+    Backward-compatible alias for older services and tests.
     """
 
     return await create_student_report(
@@ -6200,7 +7222,7 @@ async def get_report(
     school_id: int,
 ) -> StudentReport | None:
     """
-    Backward-compatible alias for the school-scoped report lookup.
+    Backward-compatible alias for school-scoped report lookup.
     """
 
     return await get_student_report(
@@ -6235,7 +7257,7 @@ async def delete_report(
     report: StudentReport,
 ) -> None:
     """
-    Backward-compatible alias for draft report deletion.
+    Backward-compatible alias for report deletion.
     """
 
     await delete_student_report(
@@ -6252,7 +7274,7 @@ async def return_student_report(
     review_comments: str,
 ) -> StudentReport:
     """
-    Backward-compatible SMT return action used by the API endpoint.
+    Backward-compatible SMT return action retained for existing endpoints.
     """
 
     return await return_student_report_from_smt(
