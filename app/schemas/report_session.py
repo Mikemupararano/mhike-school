@@ -43,8 +43,13 @@ class ReportSessionBase(BaseModel):
         max_length=20,
     )
 
-    # Retained temporarily for compatibility with the existing
-    # database, frontend and API clients.
+    year_group: str = Field(
+        min_length=1,
+        max_length=50,
+    )
+
+    # Retained temporarily for compatibility with the existing database,
+    # frontend and API clients.
     term: str | None = Field(
         default=None,
         max_length=50,
@@ -163,12 +168,14 @@ class ReportSessionBase(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_required_fields_are_included(self) -> "ReportSessionBase":
+    def validate_required_fields_are_included(
+        self,
+    ) -> "ReportSessionBase":
         """
         Prevent creation of an internally contradictory session.
 
-        A field cannot be required at submission/publication time if the
-        same session does not include that field in the report form.
+        A field cannot be required at submission or publication time if
+        the same session does not include that field in the report form.
         """
 
         required_to_included = {
@@ -178,18 +185,18 @@ class ReportSessionBase(BaseModel):
             "require_target_grade": "include_target_grade",
             "require_exam_mark": "include_exam_mark",
             "require_exam_grade": "include_exam_grade",
-            "require_gcse_predicted_grade": "include_gcse_predicted_grade",
-            "require_ucas_predicted_grade": "include_ucas_predicted_grade",
+            "require_gcse_predicted_grade": ("include_gcse_predicted_grade"),
+            "require_ucas_predicted_grade": ("include_ucas_predicted_grade"),
             "require_next_steps": "include_next_steps",
             "require_tutor_comment": "include_tutor_comment",
-            "require_head_of_year_comment": "include_head_of_year_comment",
-            "require_headteacher_comment": "include_headteacher_comment",
+            "require_head_of_year_comment": ("include_head_of_year_comment"),
+            "require_headteacher_comment": ("include_headteacher_comment"),
         }
 
         conflicts = [
             required_name
             for required_name, included_name in required_to_included.items()
-            if getattr(self, required_name) and not getattr(self, included_name)
+            if (getattr(self, required_name) and not getattr(self, included_name))
         ]
 
         if conflicts:
@@ -211,8 +218,8 @@ class ReportSessionUpdate(BaseModel):
     Every field is optional so PATCH requests only change fields that
     were explicitly supplied.
 
-    Cross-field consistency should be checked by the service or endpoint
-    after merging this payload with the existing database record.
+    Cross-field consistency must be checked after this payload is merged
+    with the existing database record.
     """
 
     model_config = ConfigDict(
@@ -234,6 +241,12 @@ class ReportSessionUpdate(BaseModel):
         default=None,
         min_length=1,
         max_length=20,
+    )
+
+    year_group: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
     )
 
     # Retained temporarily for backward compatibility.
@@ -341,11 +354,67 @@ class ReportSessionUpdate(BaseModel):
     )
 
 
-class ReportSessionRead(ReportSessionBase):
+class ReportSessionStatistics(BaseModel):
+    """
+    Computed report counts for one reporting checkpoint.
+
+    These values are not stored on the report_sessions table. They are
+    calculated from StudentReport records by the repository or service.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    total_reports: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    draft_count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    submitted_count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    tutor_review_count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    ready_for_smt_count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    approved_count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    published_count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+
+class ReportSessionRead(
+    ReportSessionBase,
+    ReportSessionStatistics,
+):
     """Reporting checkpoint returned by the API."""
 
-    id: int = Field(ge=1)
-    school_id: int = Field(ge=1)
+    id: int = Field(
+        ge=1,
+    )
+
+    school_id: int = Field(
+        ge=1,
+    )
 
     published_at: datetime | None = None
 

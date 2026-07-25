@@ -79,3 +79,6 @@ coverage/
 .cache/
 
 uploads/
+
+# Temporary repository backups
+app/repositories/student_reports.backup.py

@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
 )
@@ -20,8 +21,9 @@ class ReportSession(Base):
     """
     Defines one reporting checkpoint for a school.
 
-    A reporting session controls the fields collected once from teachers and
-    the documents produced from that shared data.
+    A reporting session belongs to a school, academic year and year group.
+    It controls the fields collected from teachers and the documents
+    produced from the shared StudentReport data.
 
     Supported output modes:
 
@@ -32,20 +34,20 @@ class ReportSession(Base):
             Produce a full written report only.
 
         both
-            Produce both the grade card and the full written report from the
+            Produce both the grade card and full written report from the
             same StudentReport data.
 
     Teachers may always type the final report manually. Where report
-    generation is enabled, teacher notes or prompts may be used to create an
-    editable suggestion, but generated text must never be compulsory.
+    generation is enabled, teacher notes or prompts may be used to create
+    an editable suggestion, but generated text must never be compulsory.
 
-    Workflow stages indicate progress but must not create a dependency on one
-    named member of staff. Authorised tutors, Heads of Year, the Headmaster,
-    SMT, School Admin and Platform Admin may continue unpublished reports when
-    an earlier contributor is unavailable.
+    Workflow stages indicate progress but must not create a dependency on
+    one named member of staff. Authorised tutors, Heads of Year, the
+    Headmaster, SMT, School Admin and Platform Admin may continue
+    unpublished reports when an earlier contributor is unavailable.
 
-    Existing fields such as ``term`` are retained for backward compatibility.
-    New code should primarily use ``checkpoint_name``.
+    Existing fields such as ``term`` are retained for backward
+    compatibility. New code should primarily use ``checkpoint_name``.
     """
 
     __tablename__ = "report_sessions"
@@ -59,16 +61,37 @@ class ReportSession(Base):
             "display_order >= 1",
             name="ck_report_sessions_display_order_positive",
         ),
+        Index(
+            "ix_report_sessions_school_academic_year",
+            "school_id",
+            "academic_year",
+        ),
+        Index(
+            "ix_report_sessions_school_year_group",
+            "school_id",
+            "year_group",
+        ),
+        Index(
+            "ix_report_sessions_school_year_group_active",
+            "school_id",
+            "year_group",
+            "active",
+        ),
     )
 
     # ------------------------------------------------------------------
     # Identity and ownership
     # ------------------------------------------------------------------
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+    )
 
     school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey(
+            "schools.id",
+            ondelete="CASCADE",
+        ),
         index=True,
         nullable=False,
     )
@@ -84,6 +107,17 @@ class ReportSession(Base):
 
     academic_year: Mapped[str] = mapped_column(
         String(20),
+        index=True,
+        nullable=False,
+    )
+
+    # Dedicated cohort identifier, for example:
+    # Year 7, Year 10, Year 13, Sixth Form or Reception.
+    #
+    # This should be used for filtering and reporting rather than
+    # inferring the year group from the session title.
+    year_group: Mapped[str] = mapped_column(
+        String(50),
         index=True,
         nullable=False,
     )
@@ -161,7 +195,6 @@ class ReportSession(Base):
     # Branding and document-header configuration
     # ------------------------------------------------------------------
 
-    # School name should normally be displayed on every exported report.
     include_school_name: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
@@ -169,8 +202,6 @@ class ReportSession(Base):
         nullable=False,
     )
 
-    # School logos are optional because some schools may not have uploaded
-    # one or may prefer text-only reports.
     include_school_logo: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
@@ -203,7 +234,7 @@ class ReportSession(Base):
         nullable=False,
     )
 
-    # Controls whether the editable teacher-written/generated report
+    # Controls whether the editable teacher-written or generated report
     # narrative is included.
     include_student_comment: Mapped[bool] = mapped_column(
         Boolean,
@@ -226,8 +257,6 @@ class ReportSession(Base):
         nullable=False,
     )
 
-    # Standard grade-panel fields. These default to enabled because they
-    # appear at the top of the full report and form the core grade card.
     include_effort_grade: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
@@ -248,7 +277,6 @@ class ReportSession(Base):
         server_default="true",
         nullable=False,
     )
-
     include_gcse_predicted_grade: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -291,7 +319,6 @@ class ReportSession(Base):
         nullable=False,
     )
 
-    # Optional future-facing whole-school indicators.
     include_attendance: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -307,11 +334,12 @@ class ReportSession(Base):
     )
 
     # ------------------------------------------------------------------
-    # Submission/publication validation configuration
+    # Submission / publication validation
     # ------------------------------------------------------------------
 
-    # Drafts may always be saved incomplete. These flags should be checked
-    # only when moving reports through submission, approval or publication.
+    # Drafts may always be saved incomplete. These settings are enforced
+    # only when reports move through workflow stages.
+
     require_student_comment: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
@@ -400,9 +428,6 @@ class ReportSession(Base):
     # Workflow editing policy
     # ------------------------------------------------------------------
 
-    # When enabled, the assigned teacher may continue correcting an
-    # unpublished report after submission. Higher-authority reviewer roles
-    # remain able to edit according to their permissions regardless.
     allow_teacher_edit_after_submission: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -410,9 +435,6 @@ class ReportSession(Base):
         nullable=False,
     )
 
-    # When enabled, SMT/School Admin/Platform Admin may make final corrections
-    # after approval but before publication without first returning the report
-    # to an earlier workflow state.
     allow_smt_edit_after_approval: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
@@ -421,11 +443,9 @@ class ReportSession(Base):
     )
 
     # ------------------------------------------------------------------
-    # Cumulative report display configuration
+    # Cumulative report configuration
     # ------------------------------------------------------------------
 
-    # Include grades from earlier published checkpoints in the same
-    # academic year.
     show_previous_grades: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -433,7 +453,6 @@ class ReportSession(Base):
         nullable=False,
     )
 
-    # Include tutor comments from earlier checkpoints.
     show_previous_tutor_comments: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -441,8 +460,6 @@ class ReportSession(Base):
         nullable=False,
     )
 
-    # Display calculated progress indicators where the school chooses
-    # to use them.
     show_progress_journey: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -451,19 +468,20 @@ class ReportSession(Base):
     )
 
     # ------------------------------------------------------------------
-    # Configuration-copy support
+    # Configuration copy support
     # ------------------------------------------------------------------
 
-    # Records the source session when an administrator copies settings
-    # from an earlier reporting checkpoint. Report data itself is not copied.
     copied_from_session_id: Mapped[int | None] = mapped_column(
-        ForeignKey("report_sessions.id", ondelete="SET NULL"),
+        ForeignKey(
+            "report_sessions.id",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
 
     # ------------------------------------------------------------------
-    # Audit timestamps
+    # Audit fields
     # ------------------------------------------------------------------
 
     created_at: Mapped[datetime] = mapped_column(
@@ -478,7 +496,6 @@ class ReportSession(Base):
         onupdate=func.now(),
         nullable=False,
     )
-
     # ------------------------------------------------------------------
     # Relationships
     # ------------------------------------------------------------------
@@ -495,13 +512,54 @@ class ReportSession(Base):
         lazy="selectin",
     )
 
+    # ------------------------------------------------------------------
+    # Convenience properties
+    # ------------------------------------------------------------------
+
+    @property
+    def checkpoint_label(self) -> str:
+        """
+        Return the preferred human-readable reporting checkpoint name.
+
+        ``checkpoint_name`` is preferred for new records, while ``term``
+        remains available for older records created before checkpoint names
+        were introduced.
+        """
+
+        if self.checkpoint_name:
+            return self.checkpoint_name
+
+        if self.term:
+            return self.term
+
+        return self.title
+
+    @property
+    def produces_grade_card(self) -> bool:
+        """Return whether this session produces a grade-card document."""
+
+        return self.reporting_mode in {
+            "grade_card",
+            "both",
+        }
+
+    @property
+    def produces_full_report(self) -> bool:
+        """Return whether this session produces a full written report."""
+
+        return self.reporting_mode in {
+            "full_report",
+            "both",
+        }
+
     def __repr__(self) -> str:
         return (
-            f"<ReportSession "
+            "<ReportSession "
             f"id={self.id} "
             f"school_id={self.school_id} "
             f"title={self.title!r} "
             f"academic_year={self.academic_year!r} "
+            f"year_group={self.year_group!r} "
             f"checkpoint_name={self.checkpoint_name!r} "
             f"reporting_mode={self.reporting_mode!r} "
             f"active={self.active}>"

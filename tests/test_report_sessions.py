@@ -15,6 +15,7 @@ async def test_school_admin_can_create_report_session(
     payload = {
         "title": "Year 10 Autumn Reports",
         "academic_year": "2026/27",
+        "year_group": "Year 10",
         "term": "Autumn",
         "active": True,
         "include_work_covered": True,
@@ -40,6 +41,7 @@ async def test_school_admin_can_create_report_session(
 
     assert data["title"] == "Year 10 Autumn Reports"
     assert data["academic_year"] == "2026/27"
+    assert data["year_group"] == "Year 10"
     assert data["term"] == "Autumn"
     assert data["checkpoint_name"] == "Autumn"
     assert data["school_id"] == school_admin_user.school_id
@@ -64,6 +66,7 @@ async def test_teacher_cannot_create_report_session(
     payload = {
         "title": "Teacher Attempt",
         "academic_year": "2026/27",
+        "year_group": "Year 10",
         "term": "Spring",
         "active": True,
     }
@@ -88,6 +91,7 @@ async def test_school_staff_can_list_report_sessions(
         school_id=teacher_user.school_id,
         title="Year 9 Spring Reports",
         academic_year="2026/27",
+        year_group="Year 10",
         term="Spring",
         checkpoint_name="Spring",
         active=True,
@@ -118,6 +122,7 @@ async def test_school_staff_can_list_report_sessions(
     assert len(data) == 1
     assert data[0]["id"] == report_session.id
     assert data[0]["title"] == "Year 9 Spring Reports"
+    assert data[0]["year_group"] == "Year 10"
     assert data[0]["school_id"] == teacher_user.school_id
 
 
@@ -132,6 +137,7 @@ async def test_school_admin_can_update_report_session(
         school_id=school_admin_user.school_id,
         title="Original Report Session",
         academic_year="2026/27",
+        year_group="Year 10",
         term="Autumn",
         checkpoint_name="Autumn",
         active=True,
@@ -185,6 +191,7 @@ async def test_teacher_cannot_update_report_session(
         school_id=teacher_user.school_id,
         title="Protected Report Session",
         academic_year="2026/27",
+        year_group="Year 10",
         term="Summer",
         checkpoint_name="Summer",
         active=True,
@@ -225,6 +232,7 @@ async def test_school_admin_can_delete_report_session(
         school_id=school_admin_user.school_id,
         title="Delete Report Session",
         academic_year="2026/27",
+        year_group="Year 10",
         term="Summer",
         checkpoint_name="Summer",
         active=True,
@@ -268,6 +276,7 @@ async def test_teacher_cannot_delete_report_session(
         school_id=teacher_user.school_id,
         title="Teacher Cannot Delete",
         academic_year="2026/27",
+        year_group="Year 10",
         term="Summer",
         checkpoint_name="Summer",
         active=True,
@@ -324,6 +333,7 @@ async def test_report_session_school_isolation(
         school_id=other_school.id,
         title="Other School Report Session",
         academic_year="2026/27",
+        year_group="Year 10",
         term="Autumn",
         checkpoint_name="Autumn",
         active=True,

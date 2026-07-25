@@ -9,7 +9,6 @@ from app.models.class_group import ClassGroup
 from app.models.report_group_content import ReportGroupContent
 from app.models.report_session import ReportSession
 
-
 BASE_URL = "/api/v1/report-group-contents"
 
 
@@ -70,6 +69,7 @@ async def _create_report_session(
     *,
     school_id: int,
     title: str = "Autumn Reports",
+    year_group: str = "Year 10",
 ) -> ReportSession:
     """
     Create a valid reporting session for shared-content endpoint tests.
@@ -82,6 +82,7 @@ async def _create_report_session(
         "school_id": school_id,
         "title": title,
         "academic_year": "2026/27",
+        "year_group": year_group,
         "term": "Autumn",
         "checkpoint_name": "Autumn Reports",
         "reporting_mode": "full_report",
@@ -259,9 +260,7 @@ async def test_upsert_updates_existing_scope_without_creating_duplicate(
     second_body = second_response.json()
 
     assert second_body["id"] == first_body["id"]
-    assert second_body["work_covered"] == (
-        "Forces, motion, momentum and energy."
-    )
+    assert second_body["work_covered"] == ("Forces, motion, momentum and energy.")
 
     count_result = await db_session.execute(
         select(func.count(ReportGroupContent.id)).where(
