@@ -237,7 +237,12 @@ export const schoolAdminSidebar: SidebarSection[] = [
         title: "Reports",
         items: [
             {
-                label: "Reports",
+                label: "Report Sessions",
+                href: "/school-admin/report-sessions",
+                icon: CalendarDays,
+            },
+            {
+                label: "Report Review",
                 href: "/school-admin/reports",
                 icon: FileText,
             },

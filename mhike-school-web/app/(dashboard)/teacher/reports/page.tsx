@@ -40,6 +40,10 @@ import {
     type StudentReport,
     type StudentReportCreateInput,
 } from "@/lib/services/studentReports";
+import {
+    getReportGroupContent,
+    saveReportGroupContent,
+} from "@/lib/services/reportGroupContents";
 
 type SaveAction = "draft" | "next" | "close" | "submit";
 
@@ -216,6 +220,8 @@ export default function TeacherReportsPage() {
     const [saving, setSaving] = useState(false);
     const [checkingQuality, setCheckingQuality] = useState(false);
     const [generatingFromNotes, setGeneratingFromNotes] = useState(false);
+    const [loadingWorkCovered, setLoadingWorkCovered] = useState(false);
+    const [savingWorkCovered, setSavingWorkCovered] = useState(false);
     const [qualityResult, setQualityResult] =
         useState<ReportQualityResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -270,6 +276,78 @@ export default function TeacherReportsPage() {
 
         void loadPageData();
     }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadSharedWorkCovered() {
+            const reportSessionId = Number(form.report_session_id);
+            const classId = Number(form.class_id);
+            const teacherId = Number(form.teacher_id);
+
+            if (
+                !reportSessionId ||
+                Number.isNaN(reportSessionId) ||
+                !classId ||
+                Number.isNaN(classId)
+            ) {
+                setLoadingWorkCovered(false);
+                return;
+            }
+
+            const selectedClass = classes.find(
+                (classItem) => classItem.id === classId,
+            );
+
+            try {
+                setLoadingWorkCovered(true);
+                setError(null);
+
+                const shared = await getReportGroupContent({
+                    report_session_id: reportSessionId,
+                    class_id: classId,
+                    teacher_id:
+                        teacherId && !Number.isNaN(teacherId)
+                            ? teacherId
+                            : null,
+                    subject_name: selectedClass?.subject_name ?? null,
+                });
+
+                if (cancelled) {
+                    return;
+                }
+
+                setForm((current) => ({
+                    ...current,
+                    work_covered: shared?.work_covered ?? "",
+                    generated_report_text: "",
+                }));
+            } catch (err) {
+                if (!cancelled) {
+                    setError(
+                        err instanceof Error
+                            ? err.message
+                            : "Failed to load shared work covered.",
+                    );
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoadingWorkCovered(false);
+                }
+            }
+        }
+
+        void loadSharedWorkCovered();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        classes,
+        form.class_id,
+        form.report_session_id,
+        form.teacher_id,
+    ]);
 
     const completionRows = useMemo<StudentCompletionRow[]>(() => {
         const selectedTeacherId = Number(form.teacher_id);
@@ -431,14 +509,28 @@ export default function TeacherReportsPage() {
             ) ?? null;
 
         setActiveSession(selectedSession);
+        setEditingReportId(null);
+        setQualityResult(null);
+        setSuccessMessage(null);
 
         setForm((current) => ({
             ...current,
             report_session_id: sessionId,
+            student_id: "",
             academic_year:
                 selectedSession?.academic_year ?? current.academic_year,
             term: selectedSession?.term ?? current.term,
             title: selectedSession?.title ?? current.title,
+            work_covered: "",
+            teacher_notes: "",
+            generated_report_text: "",
+            report_text: "",
+            exam_mark: "",
+            attainment_grade: "",
+            effort_grade: "",
+            target_grade: "",
+            next_steps: "",
+            tutor_comment: "",
         }));
     }
 
@@ -448,8 +540,20 @@ export default function TeacherReportsPage() {
             teacher_id: teacherId,
             class_id: "",
             student_id: "",
+            work_covered: "",
+            teacher_notes: "",
+            generated_report_text: "",
+            report_text: "",
+            exam_mark: "",
+            attainment_grade: "",
+            effort_grade: "",
+            target_grade: "",
+            next_steps: "",
+            tutor_comment: "",
         }));
 
+        setEditingReportId(null);
+        setQualityResult(null);
         setStudents([]);
         setOutstandingOnly(false);
 
@@ -476,10 +580,20 @@ export default function TeacherReportsPage() {
             ...current,
             class_id: classId,
             student_id: "",
-
-
+            work_covered: "",
+            teacher_notes: "",
+            generated_report_text: "",
+            report_text: "",
+            exam_mark: "",
+            attainment_grade: "",
+            effort_grade: "",
+            target_grade: "",
+            next_steps: "",
+            tutor_comment: "",
         }));
 
+        setEditingReportId(null);
+        setQualityResult(null);
         setOutstandingOnly(false);
 
         if (!classId) {
@@ -505,6 +619,53 @@ export default function TeacherReportsPage() {
         }
     }
 
+
+    async function handleSaveWorkCovered() {
+        const reportSessionId = Number(form.report_session_id);
+        const classId = Number(form.class_id);
+        const teacherId = Number(form.teacher_id);
+
+        if (!reportSessionId || Number.isNaN(reportSessionId)) {
+            setError("Select a report session first.");
+            return;
+        }
+
+        if (!classId || Number.isNaN(classId)) {
+            setError("Select a class first.");
+            return;
+        }
+
+        const selectedClass = classes.find(
+            (classItem) => classItem.id === classId,
+        );
+
+        try {
+            setSavingWorkCovered(true);
+            setError(null);
+            setSuccessMessage(null);
+
+            await saveReportGroupContent({
+                report_session_id: reportSessionId,
+                class_id: classId,
+                teacher_id:
+                    teacherId && !Number.isNaN(teacherId)
+                        ? teacherId
+                        : null,
+                subject_name: selectedClass?.subject_name ?? null,
+                work_covered: form.work_covered,
+            });
+
+            setSuccessMessage("Work covered saved for the whole class.");
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to save work covered.",
+            );
+        } finally {
+            setSavingWorkCovered(false);
+        }
+    }
 
     function handleStudentChange(studentId: string) {
         const selectedTeacherId = Number(form.teacher_id);
@@ -1340,23 +1501,70 @@ export default function TeacherReportsPage() {
                     </label>
 
                     {activeSession?.include_work_covered && (
-                        <label className="grid gap-2">
-                            <span className="text-base font-semibold text-slate-700">
-                                Work Covered
-                            </span>
+                        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <h3 className="text-lg font-bold text-slate-950">
+                                        Work Covered
+                                    </h3>
 
-                            <textarea
-                                value={form.work_covered}
-                                onChange={(event) =>
-                                    updateFormField(
-                                        "work_covered",
-                                        event.target.value,
-                                    )
-                                }
-                                className="min-h-24 rounded-xl border px-3 py-2 text-base"
-                                placeholder="Write one or two lines about the work covered by the whole class."
-                            />
-                        </label>
+                                    <p className="mt-1 text-sm text-slate-600">
+                                        This text is shared by the selected class,
+                                        teacher and report session. Each pupil report
+                                        also stores its own snapshot when saved.
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        void handleSaveWorkCovered()
+                                    }
+                                    disabled={
+                                        savingWorkCovered ||
+                                        loadingWorkCovered ||
+                                        !form.class_id ||
+                                        !form.report_session_id
+                                    }
+                                    className="w-fit rounded-xl bg-slate-900 px-4 py-2 text-base font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    {savingWorkCovered
+                                        ? "Saving for Class..."
+                                        : "Save for Class"}
+                                </button>
+                            </div>
+
+                            <label className="mt-4 grid gap-2">
+                                <span className="text-base font-semibold text-slate-700">
+                                    Shared curriculum context
+                                </span>
+
+                                <textarea
+                                    value={form.work_covered}
+                                    onChange={(event) =>
+                                        updateFormField(
+                                            "work_covered",
+                                            event.target.value,
+                                        )
+                                    }
+                                    disabled={loadingWorkCovered}
+                                    className="min-h-24 rounded-xl border bg-white px-3 py-2 text-base disabled:cursor-wait disabled:bg-slate-100"
+                                    placeholder={
+                                        loadingWorkCovered
+                                            ? "Loading saved work covered..."
+                                            : "Write one or two lines about the work covered by the whole class."
+                                    }
+                                />
+                            </label>
+
+                            <p className="mt-2 text-sm font-medium text-slate-500">
+                                {loadingWorkCovered
+                                    ? "Loading the saved class content..."
+                                    : form.class_id && form.report_session_id
+                                        ? "Save once, then reuse it while moving between pupils."
+                                        : "Select a class and report session to load shared content."}
+                            </p>
+                        </section>
                     )}
 
                     {(!activeSession ||
