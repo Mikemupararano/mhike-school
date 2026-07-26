@@ -29,6 +29,8 @@ type StatusFilter =
     | "approved"
     | "published";
 
+type ExportStatus = "draft" | "published" | "all";
+
 type ReportSessionGroup = {
     reportSessionId: number | null;
     title: string;
@@ -50,6 +52,9 @@ const STATUS_RETURNED_BY_SMT = "returned_by_smt";
 const STATUS_APPROVED = "approved";
 const STATUS_PUBLISHED = "published";
 
+const TOKEN_STORAGE_KEY = "mhike_token";
+const DEFAULT_API_BASE_URL = "http://localhost:8000/api/v1";
+
 const EMPTY_DASHBOARD: StudentReportReviewDashboard = {
     draft: 0,
     submitted: 0,
@@ -57,10 +62,11 @@ const EMPTY_DASHBOARD: StudentReportReviewDashboard = {
     published: 0,
 };
 
-const APPROVABLE_STATUSES = new Set([
+const APPROVABLE_STATUSES = new Set<string>([
     STATUS_SUBMITTED,
     STATUS_READY_FOR_SMT,
 ]);
+
 const STATUS_OPTIONS: Array<{
     value: StatusFilter;
     label: string;
@@ -94,8 +100,8 @@ function formatDate(value: string | null | undefined): string {
     });
 }
 
-function formatStatus(status: string): string {
-    switch (status) {
+function formatStatus(reportStatus: string): string {
+    switch (reportStatus) {
         case STATUS_DRAFT:
             return "Draft";
         case STATUS_SUBMITTED:
@@ -113,19 +119,21 @@ function formatStatus(status: string): string {
         case STATUS_PUBLISHED:
             return "Published";
         default:
-            return status.replaceAll("_", " ");
+            return reportStatus.replaceAll("_", " ");
     }
 }
 
-function getStatusClassName(status: string): string {
-    switch (status) {
+function getStatusClassName(reportStatus: string): string {
+    switch (reportStatus) {
         case STATUS_PUBLISHED:
             return "bg-green-50 text-green-700";
         case STATUS_APPROVED:
             return "bg-blue-50 text-blue-700";
-        case STATUS_SUBMITTED:
-        case STATUS_TUTOR_REVIEW:
         case STATUS_READY_FOR_SMT:
+            return "bg-cyan-50 text-cyan-700";
+        case STATUS_TUTOR_REVIEW:
+            return "bg-indigo-50 text-indigo-700";
+        case STATUS_SUBMITTED:
             return "bg-purple-50 text-purple-700";
         case STATUS_RETURNED_BY_TUTOR:
         case STATUS_RETURNED_BY_SMT:
@@ -169,6 +177,104 @@ function matchesStatus(
     return report.status === statusFilter;
 }
 
+function getApiBaseUrl(): string {
+    const configured =
+        process.env.NEXT_PUBLIC_API_BASE_URL ??
+        process.env.NEXT_PUBLIC_API_URL;
+
+    return (configured?.trim() || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+}
+
+function getDownloadFilename(
+    response: Response,
+    fallback: string,
+): string {
+    const contentDisposition = response.headers.get("Content-Disposition");
+
+    if (!contentDisposition) {
+        return fallback;
+    }
+
+    const utf8Match = contentDisposition.match(
+        /filename\*=UTF-8''([^;]+)/i,
+    );
+
+    if (utf8Match?.[1]) {
+        try {
+            return decodeURIComponent(utf8Match[1]);
+        } catch {
+            return utf8Match[1];
+        }
+    }
+
+    const quotedMatch = contentDisposition.match(/filename="([^"]+)"/i);
+
+    if (quotedMatch?.[1]) {
+        return quotedMatch[1];
+    }
+
+    const plainMatch = contentDisposition.match(/filename=([^;]+)/i);
+
+    return plainMatch?.[1]?.trim() || fallback;
+}
+
+async function downloadAuthenticatedFile(
+    path: string,
+    fallbackFilename: string,
+): Promise<void> {
+    const token = window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
+
+    if (!token) {
+        throw new Error(
+            "Your session has expired. Please sign in again before downloading.",
+        );
+    }
+
+    const response = await fetch(`${getApiBaseUrl()}${path}`, {
+        method: "GET",
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        let message = `Download failed (${response.status}).`;
+
+        try {
+            const body = (await response.json()) as {
+                detail?: unknown;
+            };
+
+            if (typeof body.detail === "string" && body.detail.trim()) {
+                message = body.detail;
+            }
+        } catch {
+            // Keep the HTTP fallback when the response is not JSON.
+        }
+
+        throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+
+    try {
+        anchor.href = objectUrl;
+        anchor.download = getDownloadFilename(
+            response,
+            fallbackFilename,
+        );
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+    } finally {
+        anchor.remove();
+        window.URL.revokeObjectURL(objectUrl);
+    }
+}
+
 export default function SchoolAdminReportsPage() {
     const router = useRouter();
 
@@ -186,6 +292,10 @@ export default function SchoolAdminReportsPage() {
     const [savingId, setSavingId] = useState<number | null>(null);
     const [publishingSessionId, setPublishingSessionId] =
         useState<number | null>(null);
+    const [downloadingReportId, setDownloadingReportId] =
+        useState<number | null>(null);
+    const [downloadingSessionKey, setDownloadingSessionKey] =
+        useState<string | null>(null);
     const [returnEditor, setReturnEditor] =
         useState<ReturnEditorState>(null);
 
@@ -207,7 +317,10 @@ export default function SchoolAdminReportsPage() {
                 ]);
 
             setReports(reportData);
-            setDashboard(dashboardData);
+            setDashboard({
+                ...EMPTY_DASHBOARD,
+                ...dashboardData,
+            });
             setReportSessions(sessionData);
         } catch (err) {
             setError(
@@ -260,7 +373,7 @@ export default function SchoolAdminReportsPage() {
     }, [reports]);
 
     const filteredReports = useMemo(() => {
-        const normalisedSearch = searchQuery.trim().toLowerCase();
+        const normalisedSearch = searchQuery.trim().toLocaleLowerCase("en-GB");
 
         return [...reports]
             .filter((report) => matchesStatus(report, statusFilter))
@@ -279,6 +392,9 @@ export default function SchoolAdminReportsPage() {
                     report.title,
                     report.report_text,
                     report.review_comments ?? "",
+                    report.work_covered ?? "",
+                    report.teacher_notes ?? "",
+                    report.generated_report_text ?? "",
                     String(report.student_id),
                     String(report.teacher_id ?? ""),
                     report.academic_year,
@@ -286,7 +402,7 @@ export default function SchoolAdminReportsPage() {
                     report.status,
                 ]
                     .join(" ")
-                    .toLowerCase();
+                    .toLocaleLowerCase("en-GB");
 
                 return searchableText.includes(normalisedSearch);
             })
@@ -326,12 +442,12 @@ export default function SchoolAdminReportsPage() {
 
             group.reports.push(report);
 
-            const status = isPublished(report)
+            const reportStatus = isPublished(report)
                 ? STATUS_PUBLISHED
                 : report.status;
 
-            group.statusCounts[status] =
-                (group.statusCounts[status] ?? 0) + 1;
+            group.statusCounts[reportStatus] =
+                (group.statusCounts[reportStatus] ?? 0) + 1;
         }
 
         return Array.from(groups.values()).sort((first, second) => {
@@ -355,6 +471,43 @@ export default function SchoolAdminReportsPage() {
             );
         });
     }, [filteredReports, sessionTitleById]);
+
+    const summaryCards = useMemo(
+        () => [
+            {
+                label: "Draft",
+                value: dashboard.draft,
+                filter: "draft" as StatusFilter,
+                valueClass: "text-amber-600",
+                hoverClass: "hover:border-amber-300",
+            },
+            {
+                label: "Awaiting Review",
+                value:
+                    statusCounts.submitted +
+                    statusCounts.tutor_review +
+                    statusCounts.ready_for_smt,
+                filter: "submitted" as StatusFilter,
+                valueClass: "text-purple-600",
+                hoverClass: "hover:border-purple-300",
+            },
+            {
+                label: "Approved",
+                value: dashboard.approved,
+                filter: "approved" as StatusFilter,
+                valueClass: "text-blue-600",
+                hoverClass: "hover:border-blue-300",
+            },
+            {
+                label: "Published",
+                value: dashboard.published,
+                filter: "published" as StatusFilter,
+                valueClass: "text-green-600",
+                hoverClass: "hover:border-green-300",
+            },
+        ],
+        [dashboard, statusCounts],
+    );
 
     async function handleApproveReport(report: StudentReport) {
         try {
@@ -459,6 +612,55 @@ export default function SchoolAdminReportsPage() {
         }
     }
 
+    async function handleDownloadReport(report: StudentReport) {
+        try {
+            setDownloadingReportId(report.id);
+            setError(null);
+            setSuccessMessage(null);
+
+            await downloadAuthenticatedFile(
+                `/student-reports/${report.id}/pdf`,
+                `student_report_${report.id}.pdf`,
+            );
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to download the report PDF.",
+            );
+        } finally {
+            setDownloadingReportId(null);
+        }
+    }
+
+    async function handleDownloadSession(
+        reportSessionId: number,
+        exportStatus: ExportStatus,
+    ) {
+        const requestKey = `${reportSessionId}:${exportStatus}`;
+
+        try {
+            setDownloadingSessionKey(requestKey);
+            setError(null);
+            setSuccessMessage(null);
+
+            await downloadAuthenticatedFile(
+                `/student-reports/export-session/${reportSessionId}?export_status=${encodeURIComponent(
+                    exportStatus,
+                )}`,
+                `student_reports_session_${reportSessionId}_${exportStatus}.zip`,
+            );
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to download the report archive.",
+            );
+        } finally {
+            setDownloadingSessionKey(null);
+        }
+    }
+
     async function handleDeleteReport(report: StudentReport) {
         if (report.status !== STATUS_DRAFT || isPublished(report)) {
             setError("Only unpublished draft reports can be deleted.");
@@ -493,42 +695,8 @@ export default function SchoolAdminReportsPage() {
         }
     }
 
-    const summaryCards = [
-        {
-            label: "Draft",
-            value: dashboard.draft,
-            filter: "draft" as StatusFilter,
-            valueClass: "text-amber-600",
-            hoverClass: "hover:border-amber-300",
-        },
-        {
-            label: "Awaiting Review",
-            value:
-                statusCounts.submitted +
-                statusCounts.tutor_review +
-                statusCounts.ready_for_smt,
-            filter: "submitted" as StatusFilter,
-            valueClass: "text-purple-600",
-            hoverClass: "hover:border-purple-300",
-        },
-        {
-            label: "Approved",
-            value: dashboard.approved,
-            filter: "approved" as StatusFilter,
-            valueClass: "text-blue-600",
-            hoverClass: "hover:border-blue-300",
-        },
-        {
-            label: "Published",
-            value: dashboard.published,
-            filter: "published" as StatusFilter,
-            valueClass: "text-green-600",
-            hoverClass: "hover:border-green-300",
-        },
-    ];
-
     return (
-        <main className="space-y-6 p-8">
+        <main className="space-y-6 p-4 sm:p-6 lg:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
                     <h1 className="text-3xl font-extrabold text-slate-950">
@@ -537,15 +705,16 @@ export default function SchoolAdminReportsPage() {
 
                     <p className="mt-2 max-w-3xl text-base text-slate-600">
                         Review submitted reports, return reports requiring
-                        correction, approve completed reports and publish
-                        approved sessions for parent access.
+                        correction, approve completed reports, publish approved
+                        sessions and download report exports.
                     </p>
                 </div>
 
                 <button
                     type="button"
+                    data-custom-button="true"
                     onClick={() => router.back()}
-                    className="w-fit rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-bold text-slate-700 hover:bg-slate-50"
+                    className="w-fit rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-bold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400"
                 >
                     ← Back
                 </button>
@@ -577,8 +746,14 @@ export default function SchoolAdminReportsPage() {
                     <button
                         key={card.label}
                         type="button"
+                        data-custom-button="true"
+                        aria-pressed={statusFilter === card.filter}
                         onClick={() => setStatusFilter(card.filter)}
-                        className={`rounded-2xl border bg-white p-5 text-left transition hover:shadow-sm ${card.hoverClass}`}
+                        className={`rounded-2xl border bg-white p-5 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-400 ${card.hoverClass
+                            } ${statusFilter === card.filter
+                                ? "ring-2 ring-slate-400"
+                                : ""
+                            }`}
                     >
                         <p className="text-base font-medium text-slate-600">
                             {card.label}
@@ -592,7 +767,7 @@ export default function SchoolAdminReportsPage() {
                 ))}
             </section>
 
-            <section className="rounded-2xl border bg-white p-6">
+            <section className="rounded-2xl border bg-white p-4 sm:p-6">
                 <div className="flex flex-col gap-5">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div>
@@ -611,6 +786,7 @@ export default function SchoolAdminReportsPage() {
 
                         <button
                             type="button"
+                            data-custom-button="true"
                             disabled={loading}
                             onClick={() => void loadData()}
                             className="w-fit rounded-xl border border-slate-300 px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -684,7 +860,7 @@ export default function SchoolAdminReportsPage() {
                                     setSearchQuery(event.target.value)
                                 }
                                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base text-slate-900"
-                                placeholder="Title, pupil ID, teacher ID or text"
+                                placeholder="Title, subject, IDs or report text"
                             />
                         </label>
                     </div>
@@ -703,13 +879,17 @@ export default function SchoolAdminReportsPage() {
                         {groupedReports.map((group) => {
                             const approvedCount =
                                 group.statusCounts[STATUS_APPROVED] ?? 0;
+                            const publishedCount =
+                                group.statusCounts[STATUS_PUBLISHED] ?? 0;
+                            const draftExportCount =
+                                group.reports.length - publishedCount;
 
                             return (
                                 <section
                                     key={group.reportSessionId ?? "none"}
-                                    className="rounded-2xl border bg-slate-50 p-5"
+                                    className="rounded-2xl border bg-slate-50 p-4 sm:p-5"
                                 >
-                                    <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row md:items-center md:justify-between">
+                                    <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 xl:flex-row xl:items-center xl:justify-between">
                                         <div>
                                             <h3 className="text-lg font-bold text-slate-950">
                                                 {group.title}
@@ -738,33 +918,100 @@ export default function SchoolAdminReportsPage() {
                                                 {" · "}
                                                 {approvedCount} approved
                                                 {" · "}
-                                                {group.statusCounts[
-                                                    STATUS_PUBLISHED
-                                                ] ?? 0}{" "}
-                                                published
+                                                {publishedCount} published
                                             </p>
                                         </div>
 
                                         {group.reportSessionId !== null && (
-                                            <button
-                                                type="button"
-                                                disabled={
-                                                    approvedCount === 0 ||
-                                                    publishingSessionId ===
-                                                    group.reportSessionId
-                                                }
-                                                onClick={() =>
-                                                    void handlePublishSession(
-                                                        group.reportSessionId as number,
-                                                    )
-                                                }
-                                                className="w-fit rounded-xl bg-green-600 px-4 py-2 text-base font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                                {publishingSessionId ===
-                                                    group.reportSessionId
-                                                    ? "Publishing..."
-                                                    : "Publish Approved Reports"}
-                                            </button>
+                                            <div className="flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    data-custom-button="true"
+                                                    disabled={
+                                                        approvedCount === 0 ||
+                                                        publishingSessionId ===
+                                                        group.reportSessionId
+                                                    }
+                                                    onClick={() =>
+                                                        void handlePublishSession(
+                                                            group.reportSessionId as number,
+                                                        )
+                                                    }
+                                                    className="rounded-xl bg-green-600 px-4 py-2 text-base font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                    {publishingSessionId ===
+                                                        group.reportSessionId
+                                                        ? "Publishing..."
+                                                        : "Publish Approved"}
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    data-custom-button="true"
+                                                    disabled={
+                                                        publishedCount === 0 ||
+                                                        downloadingSessionKey ===
+                                                        `${group.reportSessionId}:published`
+                                                    }
+                                                    onClick={() =>
+                                                        void handleDownloadSession(
+                                                            group.reportSessionId as number,
+                                                            "published",
+                                                        )
+                                                    }
+                                                    className="rounded-xl border border-green-300 bg-white px-4 py-2 text-base font-semibold text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                    {downloadingSessionKey ===
+                                                        `${group.reportSessionId}:published`
+                                                        ? "Downloading..."
+                                                        : "Published ZIP"}
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    data-custom-button="true"
+                                                    disabled={
+                                                        draftExportCount === 0 ||
+                                                        downloadingSessionKey ===
+                                                        `${group.reportSessionId}:draft`
+                                                    }
+                                                    onClick={() =>
+                                                        void handleDownloadSession(
+                                                            group.reportSessionId as number,
+                                                            "draft",
+                                                        )
+                                                    }
+                                                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                    {downloadingSessionKey ===
+                                                        `${group.reportSessionId}:draft`
+                                                        ? "Downloading..."
+                                                        : "Draft ZIP"}
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    data-custom-button="true"
+                                                    disabled={
+                                                        group.reports.length ===
+                                                        0 ||
+                                                        downloadingSessionKey ===
+                                                        `${group.reportSessionId}:all`
+                                                    }
+                                                    onClick={() =>
+                                                        void handleDownloadSession(
+                                                            group.reportSessionId as number,
+                                                            "all",
+                                                        )
+                                                    }
+                                                    className="rounded-xl border border-blue-300 bg-white px-4 py-2 text-base font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                    {downloadingSessionKey ===
+                                                        `${group.reportSessionId}:all`
+                                                        ? "Downloading..."
+                                                        : "All Reports ZIP"}
+                                                </button>
+                                            </div>
                                         )}
                                     </div>
 
@@ -775,11 +1022,15 @@ export default function SchoolAdminReportsPage() {
                                             const returnEditorOpen =
                                                 returnEditor?.reportId ===
                                                 report.id;
+                                            const busy =
+                                                savingId === report.id ||
+                                                downloadingReportId ===
+                                                report.id;
 
                                             return (
                                                 <article
                                                     key={report.id}
-                                                    className="rounded-2xl border bg-white p-5"
+                                                    className="rounded-2xl border bg-white p-4 sm:p-5"
                                                 >
                                                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                                         <div>
@@ -909,9 +1160,8 @@ export default function SchoolAdminReportsPage() {
                                                         <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
                                                             <label className="grid gap-2">
                                                                 <span className="text-base font-bold text-amber-900">
-                                                                    Feedback
-                                                                    for the
-                                                                    teacher
+                                                                    Feedback for
+                                                                    the teacher
                                                                 </span>
 
                                                                 <textarea
@@ -940,9 +1190,9 @@ export default function SchoolAdminReportsPage() {
                                                             <div className="mt-3 flex flex-wrap gap-3">
                                                                 <button
                                                                     type="button"
+                                                                    data-custom-button="true"
                                                                     disabled={
-                                                                        savingId ===
-                                                                        report.id
+                                                                        busy
                                                                     }
                                                                     onClick={() =>
                                                                         void handleReturnReport(
@@ -959,9 +1209,9 @@ export default function SchoolAdminReportsPage() {
 
                                                                 <button
                                                                     type="button"
+                                                                    data-custom-button="true"
                                                                     disabled={
-                                                                        savingId ===
-                                                                        report.id
+                                                                        busy
                                                                     }
                                                                     onClick={() =>
                                                                         setReturnEditor(
@@ -976,9 +1226,10 @@ export default function SchoolAdminReportsPage() {
                                                         </div>
                                                     )}
 
-                                                    <div className="mt-4 flex flex-wrap gap-3 border-t border-slate-200 pt-4">
+                                                    <div className="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap gap-3 border-t border-slate-200 bg-white/95 px-4 pb-1 pt-4 backdrop-blur sm:-mx-5 sm:px-5">
                                                         <button
                                                             type="button"
+                                                            data-custom-button="true"
                                                             onClick={() =>
                                                                 router.push(
                                                                     `/teacher/reports/${report.id}`,
@@ -989,6 +1240,25 @@ export default function SchoolAdminReportsPage() {
                                                             Open Full Report
                                                         </button>
 
+                                                        {published && (
+                                                            <button
+                                                                type="button"
+                                                                data-custom-button="true"
+                                                                disabled={busy}
+                                                                onClick={() =>
+                                                                    void handleDownloadReport(
+                                                                        report,
+                                                                    )
+                                                                }
+                                                                className="rounded-xl border border-green-300 bg-white px-4 py-2 text-base font-semibold text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                            >
+                                                                {downloadingReportId ===
+                                                                    report.id
+                                                                    ? "Downloading..."
+                                                                    : "Download PDF"}
+                                                            </button>
+                                                        )}
+
                                                         {APPROVABLE_STATUSES.has(
                                                             report.status,
                                                         ) &&
@@ -996,9 +1266,9 @@ export default function SchoolAdminReportsPage() {
                                                                 <>
                                                                     <button
                                                                         type="button"
+                                                                        data-custom-button="true"
                                                                         disabled={
-                                                                            savingId ===
-                                                                            report.id
+                                                                            busy
                                                                         }
                                                                         onClick={() =>
                                                                             void handleApproveReport(
@@ -1015,9 +1285,9 @@ export default function SchoolAdminReportsPage() {
 
                                                                     <button
                                                                         type="button"
+                                                                        data-custom-button="true"
                                                                         disabled={
-                                                                            savingId ===
-                                                                            report.id
+                                                                            busy
                                                                         }
                                                                         onClick={() =>
                                                                             openReturnEditor(
@@ -1038,9 +1308,9 @@ export default function SchoolAdminReportsPage() {
                                                             !published && (
                                                                 <button
                                                                     type="button"
+                                                                    data-custom-button="true"
                                                                     disabled={
-                                                                        savingId ===
-                                                                        report.id
+                                                                        busy
                                                                     }
                                                                     onClick={() =>
                                                                         void handleDeleteReport(
@@ -1049,8 +1319,7 @@ export default function SchoolAdminReportsPage() {
                                                                     }
                                                                     className="rounded-xl border border-red-200 px-4 py-2 text-base font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                                                                 >
-                                                                    Delete
-                                                                    Draft
+                                                                    Delete Draft
                                                                 </button>
                                                             )}
 
