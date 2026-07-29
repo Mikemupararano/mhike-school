@@ -160,7 +160,7 @@ export default function ParentTimetablePage() {
                             loading ||
                             !selectedStudentId
                         }
-                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         {loading
                             ? "Refreshing..."
@@ -175,7 +175,7 @@ export default function ParentTimetablePage() {
                             !selectedStudentId ||
                             entries.length === 0
                         }
-                        className="rounded-xl bg-slate-950 px-4 py-2 text-base font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-4 py-2 text-base font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         Print timetable
                     </button>
@@ -231,7 +231,7 @@ export default function ParentTimetablePage() {
                         </div>
 
                         {lastUpdated && (
-                            <p className="mt-4 text-sm text-slate-500 print:hidden">
+                            <p aria-live="polite" className="mt-4 text-sm text-slate-500 print:hidden">
                                 Last refreshed{" "}
                                 {lastUpdated.toLocaleTimeString(
                                     "en-GB",

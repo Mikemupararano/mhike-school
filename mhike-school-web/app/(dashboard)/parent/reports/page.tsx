@@ -346,7 +346,7 @@ export default function ParentReportsPage() {
                     data-custom-button="true"
                     disabled={reportsLoading}
                     onClick={() => void loadReports()}
-                    className="w-fit rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex w-fit items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-base font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                     {reportsLoading ? "Refreshing..." : "Refresh"}
                 </button>
@@ -355,6 +355,7 @@ export default function ParentReportsPage() {
             {successMessage && (
                 <div
                     role="status"
+                    aria-live="polite"
                     className="rounded-2xl border border-green-200 bg-green-50 p-4 text-base font-medium text-green-700"
                 >
                     {successMessage}
@@ -572,7 +573,7 @@ export default function ParentReportsPage() {
                                                                     report,
                                                                 )
                                                             }
-                                                            className="w-fit rounded-xl bg-blue-600 px-4 py-2 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                            className="inline-flex w-fit items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-base font-semibold text-white transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                                                         >
                                                             {downloadingReportId ===
                                                                 report.id
