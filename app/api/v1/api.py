@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     courses,
     dashboard,
     enrollments,
+    import_batches,
     message_attachments,
     messages,
     notification_preferences,
@@ -228,6 +229,10 @@ api_router.include_router(
     message_attachments.router,
     prefix="/message-attachments",
     tags=["message-attachments"],
+)
+
+api_router.include_router(
+    import_batches.router,
 )
 
 api_router.include_router(

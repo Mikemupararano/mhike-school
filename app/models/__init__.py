@@ -4,6 +4,13 @@ from app.models.audit_log import AuditLog
 from app.models.class_group import ClassGroup
 from app.models.course import Course
 from app.models.enrollment import Enrollment
+from app.models.import_batch import (
+    ImportBatch,
+    ImportOperation,
+    ImportRow,
+    ImportRowStatus,
+    ImportStatus,
+)
 from app.models.lesson import Lesson
 from app.models.message_attachment import MessageAttachment
 from app.models.module import Module
@@ -25,6 +32,11 @@ __all__ = [
     "ClassGroup",
     "Course",
     "Enrollment",
+    "ImportBatch",
+    "ImportOperation",
+    "ImportRow",
+    "ImportRowStatus",
+    "ImportStatus",
     "Lesson",
     "MessageAttachment",
     "Module",
@@ -39,6 +51,6 @@ __all__ = [
     "StudentReport",
     "User",
     "UserRole",
-    "UserStatus",
     "UserRoleAssignment",
+    "UserStatus",
 ]

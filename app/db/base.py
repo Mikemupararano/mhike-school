@@ -20,6 +20,18 @@ from app.models.attendance_session import (  # noqa: E402, F401
 )
 
 # =========================================================
+# IMPORT MODELS
+# =========================================================
+
+from app.models.import_batch import (  # noqa: E402, F401
+    ImportBatch,
+    ImportOperation,
+    ImportRow,
+    ImportRowStatus,
+    ImportStatus,
+)
+
+# =========================================================
 # TIMETABLE MODELS
 # =========================================================
 
