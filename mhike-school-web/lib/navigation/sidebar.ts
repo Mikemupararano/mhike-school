@@ -6,6 +6,7 @@ import {
     Brush,
     CalendarDays,
     CreditCard,
+    FileSpreadsheet,
     FileText,
     History,
     LayoutDashboard,
@@ -207,6 +208,11 @@ export const schoolAdminSidebar: SidebarSection[] = [
                 icon: School,
             },
             {
+                label: "Imports",
+                href: "/school-admin/imports",
+                icon: FileSpreadsheet,
+            },
+            {
                 label: "Timetables",
                 href: "/school-admin/timetables",
                 icon: CalendarDays,
@@ -358,7 +364,9 @@ export const platformAdminSidebar: SidebarSection[] = [
     },
 ];
 
-function resolvePrimaryRole(roles: UserRole[]): UserRole {
+function resolvePrimaryRole(
+    roles: readonly UserRole[],
+): UserRole {
     if (roles.includes(UserRole.PLATFORM_ADMIN)) {
         return UserRole.PLATFORM_ADMIN;
     }
@@ -384,7 +392,7 @@ function resolvePrimaryRole(roles: UserRole[]): UserRole {
 
 export function getSidebarSections(
     role?: SidebarRole | null,
-    roles?: UserRole[],
+    roles?: readonly UserRole[],
 ): SidebarSection[] {
     const resolvedRole =
         roles && roles.length > 0
@@ -412,9 +420,10 @@ export function getSidebarSections(
 
 export function getSidebarItems(
     role?: SidebarRole | null,
-    roles?: UserRole[],
+    roles?: readonly UserRole[],
 ): SidebarItem[] {
-    return getSidebarSections(role, roles).flatMap(
-        (section) => section.items,
-    );
+    return getSidebarSections(
+        role,
+        roles,
+    ).flatMap((section) => section.items);
 }
