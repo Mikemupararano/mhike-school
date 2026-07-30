@@ -10,12 +10,15 @@ from app.core.config import settings
 from app.core.socket_manager import socket_app
 from app.db.session import AsyncSessionLocal
 from app.exceptions.handlers import register_exception_handlers
+from app.imports.bootstrap import register_import_handlers
 
 API_PREFIX = "/api/v1"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    register_import_handlers()
+
     async with AsyncSessionLocal() as db:
         await bootstrap_admin(
             db=db,

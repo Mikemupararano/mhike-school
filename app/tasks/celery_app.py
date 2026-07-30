@@ -1,6 +1,9 @@
 from celery import Celery
 
 from app.core.config import settings
+from app.imports.bootstrap import register_import_handlers
+
+register_import_handlers()
 
 celery = Celery(
     "mhike_school",
@@ -8,6 +11,7 @@ celery = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.tasks.notifications",
+        "app.tasks.imports",
     ],
 )
 

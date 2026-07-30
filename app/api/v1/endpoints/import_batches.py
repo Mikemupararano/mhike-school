@@ -41,6 +41,7 @@ from app.services.import_service import (
     cancel_import_batch,
     stage_csv_rows,
 )
+from app.tasks.imports import validate_import_batch_task
 
 router = APIRouter(
     prefix="/import-batches",
@@ -144,6 +145,8 @@ async def _get_school_batch_or_404(
     school_id: int,
     include_archived: bool = False,
 ):
+    """Return one school-scoped batch or raise an HTTP 404 response."""
+
     batch = await get_import_batch(
         db,
         batch_id=batch_id,
@@ -285,7 +288,12 @@ async def upload_batch_file(
     file: UploadFile = File(...),
     replace_existing: bool = Form(default=False),
 ) -> ImportBatchRead:
-    """Upload and stage CSV rows for an existing import batch."""
+    """
+    Upload and stage CSV rows for an existing import batch.
+
+    After staging succeeds, validation is dispatched to Celery so that
+    row validation runs outside the HTTP request.
+    """
 
     school_id = _require_import_admin(current_user)
 
@@ -325,6 +333,11 @@ async def upload_batch_file(
         )
     except Exception as exc:
         _raise_import_service_error(exc)
+
+    validate_import_batch_task.delay(
+        batch_id=batch.id,
+        school_id=school_id,
+    )
 
     return ImportBatchRead.model_validate(batch)
 

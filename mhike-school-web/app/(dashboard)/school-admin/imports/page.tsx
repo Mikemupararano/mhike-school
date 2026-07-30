@@ -14,7 +14,6 @@ import {
     Clock3,
     FileSpreadsheet,
     RefreshCcw,
-    Upload,
 } from "lucide-react";
 
 import ImportBatchTable, {
@@ -24,10 +23,29 @@ import ImportFilters, {
     type ImportFiltersValue,
 } from "@/components/imports/ImportFilters";
 import ImportSummaryCard from "@/components/imports/ImportSummaryCard";
-import ImportUploadPanel from "@/components/imports/ImportUploadPanel";
-import * as importApiModule from "@/lib/importApi";
+import ImportUploadPanel, {
+    type ImportUploadPayload,
+} from "@/components/imports/ImportUploadPanel";
+import {
+    archiveImportBatch,
+    cancelImportBatch,
+    countImportBatches,
+    createImportBatch,
+    listImportBatches,
+    restoreImportBatch,
+    uploadImportCsv,
+} from "@/lib/importApi";
+
+import type {
+    ImportBatchCountParams,
+    ImportBatchCreate,
+    ImportBatchListParams,
+    ImportBatchRead,
+    ImportBatchSummary,
+} from "@/types/import";
 
 const PAGE_SIZE = 20;
+const DEFAULT_UPLOAD_IMPORT_TYPE = "students";
 
 const DEFAULT_FILTERS: ImportFiltersValue = {
     search: "",
@@ -38,15 +56,6 @@ const DEFAULT_FILTERS: ImportFiltersValue = {
 
 type UnknownRecord = Record<string, unknown>;
 
-type UnknownFunction = (
-    ...args: unknown[]
-) => unknown | Promise<unknown>;
-
-type ImportBatchListResponse = {
-    items: ImportBatchTableItem[];
-    total: number;
-};
-
 type SummaryCounts = {
     visible: number;
     completed: number;
@@ -54,10 +63,6 @@ type SummaryCounts = {
     failed: number;
 };
 
-/*
- * These compatibility props document the contract expected by this page.
- * Icons are React elements, not Lucide component constructors.
- */
 type SummaryCardProps = {
     title?: string;
     label?: string;
@@ -68,27 +73,8 @@ type SummaryCardProps = {
     tone?: string;
 };
 
-type UploadPanelProps = {
-    isUploading?: boolean;
-    isLoading?: boolean;
-    onUpload?: (
-        payload: unknown,
-        importType?: unknown,
-    ) => Promise<void> | void;
-    onSubmit?: (
-        payload: unknown,
-        importType?: unknown,
-    ) => Promise<void> | void;
-    title?: string;
-    description?: string;
-    icon?: ReactNode;
-};
-
 const SummaryCard =
     ImportSummaryCard as React.ComponentType<SummaryCardProps>;
-
-const UploadPanel =
-    ImportUploadPanel as React.ComponentType<UploadPanelProps>;
 
 function normaliseStatus(status: string): string {
     return status
@@ -109,6 +95,15 @@ function asRecord(value: unknown): UnknownRecord {
     return {};
 }
 
+function asString(
+    value: unknown,
+    fallback = "",
+): string {
+    return typeof value === "string"
+        ? value
+        : fallback;
+}
+
 function asNumber(
     value: unknown,
     fallback = 0,
@@ -124,224 +119,270 @@ function asNumber(
         typeof value === "string" &&
         value.trim()
     ) {
-        const parsedValue = Number(value);
+        const parsed = Number(value);
 
-        if (Number.isFinite(parsedValue)) {
-            return parsedValue;
+        if (Number.isFinite(parsed)) {
+            return parsed;
         }
     }
 
     return fallback;
 }
 
-function asString(
-    value: unknown,
-    fallback = "",
-): string {
-    return typeof value === "string"
-        ? value
-        : fallback;
-}
-
 function asNullableString(
     value: unknown,
 ): string | null {
-    return typeof value === "string" &&
+    if (
+        typeof value === "string" &&
         value.trim()
-        ? value
-        : null;
-}
-
-function getApiFunction(
-    possibleNames: readonly string[],
-): UnknownFunction | null {
-    const moduleRecord =
-        importApiModule as UnknownRecord;
-
-    for (const name of possibleNames) {
-        const candidate = moduleRecord[name];
-
-        if (typeof candidate === "function") {
-            return candidate as UnknownFunction;
-        }
+    ) {
+        return value;
     }
 
     return null;
 }
 
-async function invokeApi(
-    possibleNames: readonly string[],
-    ...args: unknown[]
-): Promise<unknown> {
-    const apiFunction =
-        getApiFunction(possibleNames);
+function asOptionalFilterValue<
+    T extends string,
+>(
+    value: string,
+): T | undefined {
+    const normalisedValue =
+        value.trim();
 
-    if (!apiFunction) {
-        throw new Error(
-            [
-                "The required import API function is unavailable.",
-                `Expected one of: ${possibleNames.join(", ")}.`,
-            ].join(" "),
-        );
+    return normalisedValue
+        ? normalisedValue as T
+        : undefined;
+}
+
+function extractValidationMessage(
+    details: unknown,
+): string | null {
+    if (!Array.isArray(details)) {
+        return null;
     }
 
-    return await apiFunction(...args);
+    const messages = details
+        .map((detail) => {
+            const record =
+                asRecord(detail);
+
+            const location =
+                Array.isArray(record.loc)
+                    ? record.loc
+                        .map(
+                            (part) =>
+                                String(part),
+                        )
+                        .filter(
+                            (part) =>
+                                part !== "body" &&
+                                part !== "query",
+                        )
+                        .join(".")
+                    : "";
+
+            const message =
+                asString(record.msg);
+
+            if (!message) {
+                return null;
+            }
+
+            return location
+                ? `${location}: ${message}`
+                : message;
+        })
+        .filter(
+            (
+                message,
+            ): message is string =>
+                Boolean(message),
+        );
+
+    return messages.length > 0
+        ? messages.join("; ")
+        : null;
+}
+
+function parseErrorPayload(
+    value: unknown,
+): string | null {
+    if (typeof value === "string") {
+        const trimmed =
+            value.trim();
+
+        if (!trimmed) {
+            return null;
+        }
+
+        try {
+            return parseErrorPayload(
+                JSON.parse(
+                    trimmed,
+                ) as unknown,
+            );
+        } catch {
+            return trimmed;
+        }
+    }
+
+    const record =
+        asRecord(value);
+
+    if (
+        record.error !== undefined
+    ) {
+        const nestedMessage =
+            parseErrorPayload(
+                record.error,
+            );
+
+        if (nestedMessage) {
+            return nestedMessage;
+        }
+    }
+
+    const validationMessage =
+        extractValidationMessage(
+            record.details ??
+            record.detail,
+        );
+
+    if (validationMessage) {
+        return validationMessage;
+    }
+
+    if (
+        typeof record.detail ===
+        "string"
+    ) {
+        return record.detail;
+    }
+
+    if (
+        typeof record.message ===
+        "string"
+    ) {
+        return record.message;
+    }
+
+    return null;
 }
 
 function getErrorMessage(
     error: unknown,
 ): string {
     if (error instanceof Error) {
-        return error.message;
+        return (
+            parseErrorPayload(
+                error.message,
+            ) ??
+            error.message
+        );
     }
 
-    if (typeof error === "string") {
-        return error;
-    }
-
-    const record = asRecord(error);
-
-    if (typeof record.detail === "string") {
-        return record.detail;
-    }
-
-    if (typeof record.message === "string") {
-        return record.message;
-    }
-
-    return "Something went wrong while processing the import request.";
+    return (
+        parseErrorPayload(error) ??
+        "Something went wrong while processing the import request."
+    );
 }
 
 function mapBatch(
-    value: unknown,
-): ImportBatchTableItem | null {
-    const batch = asRecord(value);
+    value:
+        | ImportBatchSummary
+        | ImportBatchRead,
+): ImportBatchTableItem {
+    const batch =
+        value as unknown as UnknownRecord;
+
     const id = asNumber(
         batch.id,
         Number.NaN,
     );
 
-    if (!Number.isFinite(id)) {
-        return null;
+    if (
+        !Number.isInteger(id) ||
+        id <= 0
+    ) {
+        throw new Error(
+            "The import service returned a batch with an invalid ID.",
+        );
     }
 
-    const totalRows = asNumber(
-        batch.total_rows ??
-        batch.totalRows,
-        0,
-    );
+    const isArchived =
+        batch.is_archived === true;
 
-    const validRows = asNumber(
-        batch.valid_rows ??
-        batch.validRows ??
-        batch.validated_rows ??
-        batch.validatedRows,
-        0,
-    );
-
-    const invalidRows = asNumber(
-        batch.invalid_rows ??
-        batch.invalidRows ??
-        batch.failed_rows ??
-        batch.failedRows,
-        0,
-    );
-
-    const importedRows = asNumber(
-        batch.imported_rows ??
-        batch.importedRows ??
-        batch.successful_rows ??
-        batch.successfulRows ??
-        batch.processed_rows ??
-        batch.processedRows,
-        0,
-    );
+    const archivedAt =
+        asNullableString(
+            batch.archived_at,
+        ) ??
+        (
+            isArchived
+                ? asNullableString(
+                    batch.updated_at,
+                )
+                : null
+        );
 
     return {
         id,
-        import_type: asString(
-            batch.import_type ??
-            batch.importType,
-            "unknown",
-        ),
-        filename: asNullableString(
-            batch.filename ??
-            batch.file_name ??
-            batch.original_filename ??
-            batch.originalFilename,
-        ),
-        status: asString(
-            batch.status,
-            "uploaded",
-        ),
-        total_rows: totalRows,
-        valid_rows: validRows,
-        invalid_rows: invalidRows,
-        imported_rows: importedRows,
-        created_at: asString(
-            batch.created_at ??
-            batch.createdAt,
-            new Date().toISOString(),
-        ),
-        updated_at: asNullableString(
-            batch.updated_at ??
-            batch.updatedAt,
-        ),
-        archived_at: asNullableString(
-            batch.archived_at ??
-            batch.archivedAt,
-        ),
-    };
-}
 
-function mapBatchListResponse(
-    value: unknown,
-): ImportBatchListResponse {
-    if (Array.isArray(value)) {
-        const items = value
-            .map(mapBatch)
-            .filter(
-                (
-                    batch,
-                ): batch is ImportBatchTableItem =>
-                    batch !== null,
-            );
+        import_type:
+            asString(
+                batch.import_type,
+                "unknown",
+            ),
 
-        return {
-            items,
-            total: items.length,
-        };
-    }
+        filename:
+            asNullableString(
+                batch.original_filename ??
+                batch.filename,
+            ),
 
-    const response = asRecord(value);
+        status:
+            asString(
+                batch.status,
+                "pending",
+            ),
 
-    const rawItems =
-        response.items ??
-        response.results ??
-        response.batches ??
-        response.data ??
-        [];
+        total_rows:
+            asNumber(
+                batch.total_rows,
+            ),
 
-    const items = Array.isArray(rawItems)
-        ? rawItems
-            .map(mapBatch)
-            .filter(
-                (
-                    batch,
-                ): batch is ImportBatchTableItem =>
-                    batch !== null,
-            )
-        : [];
+        valid_rows:
+            asNumber(
+                batch.valid_rows,
+            ),
 
-    return {
-        items,
-        total: asNumber(
-            response.total ??
-            response.total_items ??
-            response.totalItems ??
-            response.count,
-            items.length,
-        ),
+        invalid_rows:
+            asNumber(
+                batch.invalid_rows ??
+                batch.failed_rows,
+            ),
+
+        imported_rows:
+            asNumber(
+                batch.successful_rows ??
+                batch.imported_rows ??
+                batch.processed_rows,
+            ),
+
+        created_at:
+            asString(
+                batch.created_at,
+                new Date()
+                    .toISOString(),
+            ),
+
+        updated_at:
+            asNullableString(
+                batch.updated_at,
+            ),
+
+        archived_at:
+            archivedAt,
     };
 }
 
@@ -352,23 +393,29 @@ function isCompletedStatus(
         "completed",
         "completed_with_errors",
         "partially_completed",
-    ].includes(normaliseStatus(status));
+    ].includes(
+        normaliseStatus(status),
+    );
 }
 
 function isProcessingStatus(
     status: string,
 ): boolean {
     return [
+        "pending",
+        "uploading",
         "uploaded",
+        "staged",
         "parsing",
         "validating",
+        "validated",
         "ready",
         "queued",
         "processing",
         "importing",
-        "pending",
-        "created",
-    ].includes(normaliseStatus(status));
+    ].includes(
+        normaliseStatus(status),
+    );
 }
 
 function isFailedStatus(
@@ -377,150 +424,228 @@ function isFailedStatus(
     return [
         "failed",
         "cancelled",
-    ].includes(normaliseStatus(status));
+    ].includes(
+        normaliseStatus(status),
+    );
 }
 
-function extractUploadPayload(
-    value: unknown,
-    possibleImportType?: unknown,
-): {
-    file: File;
-    importType: string;
-} {
-    if (value instanceof File) {
-        return {
-            file: value,
-            importType:
-                typeof possibleImportType === "string"
-                    ? possibleImportType
-                    : "",
-        };
+function matchesSearch(
+    batch: ImportBatchTableItem,
+    search: string,
+): boolean {
+    const query =
+        search
+            .trim()
+            .toLowerCase();
+
+    if (!query) {
+        return true;
     }
 
-    const payload = asRecord(value);
-    const file = payload.file;
-
-    if (!(file instanceof File)) {
-        throw new Error(
-            "Please choose a CSV file before uploading.",
-        );
-    }
-
-    return {
-        file,
-        importType: asString(
-            payload.importType ??
-            payload.import_type,
-        ),
-    };
+    return [
+        String(batch.id),
+        batch.import_type,
+        batch.filename ?? "",
+        batch.status,
+    ].some((value) =>
+        value
+            .toLowerCase()
+            .includes(query),
+    );
 }
 
 export default function SchoolAdminImportsPage() {
-    const [batches, setBatches] = useState<
+    const [
+        batches,
+        setBatches,
+    ] = useState<
         ImportBatchTableItem[]
     >([]);
 
-    const [totalItems, setTotalItems] =
-        useState(0);
+    const [
+        serverTotalItems,
+        setServerTotalItems,
+    ] = useState(0);
 
-    const [page, setPage] =
-        useState(1);
+    const [
+        page,
+        setPage,
+    ] = useState(1);
 
-    const [filters, setFilters] =
-        useState<ImportFiltersValue>(
-            DEFAULT_FILTERS,
-        );
+    const [
+        filters,
+        setFilters,
+    ] = useState<ImportFiltersValue>(
+        DEFAULT_FILTERS,
+    );
 
-    const [isLoading, setIsLoading] =
-        useState(true);
+    const [
+        isLoading,
+        setIsLoading,
+    ] = useState(true);
 
-    const [isUploading, setIsUploading] =
-        useState(false);
+    const [
+        isUploading,
+        setIsUploading,
+    ] = useState(false);
 
     const [
         actionBatchId,
         setActionBatchId,
-    ] = useState<number | null>(null);
+    ] = useState<number | null>(
+        null,
+    );
 
     const [
         errorMessage,
         setErrorMessage,
-    ] = useState<string | null>(null);
+    ] = useState<string | null>(
+        null,
+    );
 
     const [
         successMessage,
         setSuccessMessage,
-    ] = useState<string | null>(null);
+    ] = useState<string | null>(
+        null,
+    );
 
     const loadBatches =
-        useCallback(async (): Promise<void> => {
-            setIsLoading(true);
-            setErrorMessage(null);
+        useCallback(
+            async (): Promise<void> => {
+                setIsLoading(true);
+                setErrorMessage(null);
 
-            try {
-                const query = {
-                    page,
-                    page_size: PAGE_SIZE,
-                    pageSize: PAGE_SIZE,
-                    search:
-                        filters.search.trim() ||
-                        undefined,
-                    import_type:
-                        filters.importType ||
-                        undefined,
-                    importType:
-                        filters.importType ||
-                        undefined,
-                    status:
-                        filters.status ||
-                        undefined,
-                    archived:
-                        filters.archive === "all"
-                            ? undefined
+                try {
+                    const includeArchived =
+                        filters.archive !==
+                        "active";
+
+                    const importType =
+                        asOptionalFilterValue<
+                            NonNullable<
+                                ImportBatchListParams[
+                                "import_type"
+                                ]
+                            >
+                        >(
+                            filters.importType,
+                        );
+
+                    const status =
+                        asOptionalFilterValue<
+                            NonNullable<
+                                ImportBatchListParams[
+                                "status"
+                                ]
+                            >
+                        >(
+                            filters.status,
+                        );
+
+                    const listFilters:
+                        ImportBatchListParams =
+                    {
+                        import_type:
+                            importType,
+
+                        status,
+
+                        include_archived:
+                            includeArchived,
+
+                        skip:
+                            (
+                                page -
+                                1
+                            ) *
+                            PAGE_SIZE,
+
+                        limit:
+                            PAGE_SIZE,
+                    };
+
+                    const countFilters:
+                        ImportBatchCountParams =
+                    {
+                        import_type:
+                            importType,
+
+                        status,
+
+                        include_archived:
+                            includeArchived,
+                    };
+
+                    const [
+                        batchResponse,
+                        totalResponse,
+                    ] =
+                        await Promise.all(
+                            [
+                                listImportBatches(
+                                    listFilters,
+                                ),
+
+                                countImportBatches(
+                                    countFilters,
+                                ),
+                            ],
+                        );
+
+                    const mappedBatches =
+                        batchResponse.map(
+                            mapBatch,
+                        );
+
+                    const archiveFiltered =
+                        filters.archive ===
+                            "archived"
+                            ? mappedBatches.filter(
+                                (batch) =>
+                                    batch.archived_at !==
+                                    null,
+                            )
                             : filters.archive ===
-                            "archived",
-                    include_archived:
-                        filters.archive === "all",
-                };
+                                "active"
+                                ? mappedBatches.filter(
+                                    (batch) =>
+                                        batch.archived_at ===
+                                        null,
+                                )
+                                : mappedBatches;
 
-                const response =
-                    await invokeApi(
-                        [
-                            "listImportBatches",
-                            "getImportBatches",
-                            "fetchImportBatches",
-                        ],
-                        query,
+                    setBatches(
+                        archiveFiltered,
                     );
 
-                const mappedResponse =
-                    mapBatchListResponse(
-                        response,
+                    setServerTotalItems(
+                        totalResponse,
+                    );
+                } catch (error) {
+                    setBatches([]);
+                    setServerTotalItems(
+                        0,
                     );
 
-                setBatches(
-                    mappedResponse.items,
-                );
-
-                setTotalItems(
-                    mappedResponse.total,
-                );
-            } catch (error) {
-                setBatches([]);
-                setTotalItems(0);
-                setErrorMessage(
-                    getErrorMessage(error),
-                );
-            } finally {
-                setIsLoading(false);
-            }
-        }, [
-            filters.archive,
-            filters.importType,
-            filters.search,
-            filters.status,
-            page,
-        ]);
+                    setErrorMessage(
+                        getErrorMessage(
+                            error,
+                        ),
+                    );
+                } finally {
+                    setIsLoading(
+                        false,
+                    );
+                }
+            },
+            [
+                filters.archive,
+                filters.importType,
+                filters.status,
+                page,
+            ],
+        );
 
     useEffect(() => {
         void loadBatches();
@@ -535,135 +660,165 @@ export default function SchoolAdminImportsPage() {
         filters.archive,
     ]);
 
+    const visibleBatches =
+        useMemo(
+            () =>
+                batches.filter(
+                    (batch) =>
+                        matchesSearch(
+                            batch,
+                            filters.search,
+                        ),
+                ),
+            [
+                batches,
+                filters.search,
+            ],
+        );
+
+    const totalItems =
+        filters.search.trim() ||
+            filters.archive ===
+            "archived"
+            ? visibleBatches.length
+            : serverTotalItems;
+
     const summary =
-        useMemo<SummaryCounts>(() => {
-            return batches.reduce<SummaryCounts>(
-                (counts, batch) => {
-                    counts.visible += 1;
+        useMemo<SummaryCounts>(
+            () =>
+                visibleBatches.reduce<SummaryCounts>(
+                    (
+                        counts,
+                        batch,
+                    ) => {
+                        counts.visible +=
+                            1;
 
-                    if (
-                        isCompletedStatus(
-                            batch.status,
-                        )
-                    ) {
-                        counts.completed += 1;
-                    }
+                        if (
+                            isCompletedStatus(
+                                batch.status,
+                            )
+                        ) {
+                            counts.completed +=
+                                1;
+                        }
 
-                    if (
-                        isProcessingStatus(
-                            batch.status,
-                        )
-                    ) {
-                        counts.processing += 1;
-                    }
+                        if (
+                            isProcessingStatus(
+                                batch.status,
+                            )
+                        ) {
+                            counts.processing +=
+                                1;
+                        }
 
-                    if (
-                        isFailedStatus(
-                            batch.status,
-                        )
-                    ) {
-                        counts.failed += 1;
-                    }
+                        if (
+                            isFailedStatus(
+                                batch.status,
+                            )
+                        ) {
+                            counts.failed +=
+                                1;
+                        }
 
-                    return counts;
-                },
-                {
-                    visible: 0,
-                    completed: 0,
-                    processing: 0,
-                    failed: 0,
-                },
-            );
-        }, [batches]);
+                        return counts;
+                    },
+                    {
+                        visible: 0,
+                        completed: 0,
+                        processing: 0,
+                        failed: 0,
+                    },
+                ),
+            [visibleBatches],
+        );
 
     async function handleUpload(
-        value: unknown,
-        possibleImportType?: unknown,
+        payload: ImportUploadPayload,
     ): Promise<void> {
         setIsUploading(true);
         setErrorMessage(null);
         setSuccessMessage(null);
 
+        let createdBatchId:
+            number | null =
+            null;
+
         try {
-            const {
-                file,
-                importType,
-            } = extractUploadPayload(
-                value,
-                possibleImportType,
+            const importType =
+                payload.importType.trim();
+
+            if (!importType) {
+                throw new Error(
+                    "Please select an import type before uploading the CSV file.",
+                );
+            }
+
+            const createPayload:
+                ImportBatchCreate =
+            {
+                import_type:
+                    importType,
+
+                operation:
+                    "create",
+
+                original_filename:
+                    payload.file.name,
+            };
+
+            const createdBatch =
+                await createImportBatch(
+                    createPayload,
+                );
+
+            createdBatchId =
+                createdBatch.id;
+
+            await uploadImportCsv(
+                createdBatch.id,
+                payload.file,
             );
 
-            const uploadFunction =
-                getApiFunction([
-                    "uploadImportFile",
-                    "uploadImportBatch",
-                    "createImportBatch",
-                ]);
-
-            if (!uploadFunction) {
-                throw new Error(
-                    "The import upload API function is unavailable.",
-                );
-            }
-
-            /*
-             * Current import clients may use either:
-             *   upload(file, importType)
-             * or:
-             *   upload({ file, importType })
-             *
-             * Function arity is used to select the contract without
-             * swallowing a genuine server-side upload failure.
-             */
-            if (uploadFunction.length >= 2) {
-                await uploadFunction(
-                    file,
-                    importType,
-                );
-            } else {
-                await uploadFunction({
-                    file,
-                    import_type: importType,
-                    importType,
-                });
-            }
-
             setSuccessMessage(
-                `${file.name} was uploaded successfully.`,
+                `${payload.file.name} was uploaded successfully as import batch #${createdBatch.id}.`,
             );
 
             setPage(1);
+
             await loadBatches();
         } catch (error) {
-            const message =
+            const originalMessage =
                 getErrorMessage(error);
 
-            setErrorMessage(message);
+            setErrorMessage(
+                createdBatchId !==
+                    null
+                    ? `${originalMessage} Import batch #${createdBatchId} was created, but its CSV upload did not complete.`
+                    : originalMessage,
+            );
 
-            /*
-             * The upload panel may use the rejected promise to retain
-             * the selected file and show its own local error state.
-             */
             throw error;
         } finally {
-            setIsUploading(false);
+            setIsUploading(
+                false,
+            );
         }
     }
 
     async function runBatchAction(
-        batch: ImportBatchTableItem,
-        actionNames: readonly string[],
+        batchId: number,
+        action: (
+            id: number,
+        ) => Promise<ImportBatchRead>,
         successText: string,
     ): Promise<void> {
-        setActionBatchId(batch.id);
+        setActionBatchId(batchId);
         setErrorMessage(null);
         setSuccessMessage(null);
 
         try {
-            await invokeApi(
-                actionNames,
-                batch.id,
-            );
+            await action(batchId);
 
             setSuccessMessage(
                 successText,
@@ -672,15 +827,20 @@ export default function SchoolAdminImportsPage() {
             await loadBatches();
         } catch (error) {
             setErrorMessage(
-                getErrorMessage(error),
+                getErrorMessage(
+                    error,
+                ),
             );
         } finally {
-            setActionBatchId(null);
+            setActionBatchId(
+                null,
+            );
         }
     }
 
     async function handleCancel(
-        batch: ImportBatchTableItem,
+        batch:
+            ImportBatchTableItem,
     ): Promise<void> {
         const confirmed =
             window.confirm(
@@ -692,38 +852,39 @@ export default function SchoolAdminImportsPage() {
         }
 
         await runBatchAction(
-            batch,
-            ["cancelImportBatch"],
+            batch.id,
+            cancelImportBatch,
             `Import batch #${batch.id} was cancelled.`,
         );
     }
 
     async function handleArchive(
-        batch: ImportBatchTableItem,
+        batch:
+            ImportBatchTableItem,
     ): Promise<void> {
         await runBatchAction(
-            batch,
-            ["archiveImportBatch"],
+            batch.id,
+            archiveImportBatch,
             `Import batch #${batch.id} was archived.`,
         );
     }
 
     async function handleRestore(
-        batch: ImportBatchTableItem,
+        batch:
+            ImportBatchTableItem,
     ): Promise<void> {
         await runBatchAction(
-            batch,
-            [
-                "restoreImportBatch",
-                "unarchiveImportBatch",
-            ],
+            batch.id,
+            restoreImportBatch,
             `Import batch #${batch.id} was restored.`,
         );
     }
 
     function handleFiltersChange(
-        nextFilters: ImportFiltersValue,
+        nextFilters:
+            ImportFiltersValue,
     ): void {
+        setErrorMessage(null);
         setSuccessMessage(null);
         setFilters(nextFilters);
     }
@@ -761,7 +922,10 @@ export default function SchoolAdminImportsPage() {
 
                         <button
                             type="button"
-                            disabled={isLoading}
+                            disabled={
+                                isLoading ||
+                                isUploading
+                            }
                             className={[
                                 "inline-flex min-h-11 items-center justify-center",
                                 "gap-2 rounded-xl border border-white/20",
@@ -805,7 +969,7 @@ export default function SchoolAdminImportsPage() {
                                 Import request failed
                             </p>
 
-                            <p className="mt-1 text-sm">
+                            <p className="mt-1 text-sm leading-6">
                                 {errorMessage}
                             </p>
                         </div>
@@ -832,8 +996,12 @@ export default function SchoolAdminImportsPage() {
                     <SummaryCard
                         title="Visible batches"
                         label="Visible batches"
-                        value={summary.visible}
-                        count={summary.visible}
+                        value={
+                            summary.visible
+                        }
+                        count={
+                            summary.visible
+                        }
                         description="Batches on the current page"
                         icon={
                             <FileSpreadsheet
@@ -847,8 +1015,12 @@ export default function SchoolAdminImportsPage() {
                     <SummaryCard
                         title="Completed"
                         label="Completed"
-                        value={summary.completed}
-                        count={summary.completed}
+                        value={
+                            summary.completed
+                        }
+                        count={
+                            summary.completed
+                        }
                         description="Completed successfully or with row errors"
                         icon={
                             <CheckCircle2
@@ -862,8 +1034,12 @@ export default function SchoolAdminImportsPage() {
                     <SummaryCard
                         title="In progress"
                         label="In progress"
-                        value={summary.processing}
-                        count={summary.processing}
+                        value={
+                            summary.processing
+                        }
+                        count={
+                            summary.processing
+                        }
                         description="Uploaded, validating, queued or processing"
                         icon={
                             <Clock3
@@ -877,8 +1053,12 @@ export default function SchoolAdminImportsPage() {
                     <SummaryCard
                         title="Failed or cancelled"
                         label="Failed or cancelled"
-                        value={summary.failed}
-                        count={summary.failed}
+                        value={
+                            summary.failed
+                        }
+                        count={
+                            summary.failed
+                        }
                         description="Batches requiring attention"
                         icon={
                             <CircleX
@@ -891,18 +1071,33 @@ export default function SchoolAdminImportsPage() {
                 </section>
 
                 <section className="mb-6">
-                    <UploadPanel
-                        isUploading={isUploading}
-                        isLoading={isUploading}
-                        onUpload={handleUpload}
-                        onSubmit={handleUpload}
-                        title="Upload CSV data"
-                        description="Choose an import type and upload a CSV file for validation."
-                        icon={
-                            <Upload
-                                className="h-5 w-5"
-                                aria-hidden="true"
-                            />
+                    <ImportUploadPanel
+                        defaultImportType={
+                            DEFAULT_UPLOAD_IMPORT_TYPE
+                        }
+                        isUploading={
+                            isUploading
+                        }
+                        disabled={
+                            isLoading
+                        }
+                        errorMessage={
+                            null
+                        }
+                        successMessage={
+                            null
+                        }
+                        onSelectionChange={() => {
+                            setErrorMessage(
+                                null,
+                            );
+
+                            setSuccessMessage(
+                                null,
+                            );
+                        }}
+                        onUpload={
+                            handleUpload
                         }
                     />
                 </section>
@@ -913,7 +1108,9 @@ export default function SchoolAdminImportsPage() {
                         onChange={
                             handleFiltersChange
                         }
-                        isLoading={isLoading}
+                        isLoading={
+                            isLoading
+                        }
                         onRefresh={
                             loadBatches
                         }
@@ -921,16 +1118,32 @@ export default function SchoolAdminImportsPage() {
                 </section>
 
                 <ImportBatchTable
-                    batches={batches}
-                    isLoading={isLoading}
+                    batches={
+                        visibleBatches
+                    }
+                    isLoading={
+                        isLoading
+                    }
                     errorMessage={null}
                     page={page}
-                    pageSize={PAGE_SIZE}
-                    totalItems={totalItems}
-                    onPageChange={setPage}
-                    onCancel={handleCancel}
-                    onArchive={handleArchive}
-                    onRestore={handleRestore}
+                    pageSize={
+                        PAGE_SIZE
+                    }
+                    totalItems={
+                        totalItems
+                    }
+                    onPageChange={
+                        setPage
+                    }
+                    onCancel={
+                        handleCancel
+                    }
+                    onArchive={
+                        handleArchive
+                    }
+                    onRestore={
+                        handleRestore
+                    }
                     actionBatchId={
                         actionBatchId
                     }

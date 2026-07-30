@@ -5,7 +5,8 @@ export const IMPORT_OPERATIONS = [
     "delete",
 ] as const;
 
-export type ImportOperation = (typeof IMPORT_OPERATIONS)[number];
+export type ImportOperation =
+    (typeof IMPORT_OPERATIONS)[number];
 
 export const IMPORT_STATUSES = [
     "pending",
@@ -20,7 +21,8 @@ export const IMPORT_STATUSES = [
     "cancelled",
 ] as const;
 
-export type ImportStatus = (typeof IMPORT_STATUSES)[number];
+export type ImportStatus =
+    (typeof IMPORT_STATUSES)[number];
 
 export const IMPORT_ROW_STATUSES = [
     "pending",
@@ -32,9 +34,11 @@ export const IMPORT_ROW_STATUSES = [
     "skipped",
 ] as const;
 
-export type ImportRowStatus = (typeof IMPORT_ROW_STATUSES)[number];
+export type ImportRowStatus =
+    (typeof IMPORT_ROW_STATUSES)[number];
 
-export type ImportMetadata = Record<string, unknown>;
+export type ImportMetadata =
+    Record<string, unknown>;
 
 export interface ImportBatchCreate {
     import_type: string;
@@ -77,7 +81,8 @@ export interface ImportBatchSummary {
     completed_at: string | null;
 }
 
-export interface ImportBatchRead extends ImportBatchSummary {
+export interface ImportBatchRead
+    extends ImportBatchSummary {
     metadata: ImportMetadata | null;
     error_message: string | null;
     archived_at: string | null;
@@ -148,6 +153,13 @@ export interface ImportRowCountParams {
     status?: ImportRowStatus;
 }
 
+/**
+ * Count endpoints currently return `{ total: number }`.
+ *
+ * `count` is retained as an optional compatibility field in case
+ * another deployment or older endpoint returns `{ count: number }`.
+ */
 export interface ImportCountResponse {
-    count: number;
+    total?: number;
+    count?: number;
 }

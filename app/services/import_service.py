@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import inspect
 import io
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -25,6 +26,15 @@ from app.repositories.import_batches import (
     update_import_batch_counters,
 )
 from app.schemas.import_batch import ImportRowCreate
+
+DEFAULT_IMPORT_ENCODINGS: tuple[str, ...] = (
+    "utf-8-sig",
+    "utf-8",
+    "cp1252",
+    "latin-1",
+)
+DEFAULT_MAXIMUM_ROWS = 50_000
+MAXIMUM_VALIDATION_PAGE_SIZE = 500
 
 
 class ImportServiceError(Exception):
@@ -117,23 +127,32 @@ def normalise_cell(value: Any) -> str | None:
 def decode_import_file(
     content: bytes,
     *,
-    encodings: Sequence[str] = (
-        "utf-8-sig",
-        "utf-8",
-        "cp1252",
-        "latin-1",
-    ),
+    encodings: Sequence[str] = DEFAULT_IMPORT_ENCODINGS,
 ) -> tuple[str, str]:
     """Decode uploaded bytes using a controlled encoding fallback list."""
 
     if not content:
         raise ImportFileError("The uploaded import file is empty.")
 
+    if not encodings:
+        raise ValueError("At least one import-file encoding must be configured.")
+
     for encoding in encodings:
         try:
-            return content.decode(encoding), encoding
+            text = content.decode(encoding)
         except UnicodeDecodeError:
             continue
+        except LookupError as exc:
+            raise ValueError(
+                f"Unknown import-file encoding: {encoding!r}.",
+            ) from exc
+
+        if "\x00" in text:
+            raise ImportFileError(
+                "The import file contains null bytes and cannot be processed.",
+            )
+
+        return text, encoding
 
     raise ImportFileError(
         "The import file could not be decoded using a supported encoding.",
@@ -158,7 +177,7 @@ def parse_csv_bytes(
     content: bytes,
     *,
     required_headers: Sequence[str] | None = None,
-    maximum_rows: int = 50_000,
+    maximum_rows: int = DEFAULT_MAXIMUM_ROWS,
 ) -> ParsedImportFile:
     """
     Decode and parse CSV bytes.
@@ -181,9 +200,14 @@ def parse_csv_bytes(
             "The import file does not contain a header row.",
         )
 
-    original_headers = [
-        str(header).strip() for header in reader.fieldnames if header is not None
-    ]
+    raw_headers = list(reader.fieldnames)
+
+    if any(header is None for header in raw_headers):
+        raise ImportHeaderError(
+            "One or more import headers are missing.",
+        )
+
+    original_headers = [str(header).strip() for header in raw_headers]
 
     if not original_headers:
         raise ImportHeaderError(
@@ -218,17 +242,25 @@ def parse_csv_bytes(
             )
 
     header_map = dict(
-        zip(original_headers, normalised_headers, strict=True),
+        zip(raw_headers, normalised_headers, strict=True),
     )
 
     parsed_rows: list[dict[str, str | None]] = []
 
-    for raw_row in reader:
-        parsed_row = {
-            header_map[original_header]: normalise_cell(
-                raw_row.get(original_header),
+    for source_row_number, raw_row in enumerate(reader, start=2):
+        extra_values = raw_row.get(None)
+
+        if extra_values and any(
+            normalise_cell(value) is not None for value in extra_values
+        ):
+            raise ImportFileError(
+                f"CSV row {source_row_number} contains more values than "
+                "the header row defines.",
             )
-            for original_header in original_headers
+
+        parsed_row = {
+            normalised_header: normalise_cell(raw_row.get(raw_header))
+            for raw_header, normalised_header in header_map.items()
         }
 
         if not any(value is not None for value in parsed_row.values()):
@@ -286,7 +318,7 @@ async def stage_csv_rows(
     batch: ImportBatch,
     content: bytes,
     required_headers: Sequence[str] | None = None,
-    maximum_rows: int = 50_000,
+    maximum_rows: int = DEFAULT_MAXIMUM_ROWS,
     replace_existing: bool = False,
     commit: bool = True,
 ) -> ParsedImportFile:
@@ -383,7 +415,7 @@ async def _resolve_validation_result(
 
     result = validator(raw_data)
 
-    if hasattr(result, "__await__"):
+    if inspect.isawaitable(result):
         result = await result
 
     if not isinstance(result, RowValidationResult):
@@ -399,13 +431,15 @@ async def validate_import_batch(
     *,
     batch: ImportBatch,
     validator: RowValidator,
-    page_size: int = 500,
+    page_size: int = MAXIMUM_VALIDATION_PAGE_SIZE,
     commit: bool = True,
 ) -> BatchValidationSummary:
     """Validate every staged row in a batch."""
 
-    if page_size < 1 or page_size > 500:
-        raise ValueError("page_size must be between 1 and 500")
+    if page_size < 1 or page_size > MAXIMUM_VALIDATION_PAGE_SIZE:
+        raise ValueError(
+            f"page_size must be between 1 and " f"{MAXIMUM_VALIDATION_PAGE_SIZE}",
+        )
 
     if batch.status in {
         ImportStatus.PROCESSING,
@@ -417,9 +451,14 @@ async def validate_import_batch(
             f"Batch status {batch.status.value!r} does not allow validation.",
         )
 
-    batch.current_stage = "validating"
-    batch.error_message = None
-    await db.flush()
+    await set_import_batch_status(
+        db,
+        batch=batch,
+        status=ImportStatus.VALIDATING,
+        current_stage="validating",
+        error_message=None,
+        commit=False,
+    )
 
     total_rows = 0
     valid_rows = 0
@@ -523,13 +562,11 @@ async def validate_import_batch(
             await db.flush()
 
     except Exception as exc:
-        await db.rollback()
-
-        batch.status = ImportStatus.FAILED
-        batch.current_stage = "validation_failed"
-        batch.error_message = str(exc)
-
         if commit:
+            await db.rollback()
+            batch.status = ImportStatus.FAILED
+            batch.current_stage = "validation_failed"
+            batch.error_message = str(exc) or exc.__class__.__name__
             db.add(batch)
             await db.commit()
             await db.refresh(batch)
@@ -552,24 +589,25 @@ async def refresh_import_batch_counters(
 ) -> ImportBatch:
     """Recalculate batch counters directly from its current row states."""
 
+    page_size = MAXIMUM_VALIDATION_PAGE_SIZE
     rows = await list_import_rows(
         db,
         batch_id=batch.id,
         school_id=batch.school_id,
         offset=0,
-        limit=500,
+        limit=page_size,
     )
 
     all_rows: list[ImportRow] = list(rows)
     offset = len(rows)
 
-    while len(rows) == 500:
+    while len(rows) == page_size:
         rows = await list_import_rows(
             db,
             batch_id=batch.id,
             school_id=batch.school_id,
             offset=offset,
-            limit=500,
+            limit=page_size,
         )
         all_rows.extend(rows)
         offset += len(rows)
@@ -636,9 +674,10 @@ async def cancel_import_batch(
     if batch.status in {
         ImportStatus.COMPLETED,
         ImportStatus.COMPLETED_WITH_ERRORS,
+        ImportStatus.CANCELLED,
     }:
         raise ImportBatchStateError(
-            "A completed import batch cannot be cancelled.",
+            f"Batch status {batch.status.value!r} does not allow cancellation.",
         )
 
     return await set_import_batch_status(
