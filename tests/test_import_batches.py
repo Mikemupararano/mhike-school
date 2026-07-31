@@ -316,6 +316,7 @@ def test_import_batch_routes_are_registered() -> None:
         ("/import-batches", ("GET",)),
         ("/import-batches/count", ("GET",)),
         ("/import-batches/{batch_id}", ("GET",)),
+        ("/import-batches/{batch_id}/progress", ("GET",)),
         ("/import-batches/{batch_id}/upload", ("POST",)),
         ("/import-batches/{batch_id}/process", ("POST",)),
         ("/import-batches/{batch_id}/rows", ("GET",)),

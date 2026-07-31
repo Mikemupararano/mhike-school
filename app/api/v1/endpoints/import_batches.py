@@ -35,6 +35,7 @@ from app.repositories.import_batches import (
 )
 from app.schemas.import_batch import (
     ImportBatchCreate,
+    ImportBatchProgress,
     ImportBatchRead,
     ImportBatchSummary,
     ImportRowRead,
@@ -311,6 +312,98 @@ async def get_batch(
     return ImportBatchRead.model_validate(batch)
 
 
+@router.get(
+    "/{batch_id}/progress",
+    response_model=ImportBatchProgress,
+)
+async def get_batch_progress(
+    batch_id: int,
+    db: DatabaseSession,
+    current_user: CurrentUser,
+    include_archived: bool = Query(default=False),
+) -> ImportBatchProgress:
+    """
+    Return validation and processing progress for an import batch.
+
+    Progress is derived from persisted batch counters so the administration
+    interface can poll this endpoint without loading individual import rows.
+    """
+
+    school_id = _require_import_admin(current_user)
+
+    batch = await _get_school_batch_or_404(
+        db,
+        batch_id=batch_id,
+        school_id=school_id,
+        include_archived=include_archived,
+    )
+
+    total_rows = max(batch.total_rows, 0)
+    validated_rows = max(batch.validated_rows, 0)
+    processed_rows = max(batch.processed_rows, 0)
+
+    validation_percentage = (
+        0
+        if total_rows == 0
+        else min(
+            100,
+            max(
+                0,
+                round(
+                    (validated_rows / total_rows) * 100,
+                ),
+            ),
+        )
+    )
+
+    progress_percentage = (
+        0
+        if total_rows == 0
+        else min(
+            100,
+            max(
+                0,
+                round(
+                    (processed_rows / total_rows) * 100,
+                ),
+            ),
+        )
+    )
+
+    return ImportBatchProgress(
+        id=batch.id,
+        school_id=batch.school_id,
+        import_type=batch.import_type,
+        status=batch.status,
+        current_stage=batch.current_stage,
+        total_rows=total_rows,
+        validated_rows=validated_rows,
+        processed_rows=processed_rows,
+        successful_rows=max(batch.successful_rows, 0),
+        warning_rows=max(batch.warning_rows, 0),
+        failed_rows=max(batch.failed_rows, 0),
+        skipped_rows=max(batch.skipped_rows, 0),
+        validation_percentage=validation_percentage,
+        progress_percentage=progress_percentage,
+        remaining_validation_rows=max(
+            total_rows - validated_rows,
+            0,
+        ),
+        remaining_processing_rows=max(
+            total_rows - processed_rows,
+            0,
+        ),
+        is_finished=batch.is_finished,
+        is_archived=batch.is_archived,
+        error_message=batch.error_message,
+        queued_at=batch.queued_at,
+        started_at=batch.started_at,
+        completed_at=batch.completed_at,
+        cancelled_at=batch.cancelled_at,
+        updated_at=batch.updated_at,
+    )
+
+
 @router.post(
     "/{batch_id}/upload",
     response_model=ImportBatchRead,
@@ -467,7 +560,6 @@ async def process_batch(
             school_id=school_id,
         )
     except Exception as exc:
-        # Restore READY so the administrator can retry safely.
         await set_import_batch_status(
             db,
             batch=batch,
