@@ -317,6 +317,7 @@ def test_import_batch_routes_are_registered() -> None:
         ("/import-batches/count", ("GET",)),
         ("/import-batches/{batch_id}", ("GET",)),
         ("/import-batches/{batch_id}/upload", ("POST",)),
+        ("/import-batches/{batch_id}/process", ("POST",)),
         ("/import-batches/{batch_id}/rows", ("GET",)),
         ("/import-batches/{batch_id}/rows/count", ("GET",)),
         ("/import-batches/{batch_id}/rows/{row_id}", ("GET",)),
@@ -326,4 +327,3 @@ def test_import_batch_routes_are_registered() -> None:
     }
 
     assert expected_routes.issubset(route_methods)
-
