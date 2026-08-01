@@ -20,6 +20,7 @@ import {
     Clock3,
     FileSpreadsheet,
     LoaderCircle,
+    PlayCircle,
     RefreshCcw,
     RotateCcw,
     Rows3,
@@ -34,7 +35,9 @@ import {
     cancelImportBatch,
     countImportRows,
     getImportBatch,
+    getImportBatchProgress,
     listImportRows,
+    processImportBatch,
     restoreImportBatch,
 } from "@/lib/importApi";
 import {
@@ -46,6 +49,7 @@ import {
 } from "@/types/import";
 
 type ActionName =
+    | "process"
     | "cancel"
     | "archive"
     | "restore";
@@ -60,19 +64,19 @@ const PAGE_SIZE_OPTIONS = [
 ] as const;
 
 const CANCELLABLE_STATUSES = new Set([
-    "pending",
-    "uploading",
-    "staged",
+    "uploaded",
+    "parsing",
     "validating",
-    "validated",
+    "ready",
+    "queued",
     "processing",
 ]);
 
 const ACTIVE_STATUSES = new Set([
-    "pending",
-    "uploading",
-    "staged",
+    "uploaded",
+    "parsing",
     "validating",
+    "queued",
     "processing",
 ]);
 
@@ -541,6 +545,68 @@ export default function ImportBatchDetailsPage() {
         setPage(1);
     }, [pageSize, rowStatusFilter]);
 
+    useEffect(() => {
+        if (
+            !batchId ||
+            !batch ||
+            batch.is_archived ||
+            !ACTIVE_STATUSES.has(batch.status)
+        ) {
+            return;
+        }
+
+        let isCancelled = false;
+
+        const pollProgress = async (): Promise<void> => {
+            try {
+                const progress =
+                    await getImportBatchProgress(batchId);
+
+                if (isCancelled) {
+                    return;
+                }
+
+                setBatch((currentBatch) =>
+                    currentBatch &&
+                        currentBatch.id === progress.id
+                        ? {
+                            ...currentBatch,
+                            ...progress,
+                        }
+                        : currentBatch,
+                );
+
+                if (progress.is_finished) {
+                    await Promise.all([
+                        loadBatch(),
+                        loadRows(),
+                    ]);
+                }
+            } catch (error) {
+                if (!isCancelled) {
+                    setErrorMessage(getErrorMessage(error));
+                }
+            }
+        };
+
+        void pollProgress();
+
+        const intervalId = window.setInterval(() => {
+            void pollProgress();
+        }, 2500);
+
+        return () => {
+            isCancelled = true;
+            window.clearInterval(intervalId);
+        };
+    }, [
+        batchId,
+        batch?.is_archived,
+        batch?.status,
+        loadBatch,
+        loadRows,
+    ]);
+
     async function runAction(
         action: ActionName,
         request: () => Promise<ImportBatchRead>,
@@ -562,6 +628,26 @@ export default function ImportBatchDetailsPage() {
         } finally {
             setActiveAction(null);
         }
+    }
+
+    async function handleProcess(): Promise<void> {
+        if (!batch) {
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `Process import batch #${batch.id}? Validated rows will be applied to school records.`,
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        await runAction(
+            "process",
+            () => processImportBatch(batch.id),
+            `Import batch #${batch.id} was queued for processing.`,
+        );
     }
 
     async function handleCancel(): Promise<void> {
@@ -615,6 +701,12 @@ export default function ImportBatchDetailsPage() {
             `Import batch #${batch.id} was restored.`,
         );
     }
+
+    const canProcess =
+        batch !== null &&
+        batch.status === "ready" &&
+        batch.total_rows > 0 &&
+        !batch.is_archived;
 
     const canCancel =
         batch !== null &&
@@ -734,6 +826,32 @@ export default function ImportBatchDetailsPage() {
                                 />
                                 Refresh
                             </button>
+
+                            {canProcess ? (
+                                <button
+                                    type="button"
+                                    disabled={
+                                        activeAction !== null
+                                    }
+                                    onClick={() => {
+                                        void handleProcess();
+                                    }}
+                                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-300/40 bg-emerald-500/20 px-4 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {activeAction === "process" ? (
+                                        <LoaderCircle
+                                            className="h-4 w-4 animate-spin"
+                                            aria-hidden="true"
+                                        />
+                                    ) : (
+                                        <PlayCircle
+                                            className="h-4 w-4"
+                                            aria-hidden="true"
+                                        />
+                                    )}
+                                    Process
+                                </button>
+                            ) : null}
 
                             {canCancel ? (
                                 <button
@@ -903,8 +1021,8 @@ export default function ImportBatchDetailsPage() {
                             />
 
                             <MetricCard
-                                label="Valid rows"
-                                value={batch.valid_rows}
+                                label="Validated rows"
+                                value={batch.validated_rows}
                                 icon={
                                     <ShieldCheck
                                         className="h-5 w-5"
@@ -914,8 +1032,8 @@ export default function ImportBatchDetailsPage() {
                             />
 
                             <MetricCard
-                                label="Invalid rows"
-                                value={batch.invalid_rows}
+                                label="Warnings"
+                                value={batch.warning_rows}
                                 icon={
                                     <TriangleAlert
                                         className="h-5 w-5"
@@ -1046,6 +1164,20 @@ export default function ImportBatchDetailsPage() {
                                             {humaniseValue(
                                                 batch.operation,
                                             )}
+                                        </dd>
+                                    </div>
+
+                                    <div className="flex items-start justify-between gap-4">
+                                        <dt className="font-semibold text-slate-500">
+                                            Current stage
+                                        </dt>
+
+                                        <dd className="text-right font-bold text-slate-950">
+                                            {batch.current_stage
+                                                ? humaniseValue(
+                                                    batch.current_stage,
+                                                )
+                                                : "Not specified"}
                                         </dd>
                                     </div>
 
@@ -1266,12 +1398,12 @@ export default function ImportBatchDetailsPage() {
                                                     </td>
 
                                                     <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                                                        {row.imported_record_id !==
+                                                        {row.created_entity_id !==
                                                             null ? (
                                                             <span className="font-bold text-slate-950">
                                                                 #
                                                                 {
-                                                                    row.imported_record_id
+                                                                    row.created_entity_id
                                                                 }
                                                             </span>
                                                         ) : (
@@ -1292,7 +1424,7 @@ export default function ImportBatchDetailsPage() {
                                                     <td className="min-w-[360px] px-6 py-4">
                                                         <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-100">
                                                             {stringifyMetadata(
-                                                                row.raw_data,
+                                                                row.original_data,
                                                             )}
                                                         </pre>
 
