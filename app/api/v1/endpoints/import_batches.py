@@ -45,6 +45,7 @@ from app.services.import_service import (
     ImportFileError,
     ImportHeaderError,
     cancel_import_batch,
+    retry_import_batch,
     stage_csv_rows,
 )
 from app.tasks.imports import (
@@ -57,8 +58,15 @@ router = APIRouter(
     tags=["Import batches"],
 )
 
-DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
-CurrentUser = Annotated[User, Depends(get_current_user)]
+DatabaseSession = Annotated[
+    AsyncSession,
+    Depends(get_db),
+]
+
+CurrentUser = Annotated[
+    User,
+    Depends(get_current_user),
+]
 
 MAXIMUM_CSV_FILE_SIZE_BYTES = 10 * 1024 * 1024
 
@@ -71,42 +79,63 @@ IMPORT_ADMIN_ROLE_VALUES = {
 def _normalise_role_value(value: object) -> str:
     """Return a canonical string representation of a role value."""
 
-    raw_value = getattr(value, "value", value)
+    raw_value = getattr(
+        value,
+        "value",
+        value,
+    )
 
     return str(raw_value).strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def _user_roles(current_user: User) -> set[str]:
     """
-    Resolve the user's primary and secondary roles.
+    Resolve all roles belonging to the current user.
 
-    This supports both the legacy ``role`` field and the multi-role
-    ``roles`` property.
+    Both the newer multi-role ``roles`` property and the legacy ``role``
+    attribute are supported.
     """
 
     resolved_roles: set[str] = set()
 
-    roles = getattr(current_user, "roles", None)
+    roles = getattr(
+        current_user,
+        "roles",
+        None,
+    )
 
-    if isinstance(roles, (list, tuple, set)):
+    if isinstance(
+        roles,
+        (list, tuple, set),
+    ):
         resolved_roles.update(
             _normalise_role_value(role) for role in roles if role is not None
         )
 
-    primary_role = getattr(current_user, "role", None)
+    primary_role = getattr(
+        current_user,
+        "role",
+        None,
+    )
 
     if primary_role is not None:
         resolved_roles.add(
-            _normalise_role_value(primary_role),
+            _normalise_role_value(
+                primary_role,
+            ),
         )
 
     return resolved_roles
 
 
-def _require_school_id(current_user: User) -> int:
+def _require_school_id(
+    current_user: User,
+) -> int:
     """Return the current user's school ID or reject the request."""
 
-    is_platform_admin = UserRole.PLATFORM_ADMIN.value in _user_roles(current_user)
+    roles = _user_roles(current_user)
+
+    is_platform_admin = UserRole.PLATFORM_ADMIN.value in roles
 
     if is_platform_admin and current_user.school_id is None:
         raise HTTPException(
@@ -120,13 +149,15 @@ def _require_school_id(current_user: User) -> int:
     if current_user.school_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="The current user is not assigned to a school.",
+            detail=("The current user is not assigned to a school."),
         )
 
     return current_user.school_id
 
 
-def _require_import_admin(current_user: User) -> int:
+def _require_import_admin(
+    current_user: User,
+) -> int:
     """Allow only school or platform administrators to manage imports."""
 
     if not (_user_roles(current_user) & IMPORT_ADMIN_ROLE_VALUES):
@@ -138,25 +169,38 @@ def _require_import_admin(current_user: User) -> int:
             ),
         )
 
-    return _require_school_id(current_user)
+    return _require_school_id(
+        current_user,
+    )
 
 
-def _raise_import_service_error(exc: Exception) -> None:
-    """Convert known import-service errors into HTTP responses."""
+def _raise_import_service_error(
+    exc: Exception,
+) -> None:
+    """Convert known import-service exceptions into HTTP responses."""
 
-    if isinstance(exc, ImportHeaderError):
+    if isinstance(
+        exc,
+        ImportHeaderError,
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
 
-    if isinstance(exc, ImportFileError):
+    if isinstance(
+        exc,
+        ImportFileError,
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
 
-    if isinstance(exc, ImportBatchStateError):
+    if isinstance(
+        exc,
+        ImportBatchStateError,
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -173,7 +217,7 @@ async def _get_school_batch_or_404(
     include_archived: bool = False,
     for_update: bool = False,
 ) -> ImportBatch:
-    """Return one school-scoped batch or raise HTTP 404."""
+    """Return one school-scoped import batch or raise HTTP 404."""
 
     batch = await get_import_batch(
         db,
@@ -192,6 +236,58 @@ async def _get_school_batch_or_404(
     return batch
 
 
+async def _queue_processing_task(
+    db: AsyncSession,
+    *,
+    batch: ImportBatch,
+    school_id: int,
+    queued_stage: str,
+    queue_failure_stage: str,
+    queue_failure_message: str,
+) -> ImportBatch:
+    """
+    Persist a queued state and dispatch the generic processing task.
+
+    If Celery cannot accept the task, the batch is restored to ``READY``.
+    Its row state remains valid and can therefore be queued again safely.
+    """
+
+    batch.error_message = None
+
+    await set_import_batch_status(
+        db,
+        batch=batch,
+        status=ImportStatus.QUEUED,
+        current_stage=queued_stage,
+        error_message=None,
+        commit=True,
+    )
+
+    try:
+        process_import_batch_task.delay(
+            batch_id=batch.id,
+            school_id=school_id,
+        )
+    except Exception as exc:
+        batch.queued_at = None
+
+        await set_import_batch_status(
+            db,
+            batch=batch,
+            status=ImportStatus.READY,
+            current_stage=queue_failure_stage,
+            error_message=queue_failure_message,
+            commit=True,
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=queue_failure_message,
+        ) from exc
+
+    return batch
+
+
 @router.post(
     "",
     response_model=ImportBatchRead,
@@ -204,7 +300,9 @@ async def create_batch(
 ) -> ImportBatchRead:
     """Create an empty school-scoped import batch."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await create_import_batch(
         db,
@@ -213,7 +311,9 @@ async def create_batch(
         payload=payload,
     )
 
-    return ImportBatchRead.model_validate(batch)
+    return ImportBatchRead.model_validate(
+        batch,
+    )
 
 
 @router.get(
@@ -223,7 +323,9 @@ async def create_batch(
 async def get_batches(
     db: DatabaseSession,
     current_user: CurrentUser,
-    import_type: str | None = Query(default=None),
+    import_type: str | None = Query(
+        default=None,
+    ),
     batch_status: ImportStatus | None = Query(
         default=None,
         alias="status",
@@ -232,13 +334,24 @@ async def get_batches(
         default=None,
         ge=1,
     ),
-    include_archived: bool = Query(default=False),
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
+    include_archived: bool = Query(
+        default=False,
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+    ),
 ) -> list[ImportBatchSummary]:
     """List import batches belonging to the current school."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batches = await list_import_batches(
         db,
@@ -246,12 +359,17 @@ async def get_batches(
         import_type=import_type,
         status=batch_status,
         uploaded_by_id=uploaded_by_id,
-        is_archived=None if include_archived else False,
+        is_archived=(None if include_archived else False),
         offset=offset,
         limit=limit,
     )
 
-    return [ImportBatchSummary.model_validate(batch) for batch in batches]
+    return [
+        ImportBatchSummary.model_validate(
+            batch,
+        )
+        for batch in batches
+    ]
 
 
 @router.get(
@@ -261,7 +379,9 @@ async def get_batches(
 async def get_batch_count(
     db: DatabaseSession,
     current_user: CurrentUser,
-    import_type: str | None = Query(default=None),
+    import_type: str | None = Query(
+        default=None,
+    ),
     batch_status: ImportStatus | None = Query(
         default=None,
         alias="status",
@@ -270,11 +390,15 @@ async def get_batch_count(
         default=None,
         ge=1,
     ),
-    include_archived: bool = Query(default=False),
+    include_archived: bool = Query(
+        default=False,
+    ),
 ) -> dict[str, int]:
     """Count school-scoped import batches."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     total = await count_import_batches(
         db,
@@ -282,10 +406,12 @@ async def get_batch_count(
         import_type=import_type,
         status=batch_status,
         uploaded_by_id=uploaded_by_id,
-        is_archived=None if include_archived else False,
+        is_archived=(None if include_archived else False),
     )
 
-    return {"total": total}
+    return {
+        "total": total,
+    }
 
 
 @router.get(
@@ -296,11 +422,15 @@ async def get_batch(
     batch_id: int,
     db: DatabaseSession,
     current_user: CurrentUser,
-    include_archived: bool = Query(default=False),
+    include_archived: bool = Query(
+        default=False,
+    ),
 ) -> ImportBatchRead:
     """Return one import batch belonging to the current school."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await _get_school_batch_or_404(
         db,
@@ -309,7 +439,9 @@ async def get_batch(
         include_archived=include_archived,
     )
 
-    return ImportBatchRead.model_validate(batch)
+    return ImportBatchRead.model_validate(
+        batch,
+    )
 
 
 @router.get(
@@ -320,16 +452,20 @@ async def get_batch_progress(
     batch_id: int,
     db: DatabaseSession,
     current_user: CurrentUser,
-    include_archived: bool = Query(default=False),
+    include_archived: bool = Query(
+        default=False,
+    ),
 ) -> ImportBatchProgress:
     """
-    Return validation and processing progress for an import batch.
+    Return current validation and processing progress for an import batch.
 
-    Progress is derived from persisted batch counters so the administration
-    interface can poll this endpoint without loading individual import rows.
+    Progress is derived from persisted counters, allowing the administration
+    interface to poll this endpoint without loading individual rows.
     """
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await _get_school_batch_or_404(
         db,
@@ -338,9 +474,20 @@ async def get_batch_progress(
         include_archived=include_archived,
     )
 
-    total_rows = max(batch.total_rows, 0)
-    validated_rows = max(batch.validated_rows, 0)
-    processed_rows = max(batch.processed_rows, 0)
+    total_rows = max(
+        batch.total_rows,
+        0,
+    )
+
+    validated_rows = max(
+        batch.validated_rows,
+        0,
+    )
+
+    processed_rows = max(
+        batch.processed_rows,
+        0,
+    )
 
     validation_percentage = (
         0
@@ -379,10 +526,22 @@ async def get_batch_progress(
         total_rows=total_rows,
         validated_rows=validated_rows,
         processed_rows=processed_rows,
-        successful_rows=max(batch.successful_rows, 0),
-        warning_rows=max(batch.warning_rows, 0),
-        failed_rows=max(batch.failed_rows, 0),
-        skipped_rows=max(batch.skipped_rows, 0),
+        successful_rows=max(
+            batch.successful_rows,
+            0,
+        ),
+        warning_rows=max(
+            batch.warning_rows,
+            0,
+        ),
+        failed_rows=max(
+            batch.failed_rows,
+            0,
+        ),
+        skipped_rows=max(
+            batch.skipped_rows,
+            0,
+        ),
         validation_percentage=validation_percentage,
         progress_percentage=progress_percentage,
         remaining_validation_rows=max(
@@ -413,16 +572,19 @@ async def upload_batch_file(
     db: DatabaseSession,
     current_user: CurrentUser,
     file: UploadFile = File(...),
-    replace_existing: bool = Form(default=False),
+    replace_existing: bool = Form(
+        default=False,
+    ),
 ) -> ImportBatchRead:
     """
-    Upload and stage CSV rows for an existing import batch.
+    Upload and stage CSV rows for an existing batch.
 
-    Validation is dispatched to Celery after the staged rows have been
-    committed successfully.
+    Validation is dispatched after the staged rows have been committed.
     """
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await _get_school_batch_or_404(
         db,
@@ -433,10 +595,12 @@ async def upload_batch_file(
 
     filename = (file.filename or "").strip()
 
-    if not filename.lower().endswith(".csv"):
+    if not filename.lower().endswith(
+        ".csv",
+    ):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only CSV files are currently supported.",
+            detail=("Only CSV files are currently supported."),
         )
 
     content = await file.read()
@@ -444,19 +608,21 @@ async def upload_batch_file(
     if not content:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The selected CSV file is empty.",
+            detail=("The selected CSV file is empty."),
         )
 
     if len(content) > MAXIMUM_CSV_FILE_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="The CSV file must not exceed 10 MB.",
+            detail=("The CSV file must not exceed 10 MB."),
         )
 
     batch.original_filename = filename
     batch.file_format = "csv"
     batch.mime_type = file.content_type or "text/csv"
-    batch.file_size_bytes = len(content)
+    batch.file_size_bytes = len(
+        content,
+    )
 
     try:
         await stage_csv_rows(
@@ -466,7 +632,9 @@ async def upload_batch_file(
             replace_existing=replace_existing,
         )
     except Exception as exc:
-        _raise_import_service_error(exc)
+        _raise_import_service_error(
+            exc,
+        )
 
     try:
         validate_import_batch_task.delay(
@@ -494,7 +662,9 @@ async def upload_batch_file(
             ),
         ) from exc
 
-    return ImportBatchRead.model_validate(batch)
+    return ImportBatchRead.model_validate(
+        batch,
+    )
 
 
 @router.post(
@@ -507,14 +677,11 @@ async def process_batch(
     db: DatabaseSession,
     current_user: CurrentUser,
 ) -> ImportBatchRead:
-    """
-    Queue a validated import batch for background processing.
+    """Queue a validated import batch for background processing."""
 
-    A row-level database lock prevents concurrent requests from queuing the
-    same batch more than once.
-    """
-
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await _get_school_batch_or_404(
         db,
@@ -526,7 +693,7 @@ async def process_batch(
     if batch.is_archived:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Archived import batches cannot be processed.",
+            detail=("Archived import batches cannot be processed."),
         )
 
     if batch.status != ImportStatus.READY:
@@ -534,7 +701,7 @@ async def process_batch(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "Only import batches with status 'ready' can be "
-                f"queued for processing. Current status: "
+                "queued for processing. Current status: "
                 f"'{batch.status.value}'."
             ),
         )
@@ -542,43 +709,80 @@ async def process_batch(
     if batch.total_rows < 1:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An empty import batch cannot be processed.",
+            detail=("An empty import batch cannot be processed."),
         )
 
-    await set_import_batch_status(
+    await _queue_processing_task(
         db,
         batch=batch,
-        status=ImportStatus.QUEUED,
-        current_stage="queued",
-        error_message=None,
-        commit=True,
+        school_id=school_id,
+        queued_stage="queued",
+        queue_failure_stage="processing_queue_failed",
+        queue_failure_message=(
+            "The import could not be queued for processing. "
+            "The batch remains ready and may be queued again."
+        ),
+    )
+
+    return ImportBatchRead.model_validate(
+        batch,
+    )
+
+
+@router.post(
+    "/{batch_id}/retry",
+    response_model=ImportBatchRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_batch(
+    batch_id: int,
+    db: DatabaseSession,
+    current_user: CurrentUser,
+) -> ImportBatchRead:
+    """
+    Retry only rows that previously failed during processing.
+
+    Successfully imported, updated and skipped rows remain unchanged.
+    Validation-invalid rows are not retried by this endpoint.
+    """
+
+    school_id = _require_import_admin(
+        current_user,
+    )
+
+    batch = await _get_school_batch_or_404(
+        db,
+        batch_id=batch_id,
+        school_id=school_id,
+        for_update=True,
     )
 
     try:
-        process_import_batch_task.delay(
-            batch_id=batch.id,
-            school_id=school_id,
-        )
-    except Exception as exc:
-        await set_import_batch_status(
+        await retry_import_batch(
             db,
             batch=batch,
-            status=ImportStatus.READY,
-            current_stage="processing_queue_failed",
-            error_message=(
-                "The processing job could not be queued. " "The batch may be retried."
-            ),
             commit=True,
         )
+    except Exception as exc:
+        _raise_import_service_error(
+            exc,
+        )
 
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "The import could not be queued for processing. " "Please try again."
-            ),
-        ) from exc
+    await _queue_processing_task(
+        db,
+        batch=batch,
+        school_id=school_id,
+        queued_stage="retry_queued",
+        queue_failure_stage="retry_queue_failed",
+        queue_failure_message=(
+            "The retry job could not be queued. "
+            "The batch remains ready and may be queued again."
+        ),
+    )
 
-    return ImportBatchRead.model_validate(batch)
+    return ImportBatchRead.model_validate(
+        batch,
+    )
 
 
 @router.get(
@@ -593,12 +797,21 @@ async def get_batch_rows(
         default=None,
         alias="status",
     ),
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=500,
+    ),
 ) -> list[ImportRowRead]:
     """List rows belonging to one import batch."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     await _get_school_batch_or_404(
         db,
@@ -615,7 +828,12 @@ async def get_batch_rows(
         limit=limit,
     )
 
-    return [ImportRowRead.model_validate(row) for row in rows]
+    return [
+        ImportRowRead.model_validate(
+            row,
+        )
+        for row in rows
+    ]
 
 
 @router.get(
@@ -633,7 +851,9 @@ async def get_batch_row_count(
 ) -> dict[str, int]:
     """Count rows in one school-scoped import batch."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     await _get_school_batch_or_404(
         db,
@@ -648,7 +868,9 @@ async def get_batch_row_count(
         status=row_status,
     )
 
-    return {"total": total}
+    return {
+        "total": total,
+    }
 
 
 @router.get(
@@ -663,7 +885,9 @@ async def get_batch_row(
 ) -> ImportRowRead:
     """Return one import row."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     await _get_school_batch_or_404(
         db,
@@ -684,7 +908,9 @@ async def get_batch_row(
             detail="Import row not found.",
         )
 
-    return ImportRowRead.model_validate(row)
+    return ImportRowRead.model_validate(
+        row,
+    )
 
 
 @router.post(
@@ -695,11 +921,15 @@ async def cancel_batch(
     batch_id: int,
     db: DatabaseSession,
     current_user: CurrentUser,
-    reason: str | None = Form(default=None),
+    reason: str | None = Form(
+        default=None,
+    ),
 ) -> ImportBatchRead:
     """Cancel an import batch that has not completed."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await _get_school_batch_or_404(
         db,
@@ -715,9 +945,13 @@ async def cancel_batch(
             reason=reason,
         )
     except Exception as exc:
-        _raise_import_service_error(exc)
+        _raise_import_service_error(
+            exc,
+        )
 
-    return ImportBatchRead.model_validate(batch)
+    return ImportBatchRead.model_validate(
+        batch,
+    )
 
 
 @router.post(
@@ -728,11 +962,15 @@ async def archive_batch(
     batch_id: int,
     db: DatabaseSession,
     current_user: CurrentUser,
-    reason: str | None = Form(default=None),
+    reason: str | None = Form(
+        default=None,
+    ),
 ) -> ImportBatchRead:
     """Archive an import batch while preserving its history."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await _get_school_batch_or_404(
         db,
@@ -749,7 +987,9 @@ async def archive_batch(
         archive_reason=reason,
     )
 
-    return ImportBatchRead.model_validate(batch)
+    return ImportBatchRead.model_validate(
+        batch,
+    )
 
 
 @router.post(
@@ -763,7 +1003,9 @@ async def restore_batch(
 ) -> ImportBatchRead:
     """Restore an archived import batch."""
 
-    school_id = _require_import_admin(current_user)
+    school_id = _require_import_admin(
+        current_user,
+    )
 
     batch = await _get_school_batch_or_404(
         db,
@@ -778,4 +1020,6 @@ async def restore_batch(
         batch=batch,
     )
 
-    return ImportBatchRead.model_validate(batch)
+    return ImportBatchRead.model_validate(
+        batch,
+    )

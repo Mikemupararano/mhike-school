@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+)
 
 from app.api.v1.api import api_router
 from app.services.import_service import (
@@ -22,10 +27,17 @@ class StudentImportRow(BaseModel):
         str_strip_whitespace=True,
     )
 
-    first_name: str = Field(min_length=1)
-    last_name: str = Field(min_length=1)
+    first_name: str = Field(
+        min_length=1,
+    )
+    last_name: str = Field(
+        min_length=1,
+    )
     email: EmailStr
-    year_group: int = Field(ge=1, le=13)
+    year_group: int = Field(
+        ge=1,
+        le=13,
+    )
 
 
 def test_normalise_header_converts_text_to_snake_case() -> None:
@@ -97,7 +109,9 @@ def test_parse_csv_bytes_parses_valid_csv() -> None:
 def test_parse_csv_bytes_supports_semicolon_delimiter() -> None:
     content = b"First Name;Last Name;Email\n" b"Alice;Johnson;alice@example.com\n"
 
-    parsed = parse_csv_bytes(content)
+    parsed = parse_csv_bytes(
+        content,
+    )
 
     assert parsed.delimiter == ";"
     assert parsed.rows == [
@@ -118,7 +132,9 @@ def test_parse_csv_bytes_ignores_completely_blank_rows() -> None:
         b"Brian,Smith,brian@example.com\n"
     )
 
-    parsed = parse_csv_bytes(content)
+    parsed = parse_csv_bytes(
+        content,
+    )
 
     assert len(parsed.rows) == 2
     assert parsed.rows[0]["first_name"] == "Alice"
@@ -128,7 +144,9 @@ def test_parse_csv_bytes_ignores_completely_blank_rows() -> None:
 def test_parse_csv_bytes_converts_blank_cells_to_none() -> None:
     content = b"First Name,Last Name,Email\n" b"Alice,,alice@example.com\n"
 
-    parsed = parse_csv_bytes(content)
+    parsed = parse_csv_bytes(
+        content,
+    )
 
     assert parsed.rows[0] == {
         "first_name": "Alice",
@@ -142,7 +160,9 @@ def test_parse_csv_bytes_rejects_empty_file() -> None:
         ImportFileError,
         match="uploaded import file is empty",
     ):
-        parse_csv_bytes(b"")
+        parse_csv_bytes(
+            b"",
+        )
 
 
 def test_parse_csv_bytes_rejects_header_without_data_rows() -> None:
@@ -152,7 +172,9 @@ def test_parse_csv_bytes_rejects_header_without_data_rows() -> None:
         ImportFileError,
         match="does not contain any data rows",
     ):
-        parse_csv_bytes(content)
+        parse_csv_bytes(
+            content,
+        )
 
 
 def test_parse_csv_bytes_rejects_missing_required_headers() -> None:
@@ -200,7 +222,9 @@ def test_parse_csv_bytes_rejects_duplicate_normalised_headers() -> None:
         ImportHeaderError,
         match="Duplicate import headers were found: first_name",
     ):
-        parse_csv_bytes(content)
+        parse_csv_bytes(
+            content,
+        )
 
 
 def test_parse_csv_bytes_rejects_invalid_blank_header() -> None:
@@ -210,7 +234,9 @@ def test_parse_csv_bytes_rejects_invalid_blank_header() -> None:
         ImportHeaderError,
         match="headers are blank or invalid",
     ):
-        parse_csv_bytes(content)
+        parse_csv_bytes(
+            content,
+        )
 
 
 def test_parse_csv_bytes_rejects_more_than_maximum_rows() -> None:
@@ -305,26 +331,39 @@ def test_import_batch_routes_are_registered() -> None:
     route_methods = {
         (
             route.path,
-            tuple(sorted(route.methods or set())),
+            tuple(
+                sorted(
+                    route.methods or set(),
+                )
+            ),
         )
         for route in api_router.routes
         if "import-batches" in route.path
     }
 
     expected_routes = {
-        ("/import-batches", ("POST",)),
         ("/import-batches", ("GET",)),
+        ("/import-batches", ("POST",)),
         ("/import-batches/count", ("GET",)),
         ("/import-batches/{batch_id}", ("GET",)),
         ("/import-batches/{batch_id}/progress", ("GET",)),
         ("/import-batches/{batch_id}/upload", ("POST",)),
         ("/import-batches/{batch_id}/process", ("POST",)),
+        ("/import-batches/{batch_id}/retry", ("POST",)),
         ("/import-batches/{batch_id}/rows", ("GET",)),
         ("/import-batches/{batch_id}/rows/count", ("GET",)),
-        ("/import-batches/{batch_id}/rows/{row_id}", ("GET",)),
+        (
+            "/import-batches/{batch_id}/rows/{row_id}",
+            ("GET",),
+        ),
         ("/import-batches/{batch_id}/cancel", ("POST",)),
         ("/import-batches/{batch_id}/archive", ("POST",)),
         ("/import-batches/{batch_id}/restore", ("POST",)),
     }
 
-    assert expected_routes.issubset(route_methods)
+    missing_routes = expected_routes - route_methods
+
+    assert not missing_routes, (
+        "The following import-batch routes are not registered: "
+        f"{sorted(missing_routes)}"
+    )
