@@ -17,8 +17,11 @@ import type {
     ImportRowRead,
 } from "@/types/import";
 
-const AUTH_TOKEN_STORAGE_KEY = "mhike_token";
-const MAX_CSV_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const AUTH_TOKEN_STORAGE_KEY =
+    "mhike_token";
+
+export const MAX_CSV_FILE_SIZE_BYTES =
+    10 * 1024 * 1024;
 
 type QueryValue =
     | string
@@ -49,17 +52,26 @@ export interface ImportBatchActionOptions {
  * An explicitly supplied token takes priority. Browser calls otherwise use
  * the session token created by the MHike School login flow.
  */
-function resolveAuthToken(token?: string): string {
-    const explicitToken = token?.trim();
+function resolveAuthToken(
+    token?: string,
+): string {
+    const explicitToken =
+        token?.trim();
 
     if (explicitToken) {
         return explicitToken;
     }
 
-    if (typeof window !== "undefined") {
-        const storedToken = window.sessionStorage
-            .getItem(AUTH_TOKEN_STORAGE_KEY)
-            ?.trim();
+    if (
+        typeof window !==
+        "undefined"
+    ) {
+        const storedToken =
+            window.sessionStorage
+                .getItem(
+                    AUTH_TOKEN_STORAGE_KEY,
+                )
+                ?.trim();
 
         if (storedToken) {
             return storedToken;
@@ -76,59 +88,92 @@ function appendQueryParam(
     key: string,
     value: QueryValue,
 ): void {
-    if (value === undefined || value === null) {
+    if (
+        value === undefined ||
+        value === null
+    ) {
         return;
     }
 
-    if (typeof value === "string") {
-        const trimmedValue = value.trim();
+    if (
+        typeof value ===
+        "string"
+    ) {
+        const trimmedValue =
+            value.trim();
 
         if (!trimmedValue) {
             return;
         }
 
-        params.set(key, trimmedValue);
+        params.set(
+            key,
+            trimmedValue,
+        );
+
         return;
     }
 
-    params.set(key, String(value));
+    params.set(
+        key,
+        String(value),
+    );
 }
 
 function buildQueryString(
-    values: Record<string, QueryValue>,
+    values: Record<
+        string,
+        QueryValue
+    >,
 ): string {
-    const params = new URLSearchParams();
+    const params =
+        new URLSearchParams();
 
-    for (const [key, value] of Object.entries(values)) {
-        appendQueryParam(params, key, value);
+    for (
+        const [key, value]
+        of Object.entries(values)
+    ) {
+        appendQueryParam(
+            params,
+            key,
+            value,
+        );
     }
 
-    const query = params.toString();
+    const query =
+        params.toString();
 
-    return query ? `?${query}` : "";
+    return query
+        ? `?${query}`
+        : "";
 }
 
 /**
  * Support the current backend count response:
  *
- *     { "total": 0 }
+ *     { total: 0 }
  *
  * and the older compatibility response:
  *
- *     { "count": 0 }
+ *     { count: 0 }
  *
  * A raw numeric response is also accepted.
  */
 function normaliseCountResponse(
-    response: ImportCountResponse | number,
+    response:
+        | ImportCountResponse
+        | number,
 ): number {
     const count =
-        typeof response === "number"
+        typeof response ===
+            "number"
             ? response
-            : response.total ?? response.count;
+            : response.total ??
+            response.count;
 
     if (
-        typeof count !== "number" ||
+        typeof count !==
+        "number" ||
         !Number.isFinite(count) ||
         !Number.isInteger(count) ||
         count < 0
@@ -145,7 +190,10 @@ function assertPositiveInteger(
     value: number,
     fieldName: string,
 ): void {
-    if (!Number.isInteger(value) || value <= 0) {
+    if (
+        !Number.isInteger(value) ||
+        value <= 0
+    ) {
         throw new Error(
             `${fieldName} must be a positive integer.`,
         );
@@ -158,26 +206,56 @@ function validatePaginationValue(
     minimum: number,
     maximum?: number,
 ): void {
-    if (value === undefined) {
+    if (
+        value === undefined
+    ) {
         return;
     }
 
-    if (!Number.isInteger(value) || value < minimum) {
+    if (
+        !Number.isInteger(value) ||
+        value < minimum
+    ) {
         throw new Error(
             `${fieldName} must be an integer greater than or equal to ${minimum}.`,
         );
     }
 
-    if (maximum !== undefined && value > maximum) {
+    if (
+        maximum !== undefined &&
+        value > maximum
+    ) {
         throw new Error(
             `${fieldName} must be less than or equal to ${maximum}.`,
         );
     }
 }
 
-function validateBatchListFilters(
-    filters: ImportBatchListParams,
+function validateOptionalPositiveInteger(
+    value: number | undefined,
+    fieldName: string,
 ): void {
+    if (
+        value === undefined
+    ) {
+        return;
+    }
+
+    assertPositiveInteger(
+        value,
+        fieldName,
+    );
+}
+
+function validateBatchListFilters(
+    filters:
+        ImportBatchListParams,
+): void {
+    validateOptionalPositiveInteger(
+        filters.uploaded_by_id,
+        "Uploaded-by user ID",
+    );
+
     validatePaginationValue(
         filters.skip,
         "Skip",
@@ -192,8 +270,19 @@ function validateBatchListFilters(
     );
 }
 
+function validateBatchCountFilters(
+    filters:
+        ImportBatchCountParams,
+): void {
+    validateOptionalPositiveInteger(
+        filters.uploaded_by_id,
+        "Uploaded-by user ID",
+    );
+}
+
 function validateRowListFilters(
-    filters: ImportRowListParams,
+    filters:
+        ImportRowListParams,
 ): void {
     validatePaginationValue(
         filters.skip,
@@ -209,9 +298,12 @@ function validateRowListFilters(
     );
 }
 
-function validateCsvFile(file: File): void {
+function validateCsvFile(
+    file: File,
+): void {
     if (
-        typeof File === "undefined" ||
+        typeof File ===
+        "undefined" ||
         !(file instanceof File)
     ) {
         throw new Error(
@@ -219,21 +311,46 @@ function validateCsvFile(file: File): void {
         );
     }
 
-    const fileName = file.name.trim().toLowerCase();
+    const fileName =
+        file.name
+            .trim()
+            .toLowerCase();
 
-    if (!fileName.endsWith(".csv")) {
+    const mimeType =
+        file.type
+            .trim()
+            .toLowerCase();
+
+    const isCsv =
+        fileName.endsWith(
+            ".csv",
+        ) ||
+        mimeType ===
+        "text/csv" ||
+        mimeType ===
+        "application/csv" ||
+        mimeType ===
+        "application/vnd.ms-excel" ||
+        mimeType === "";
+
+    if (!isCsv) {
         throw new Error(
             "Only CSV files can be uploaded.",
         );
     }
 
-    if (file.size === 0) {
+    if (
+        file.size === 0
+    ) {
         throw new Error(
             "The selected CSV file is empty.",
         );
     }
 
-    if (file.size > MAX_CSV_FILE_SIZE_BYTES) {
+    if (
+        file.size >
+        MAX_CSV_FILE_SIZE_BYTES
+    ) {
         throw new Error(
             "The selected CSV file is larger than the 10 MB upload limit.",
         );
@@ -241,13 +358,19 @@ function validateCsvFile(file: File): void {
 }
 
 function normaliseRequiredText(
-    value: string | null | undefined,
+    value:
+        | string
+        | null
+        | undefined,
     fieldName: string,
 ): string {
-    const normalisedValue = value?.trim();
+    const normalisedValue =
+        value?.trim();
 
     if (!normalisedValue) {
-        throw new Error(`${fieldName} is required.`);
+        throw new Error(
+            `${fieldName} is required.`,
+        );
     }
 
     return normalisedValue;
@@ -256,97 +379,152 @@ function normaliseRequiredText(
 function createReasonFormData(
     reason?: string | null,
 ): FormData {
-    const formData = new FormData();
-    const normalisedReason = reason?.trim();
+    const formData =
+        new FormData();
+
+    const normalisedReason =
+        reason?.trim();
 
     if (normalisedReason) {
-        formData.append("reason", normalisedReason);
+        formData.append(
+            "reason",
+            normalisedReason,
+        );
     }
 
     return formData;
 }
 
 export async function createImportBatch(
-    payload: ImportBatchCreate,
+    payload:
+        ImportBatchCreate,
     token?: string,
 ): Promise<ImportBatchRead> {
-    const importType = normaliseRequiredText(
-        payload.import_type,
-        "Import type",
-    );
+    const importType =
+        normaliseRequiredText(
+            payload.import_type,
+            "Import type",
+        );
 
-    const originalFilename = normaliseRequiredText(
-        payload.original_filename,
-        "Original filename",
-    );
+    const originalFilename =
+        normaliseRequiredText(
+            payload.original_filename,
+            "Original filename",
+        );
 
     return apiPost<ImportBatchRead>(
         "/import-batches",
         {
             ...payload,
-            import_type: importType,
-            original_filename: originalFilename,
+            import_type:
+                importType,
+            original_filename:
+                originalFilename,
         },
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
 export async function listImportBatches(
-    filters: ImportBatchListParams = {},
+    filters:
+        ImportBatchListParams = {},
     token?: string,
-): Promise<ImportBatchSummary[]> {
-    validateBatchListFilters(filters);
+): Promise<
+    ImportBatchSummary[]
+> {
+    validateBatchListFilters(
+        filters,
+    );
 
-    const query = buildQueryString({
-        import_type: filters.import_type,
-        status: filters.status,
-        include_archived: filters.include_archived,
+    const query =
+        buildQueryString({
+            import_type:
+                filters.import_type,
+            status:
+                filters.status,
+            uploaded_by_id:
+                filters.uploaded_by_id,
+            include_archived:
+                filters.include_archived,
 
-        // Backend uses offset rather than skip.
-        offset: filters.skip,
-        limit: filters.limit,
-    });
+            // Backend uses offset rather than skip.
+            offset:
+                filters.skip,
+            limit:
+                filters.limit,
+        });
 
-    return apiGet<ImportBatchSummary[]>(
+    return apiGet<
+        ImportBatchSummary[]
+    >(
         `/import-batches${query}`,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
 export async function countImportBatches(
-    filters: ImportBatchCountParams = {},
+    filters:
+        ImportBatchCountParams = {},
     token?: string,
 ): Promise<number> {
-    const query = buildQueryString({
-        import_type: filters.import_type,
-        status: filters.status,
-        include_archived: filters.include_archived,
-    });
-
-    const response = await apiGet<
-        ImportCountResponse | number
-    >(
-        `/import-batches/count${query}`,
-        resolveAuthToken(token),
+    validateBatchCountFilters(
+        filters,
     );
 
-    return normaliseCountResponse(response);
+    const query =
+        buildQueryString({
+            import_type:
+                filters.import_type,
+            status:
+                filters.status,
+            uploaded_by_id:
+                filters.uploaded_by_id,
+            include_archived:
+                filters.include_archived,
+        });
+
+    const response =
+        await apiGet<
+            | ImportCountResponse
+            | number
+        >(
+            `/import-batches/count${query}`,
+            resolveAuthToken(
+                token,
+            ),
+        );
+
+    return normaliseCountResponse(
+        response,
+    );
 }
 
 export async function getImportBatch(
     batchId: number,
-    options: ImportBatchReadOptions = {},
+    options:
+        ImportBatchReadOptions = {},
     token?: string,
 ): Promise<ImportBatchRead> {
-    assertPositiveInteger(batchId, "Batch ID");
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    const query = buildQueryString({
-        include_archived: options.includeArchived,
-    });
+    const query =
+        buildQueryString({
+            include_archived:
+                options.includeArchived,
+        });
 
     return apiGet<ImportBatchRead>(
         `/import-batches/${batchId}${query}`,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
@@ -358,31 +536,54 @@ export async function getImportBatch(
  */
 export async function getImportBatchProgress(
     batchId: number,
-    options: ImportBatchProgressOptions = {},
+    options:
+        ImportBatchProgressOptions = {},
     token?: string,
 ): Promise<ImportBatchProgress> {
-    assertPositiveInteger(batchId, "Batch ID");
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    const query = buildQueryString({
-        include_archived: options.includeArchived,
-    });
+    const query =
+        buildQueryString({
+            include_archived:
+                options.includeArchived,
+        });
 
-    return apiGet<ImportBatchProgress>(
+    return apiGet<
+        ImportBatchProgress
+    >(
         `/import-batches/${batchId}/progress${query}`,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
 export async function uploadImportCsv(
     batchId: number,
     file: File,
-    options: UploadImportCsvOptions = {},
+    options:
+        UploadImportCsvOptions = {},
     token?: string,
 ): Promise<ImportBatchRead> {
-    assertPositiveInteger(batchId, "Batch ID");
-    validateCsvFile(file);
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    const formData = new FormData();
+    validateCsvFile(
+        file,
+    );
+
+    const replaceExisting =
+        Boolean(
+            options.replaceExisting,
+        );
+
+    const formData =
+        new FormData();
 
     formData.append(
         "file",
@@ -392,13 +593,19 @@ export async function uploadImportCsv(
 
     formData.append(
         "replace_existing",
-        String(options.replaceExisting ?? false),
+        String(
+            replaceExisting,
+        ),
     );
 
-    return apiPostForm<ImportBatchRead>(
+    return apiPostForm<
+        ImportBatchRead
+    >(
         `/import-batches/${batchId}/upload`,
         formData,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
@@ -409,56 +616,116 @@ export async function processImportBatch(
     batchId: number,
     token?: string,
 ): Promise<ImportBatchRead> {
-    assertPositiveInteger(batchId, "Batch ID");
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    return apiPost<ImportBatchRead>(
+    return apiPost<
+        ImportBatchRead
+    >(
         `/import-batches/${batchId}/process`,
         undefined,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
+    );
+}
+
+/**
+ * Retry only rows that previously failed during processing.
+ *
+ * Successful, updated and skipped rows remain unchanged.
+ * Validation-invalid rows are not retried.
+ */
+export async function retryImportBatch(
+    batchId: number,
+    token?: string,
+): Promise<ImportBatchRead> {
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
+
+    return apiPost<
+        ImportBatchRead
+    >(
+        `/import-batches/${batchId}/retry`,
+        undefined,
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
 export async function listImportRows(
     batchId: number,
-    filters: ImportRowListParams = {},
+    filters:
+        ImportRowListParams = {},
     token?: string,
 ): Promise<ImportRowRead[]> {
-    assertPositiveInteger(batchId, "Batch ID");
-    validateRowListFilters(filters);
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    const query = buildQueryString({
-        status: filters.status,
+    validateRowListFilters(
+        filters,
+    );
 
-        // Backend uses offset rather than skip.
-        offset: filters.skip,
-        limit: filters.limit,
-    });
+    const query =
+        buildQueryString({
+            status:
+                filters.status,
 
-    return apiGet<ImportRowRead[]>(
+            // Backend uses offset rather than skip.
+            offset:
+                filters.skip,
+            limit:
+                filters.limit,
+        });
+
+    return apiGet<
+        ImportRowRead[]
+    >(
         `/import-batches/${batchId}/rows${query}`,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
 export async function countImportRows(
     batchId: number,
-    filters: ImportRowCountParams = {},
+    filters:
+        ImportRowCountParams = {},
     token?: string,
 ): Promise<number> {
-    assertPositiveInteger(batchId, "Batch ID");
-
-    const query = buildQueryString({
-        status: filters.status,
-    });
-
-    const response = await apiGet<
-        ImportCountResponse | number
-    >(
-        `/import-batches/${batchId}/rows/count${query}`,
-        resolveAuthToken(token),
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
     );
 
-    return normaliseCountResponse(response);
+    const query =
+        buildQueryString({
+            status:
+                filters.status,
+        });
+
+    const response =
+        await apiGet<
+            | ImportCountResponse
+            | number
+        >(
+            `/import-batches/${batchId}/rows/count${query}`,
+            resolveAuthToken(
+                token,
+            ),
+        );
+
+    return normaliseCountResponse(
+        response,
+    );
 }
 
 export async function getImportRow(
@@ -466,40 +733,71 @@ export async function getImportRow(
     rowId: number,
     token?: string,
 ): Promise<ImportRowRead> {
-    assertPositiveInteger(batchId, "Batch ID");
-    assertPositiveInteger(rowId, "Row ID");
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    return apiGet<ImportRowRead>(
+    assertPositiveInteger(
+        rowId,
+        "Row ID",
+    );
+
+    return apiGet<
+        ImportRowRead
+    >(
         `/import-batches/${batchId}/rows/${rowId}`,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
 export async function cancelImportBatch(
     batchId: number,
-    options: ImportBatchActionOptions = {},
+    options:
+        ImportBatchActionOptions = {},
     token?: string,
 ): Promise<ImportBatchRead> {
-    assertPositiveInteger(batchId, "Batch ID");
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    return apiPostForm<ImportBatchRead>(
+    return apiPostForm<
+        ImportBatchRead
+    >(
         `/import-batches/${batchId}/cancel`,
-        createReasonFormData(options.reason),
-        resolveAuthToken(token),
+        createReasonFormData(
+            options.reason,
+        ),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
 export async function archiveImportBatch(
     batchId: number,
-    options: ImportBatchActionOptions = {},
+    options:
+        ImportBatchActionOptions = {},
     token?: string,
 ): Promise<ImportBatchRead> {
-    assertPositiveInteger(batchId, "Batch ID");
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    return apiPostForm<ImportBatchRead>(
+    return apiPostForm<
+        ImportBatchRead
+    >(
         `/import-batches/${batchId}/archive`,
-        createReasonFormData(options.reason),
-        resolveAuthToken(token),
+        createReasonFormData(
+            options.reason,
+        ),
+        resolveAuthToken(
+            token,
+        ),
     );
 }
 
@@ -507,11 +805,18 @@ export async function restoreImportBatch(
     batchId: number,
     token?: string,
 ): Promise<ImportBatchRead> {
-    assertPositiveInteger(batchId, "Batch ID");
+    assertPositiveInteger(
+        batchId,
+        "Batch ID",
+    );
 
-    return apiPost<ImportBatchRead>(
+    return apiPost<
+        ImportBatchRead
+    >(
         `/import-batches/${batchId}/restore`,
         undefined,
-        resolveAuthToken(token),
+        resolveAuthToken(
+            token,
+        ),
     );
 }

@@ -63,6 +63,7 @@ export interface ImportBatchCreate {
 
 export interface ImportBatchUpdate {
     operation?: ImportOperation;
+
     column_mapping?: ImportMetadata | null;
     import_options?: ImportMetadata | null;
 
@@ -95,6 +96,25 @@ export interface ImportBatchSummary {
     completed_at: string | null;
 
     is_archived: boolean;
+
+    /**
+     * These counters are guaranteed on the full batch response.
+     * They remain optional here because summary endpoints may omit them.
+     */
+    validated_rows?: number;
+    processed_rows?: number;
+
+    /**
+     * Temporary compatibility aliases for older dashboard components.
+     *
+     * New code should prefer:
+     * - validated_rows
+     * - failed_rows
+     * - successful_rows
+     */
+    valid_rows?: number;
+    invalid_rows?: number;
+    imported_rows?: number;
 }
 
 export interface ImportBatchRead
@@ -133,16 +153,6 @@ export interface ImportBatchRead
     archived_at: string | null;
     archived_by_id: number | null;
     archive_reason: string | null;
-
-    /**
-     * Temporary compatibility aliases used by the existing import-detail page.
-     *
-     * New code should prefer:
-     * - validated_rows / failed_rows
-     * - original_data / created_entity_id
-     */
-    valid_rows?: number;
-    invalid_rows?: number;
 }
 
 export interface ImportBatchProgress {
@@ -156,6 +166,7 @@ export interface ImportBatchProgress {
     total_rows: number;
     validated_rows: number;
     processed_rows: number;
+
     successful_rows: number;
     warning_rows: number;
     failed_rows: number;
@@ -184,6 +195,7 @@ export interface ImportRowCreate {
     school_id: number;
 
     row_number: number;
+
     original_data: ImportMetadata;
     normalised_data?: ImportMetadata;
 
@@ -237,7 +249,11 @@ export interface ImportRowRead {
     updated_at: string;
 
     /**
-     * Temporary compatibility aliases used by the existing import-detail page.
+     * Temporary compatibility aliases for older row-detail code.
+     *
+     * New code should prefer:
+     * - original_data
+     * - created_entity_id
      */
     raw_data?: ImportMetadata;
     imported_record_id?: number | null;
@@ -246,6 +262,7 @@ export interface ImportRowRead {
 export interface ImportBatchListParams {
     import_type?: string;
     status?: ImportStatus;
+    uploaded_by_id?: number;
     include_archived?: boolean;
     skip?: number;
     limit?: number;
@@ -260,6 +277,7 @@ export interface ImportRowListParams {
 export interface ImportBatchCountParams {
     import_type?: string;
     status?: ImportStatus;
+    uploaded_by_id?: number;
     include_archived?: boolean;
 }
 
@@ -268,9 +286,11 @@ export interface ImportRowCountParams {
 }
 
 /**
- * Current count endpoints return `{ total: number }`.
+ * Current count endpoints return:
  *
- * `count` is retained for compatibility with older deployments.
+ *     { total: number }
+ *
+ * ``count`` remains optional for compatibility with older deployments.
  */
 export interface ImportCountResponse {
     total?: number;

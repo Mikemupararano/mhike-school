@@ -5,7 +5,6 @@ import {
     useEffect,
     useMemo,
     useState,
-    type ReactNode,
 } from "react";
 import {
     AlertCircle,
@@ -35,16 +34,17 @@ import {
     restoreImportBatch,
     uploadImportCsv,
 } from "@/lib/importApi";
-
 import type {
     ImportBatchCountParams,
     ImportBatchCreate,
     ImportBatchListParams,
     ImportBatchRead,
     ImportBatchSummary,
+    ImportStatus,
 } from "@/types/import";
 
 const PAGE_SIZE = 20;
+const BULK_FETCH_PAGE_SIZE = 200;
 const DEFAULT_UPLOAD_IMPORT_TYPE = "students";
 
 const DEFAULT_FILTERS: ImportFiltersValue = {
@@ -54,7 +54,30 @@ const DEFAULT_FILTERS: ImportFiltersValue = {
     archive: "active",
 };
 
-type UnknownRecord = Record<string, unknown>;
+const COMPLETED_STATUSES = new Set([
+    "completed",
+    "completed_with_errors",
+    "partially_completed",
+]);
+
+const PROCESSING_STATUSES = new Set([
+    "pending",
+    "uploading",
+    "uploaded",
+    "staged",
+    "parsing",
+    "validating",
+    "validated",
+    "ready",
+    "queued",
+    "processing",
+    "importing",
+]);
+
+const FAILED_STATUSES = new Set([
+    "failed",
+    "cancelled",
+]);
 
 type SummaryCounts = {
     visible: number;
@@ -63,83 +86,141 @@ type SummaryCounts = {
     failed: number;
 };
 
-type SummaryCardProps = {
-    title?: string;
-    label?: string;
-    value?: number;
-    count?: number;
-    description?: string;
-    icon?: ReactNode;
-    tone?: string;
-};
-
-const SummaryCard =
-    ImportSummaryCard as React.ComponentType<SummaryCardProps>;
-
-function normaliseStatus(status: string): string {
+function normaliseStatus(
+    status: string,
+): string {
     return status
         .trim()
         .toLowerCase()
         .replace(/[\s-]+/g, "_");
 }
 
-function asRecord(value: unknown): UnknownRecord {
-    if (
-        typeof value === "object" &&
-        value !== null &&
-        !Array.isArray(value)
-    ) {
-        return value as UnknownRecord;
-    }
-
-    return {};
-}
-
-function asString(
-    value: unknown,
-    fallback = "",
+function getErrorMessage(
+    error: unknown,
 ): string {
-    return typeof value === "string"
-        ? value
-        : fallback;
-}
+    if (error instanceof Error) {
+        return error.message;
+    }
 
-function asNumber(
-    value: unknown,
-    fallback = 0,
-): number {
-    if (
-        typeof value === "number" &&
-        Number.isFinite(value)
-    ) {
-        return value;
+    if (typeof error === "string") {
+        return error;
     }
 
     if (
-        typeof value === "string" &&
-        value.trim()
+        typeof error === "object" &&
+        error !== null
     ) {
-        const parsed = Number(value);
+        const record =
+            error as Record<
+                string,
+                unknown
+            >;
 
-        if (Number.isFinite(parsed)) {
-            return parsed;
+        if (
+            typeof record.detail ===
+            "string"
+        ) {
+            return record.detail;
+        }
+
+        if (
+            Array.isArray(
+                record.detail,
+            )
+        ) {
+            const messages =
+                record.detail
+                    .map((item) => {
+                        if (
+                            typeof item !==
+                            "object" ||
+                            item === null
+                        ) {
+                            return null;
+                        }
+
+                        const detail =
+                            item as Record<
+                                string,
+                                unknown
+                            >;
+
+                        const message =
+                            typeof detail.msg ===
+                                "string"
+                                ? detail.msg
+                                : null;
+
+                        const location =
+                            Array.isArray(
+                                detail.loc,
+                            )
+                                ? detail.loc
+                                    .map(String)
+                                    .filter(
+                                        (
+                                            part,
+                                        ) =>
+                                            part !==
+                                            "body" &&
+                                            part !==
+                                            "query",
+                                    )
+                                    .join(".")
+                                : "";
+
+                        if (!message) {
+                            return null;
+                        }
+
+                        return location
+                            ? `${location}: ${message}`
+                            : message;
+                    })
+                    .filter(
+                        (
+                            message,
+                        ): message is string =>
+                            Boolean(message),
+                    );
+
+            if (
+                messages.length > 0
+            ) {
+                return messages.join(
+                    "; ",
+                );
+            }
+        }
+
+        if (
+            typeof record.message ===
+            "string"
+        ) {
+            return record.message;
+        }
+
+        if (
+            typeof record.error ===
+            "object" &&
+            record.error !== null
+        ) {
+            const nested =
+                record.error as Record<
+                    string,
+                    unknown
+                >;
+
+            if (
+                typeof nested.message ===
+                "string"
+            ) {
+                return nested.message;
+            }
         }
     }
 
-    return fallback;
-}
-
-function asNullableString(
-    value: unknown,
-): string | null {
-    if (
-        typeof value === "string" &&
-        value.trim()
-    ) {
-        return value;
-    }
-
-    return null;
+    return "Something went wrong while processing the import request.";
 }
 
 function asOptionalFilterValue<
@@ -147,286 +228,98 @@ function asOptionalFilterValue<
 >(
     value: string,
 ): T | undefined {
-    const normalisedValue =
+    const normalised =
         value.trim();
 
-    return normalisedValue
-        ? normalisedValue as T
+    return normalised
+        ? (normalised as T)
         : undefined;
 }
 
-function extractValidationMessage(
-    details: unknown,
-): string | null {
-    if (!Array.isArray(details)) {
-        return null;
-    }
-
-    const messages = details
-        .map((detail) => {
-            const record =
-                asRecord(detail);
-
-            const location =
-                Array.isArray(record.loc)
-                    ? record.loc
-                        .map(
-                            (part) =>
-                                String(part),
-                        )
-                        .filter(
-                            (part) =>
-                                part !== "body" &&
-                                part !== "query",
-                        )
-                        .join(".")
-                    : "";
-
-            const message =
-                asString(record.msg);
-
-            if (!message) {
-                return null;
-            }
-
-            return location
-                ? `${location}: ${message}`
-                : message;
-        })
-        .filter(
-            (
-                message,
-            ): message is string =>
-                Boolean(message),
-        );
-
-    return messages.length > 0
-        ? messages.join("; ")
-        : null;
-}
-
-function parseErrorPayload(
-    value: unknown,
-): string | null {
-    if (typeof value === "string") {
-        const trimmed =
-            value.trim();
-
-        if (!trimmed) {
-            return null;
-        }
-
-        try {
-            return parseErrorPayload(
-                JSON.parse(
-                    trimmed,
-                ) as unknown,
-            );
-        } catch {
-            return trimmed;
-        }
-    }
-
-    const record =
-        asRecord(value);
-
-    if (
-        record.error !== undefined
-    ) {
-        const nestedMessage =
-            parseErrorPayload(
-                record.error,
-            );
-
-        if (nestedMessage) {
-            return nestedMessage;
-        }
-    }
-
-    const validationMessage =
-        extractValidationMessage(
-            record.details ??
-            record.detail,
-        );
-
-    if (validationMessage) {
-        return validationMessage;
-    }
-
-    if (
-        typeof record.detail ===
-        "string"
-    ) {
-        return record.detail;
-    }
-
-    if (
-        typeof record.message ===
-        "string"
-    ) {
-        return record.message;
-    }
-
-    return null;
-}
-
-function getErrorMessage(
-    error: unknown,
-): string {
-    if (error instanceof Error) {
-        return (
-            parseErrorPayload(
-                error.message,
-            ) ??
-            error.message
-        );
-    }
-
-    return (
-        parseErrorPayload(error) ??
-        "Something went wrong while processing the import request."
-    );
-}
-
 function mapBatch(
-    value:
+    batch:
         | ImportBatchSummary
         | ImportBatchRead,
 ): ImportBatchTableItem {
-    const batch =
-        value as unknown as UnknownRecord;
-
-    const id = asNumber(
-        batch.id,
-        Number.NaN,
-    );
-
     if (
-        !Number.isInteger(id) ||
-        id <= 0
+        !Number.isInteger(batch.id) ||
+        batch.id <= 0
     ) {
         throw new Error(
             "The import service returned a batch with an invalid ID.",
         );
     }
 
-    const isArchived =
-        batch.is_archived === true;
+    const isFullBatch =
+        "updated_at" in batch;
+
+    const updatedAt =
+        isFullBatch
+            ? batch.updated_at
+            : null;
 
     const archivedAt =
-        asNullableString(
-            batch.archived_at,
-        ) ??
-        (
-            isArchived
-                ? asNullableString(
-                    batch.updated_at,
-                )
-                : null
-        );
+        isFullBatch
+            ? batch.archived_at
+            : batch.is_archived
+                ? batch.completed_at ??
+                batch.created_at
+                : null;
+
+    const validatedRows =
+        batch.validated_rows ?? 0;
+
+    const processedRows =
+        batch.processed_rows ?? 0;
 
     return {
-        id,
-
+        id: batch.id,
         import_type:
-            asString(
-                batch.import_type,
-                "unknown",
-            ),
-
+            batch.import_type,
         filename:
-            asNullableString(
-                batch.original_filename ??
-                batch.filename,
-            ),
-
-        status:
-            asString(
-                batch.status,
-                "pending",
-            ),
+            batch.original_filename,
+        status: batch.status,
 
         total_rows:
-            asNumber(
-                batch.total_rows,
-            ),
+            batch.total_rows,
 
+        validated_rows:
+            validatedRows,
+
+        successful_rows:
+            batch.successful_rows,
+
+        warning_rows:
+            batch.warning_rows,
+
+        failed_rows:
+            batch.failed_rows,
+
+        skipped_rows:
+            batch.skipped_rows,
+
+        processed_rows:
+            processedRows,
+
+        // Compatibility fields for older table versions.
         valid_rows:
-            asNumber(
-                batch.valid_rows,
-            ),
+            validatedRows,
 
         invalid_rows:
-            asNumber(
-                batch.invalid_rows ??
-                batch.failed_rows,
-            ),
+            batch.failed_rows,
 
         imported_rows:
-            asNumber(
-                batch.successful_rows ??
-                batch.imported_rows ??
-                batch.processed_rows,
-            ),
+            batch.successful_rows,
 
         created_at:
-            asString(
-                batch.created_at,
-                new Date()
-                    .toISOString(),
-            ),
+            batch.created_at,
 
         updated_at:
-            asNullableString(
-                batch.updated_at,
-            ),
+            updatedAt,
 
         archived_at:
             archivedAt,
     };
-}
-
-function isCompletedStatus(
-    status: string,
-): boolean {
-    return [
-        "completed",
-        "completed_with_errors",
-        "partially_completed",
-    ].includes(
-        normaliseStatus(status),
-    );
-}
-
-function isProcessingStatus(
-    status: string,
-): boolean {
-    return [
-        "pending",
-        "uploading",
-        "uploaded",
-        "staged",
-        "parsing",
-        "validating",
-        "validated",
-        "ready",
-        "queued",
-        "processing",
-        "importing",
-    ].includes(
-        normaliseStatus(status),
-    );
-}
-
-function isFailedStatus(
-    status: string,
-): boolean {
-    return [
-        "failed",
-        "cancelled",
-    ].includes(
-        normaliseStatus(status),
-    );
 }
 
 function matchesSearch(
@@ -454,6 +347,70 @@ function matchesSearch(
     );
 }
 
+function matchesArchiveFilter(
+    batch: ImportBatchTableItem,
+    archive:
+        ImportFiltersValue["archive"],
+): boolean {
+    const archived =
+        batch.archived_at !== null &&
+        batch.archived_at !==
+        undefined;
+
+    if (archive === "archived") {
+        return archived;
+    }
+
+    if (archive === "active") {
+        return !archived;
+    }
+
+    return true;
+}
+
+async function fetchAllImportBatches(
+    baseFilters:
+        Omit<
+            ImportBatchListParams,
+            "skip" | "limit"
+        >,
+    totalItems: number,
+): Promise<ImportBatchSummary[]> {
+    if (totalItems <= 0) {
+        return [];
+    }
+
+    const totalPages =
+        Math.ceil(
+            totalItems /
+            BULK_FETCH_PAGE_SIZE,
+        );
+
+    const requests =
+        Array.from(
+            {
+                length:
+                    totalPages,
+            },
+            (_, index) =>
+                listImportBatches({
+                    ...baseFilters,
+                    skip:
+                        index *
+                        BULK_FETCH_PAGE_SIZE,
+                    limit:
+                        BULK_FETCH_PAGE_SIZE,
+                }),
+        );
+
+    const pages =
+        await Promise.all(
+            requests,
+        );
+
+    return pages.flat();
+}
+
 export default function SchoolAdminImportsPage() {
     const [
         batches,
@@ -463,8 +420,8 @@ export default function SchoolAdminImportsPage() {
     >([]);
 
     const [
-        serverTotalItems,
-        setServerTotalItems,
+        totalItems,
+        setTotalItems,
     ] = useState(0);
 
     const [
@@ -475,9 +432,10 @@ export default function SchoolAdminImportsPage() {
     const [
         filters,
         setFilters,
-    ] = useState<ImportFiltersValue>(
-        DEFAULT_FILTERS,
-    );
+    ] =
+        useState<ImportFiltersValue>(
+            DEFAULT_FILTERS,
+        );
 
     const [
         isLoading,
@@ -492,23 +450,23 @@ export default function SchoolAdminImportsPage() {
     const [
         actionBatchId,
         setActionBatchId,
-    ] = useState<number | null>(
-        null,
-    );
+    ] = useState<
+        number | null
+    >(null);
 
     const [
         errorMessage,
         setErrorMessage,
-    ] = useState<string | null>(
-        null,
-    );
+    ] = useState<
+        string | null
+    >(null);
 
     const [
         successMessage,
         setSuccessMessage,
-    ] = useState<string | null>(
-        null,
-    );
+    ] = useState<
+        string | null
+    >(null);
 
     const loadBatches =
         useCallback(
@@ -517,42 +475,151 @@ export default function SchoolAdminImportsPage() {
                 setErrorMessage(null);
 
                 try {
-                    const includeArchived =
-                        filters.archive !==
-                        "active";
-
                     const importType =
                         asOptionalFilterValue<
-                            NonNullable<
-                                ImportBatchListParams[
-                                "import_type"
-                                ]
-                            >
+                            string
                         >(
                             filters.importType,
                         );
 
-                    const status =
+                    const importStatus =
                         asOptionalFilterValue<
-                            NonNullable<
-                                ImportBatchListParams[
-                                "status"
-                                ]
-                            >
+                            ImportStatus
                         >(
                             filters.status,
                         );
 
-                    const listFilters:
-                        ImportBatchListParams =
+                    const includeArchived =
+                        filters.archive !==
+                        "active";
+
+                    const baseFilters:
+                        Omit<
+                            ImportBatchListParams,
+                            "skip" | "limit"
+                        > = {
+                        import_type:
+                            importType,
+
+                        status:
+                            importStatus,
+
+                        include_archived:
+                            includeArchived,
+                    };
+
+                    const countFilters:
+                        ImportBatchCountParams =
                     {
                         import_type:
                             importType,
 
-                        status,
+                        status:
+                            importStatus,
 
                         include_archived:
                             includeArchived,
+                    };
+
+                    const requiresClientFiltering =
+                        filters.search
+                            .trim()
+                            .length >
+                        0 ||
+                        filters.archive ===
+                        "archived";
+
+                    if (
+                        requiresClientFiltering
+                    ) {
+                        const serverCount =
+                            await countImportBatches(
+                                countFilters,
+                            );
+
+                        const allResponses =
+                            await fetchAllImportBatches(
+                                baseFilters,
+                                serverCount,
+                            );
+
+                        const filtered =
+                            allResponses
+                                .map(
+                                    mapBatch,
+                                )
+                                .filter(
+                                    (
+                                        batch,
+                                    ) =>
+                                        matchesArchiveFilter(
+                                            batch,
+                                            filters.archive,
+                                        ),
+                                )
+                                .filter(
+                                    (
+                                        batch,
+                                    ) =>
+                                        matchesSearch(
+                                            batch,
+                                            filters.search,
+                                        ),
+                                );
+
+                        const filteredTotal =
+                            filtered.length;
+
+                        const resolvedTotalPages =
+                            Math.max(
+                                1,
+                                Math.ceil(
+                                    filteredTotal /
+                                    PAGE_SIZE,
+                                ),
+                            );
+
+                        const resolvedPage =
+                            Math.min(
+                                page,
+                                resolvedTotalPages,
+                            );
+
+                        if (
+                            resolvedPage !==
+                            page
+                        ) {
+                            setPage(
+                                resolvedPage,
+                            );
+                        }
+
+                        const start =
+                            (
+                                resolvedPage -
+                                1
+                            ) *
+                            PAGE_SIZE;
+
+                        setBatches(
+                            filtered.slice(
+                                start,
+                                start +
+                                PAGE_SIZE,
+                            ),
+                        );
+
+                        setTotalItems(
+                            filteredTotal,
+                        );
+
+                        return;
+                    }
+
+                    const listFilters:
+                        ImportBatchListParams =
+                    {
+                        ...baseFilters,
 
                         skip:
                             (
@@ -565,21 +632,9 @@ export default function SchoolAdminImportsPage() {
                             PAGE_SIZE,
                     };
 
-                    const countFilters:
-                        ImportBatchCountParams =
-                    {
-                        import_type:
-                            importType,
-
-                        status,
-
-                        include_archived:
-                            includeArchived,
-                    };
-
                     const [
                         batchResponse,
-                        totalResponse,
+                        countResponse,
                     ] =
                         await Promise.all(
                             [
@@ -593,40 +648,38 @@ export default function SchoolAdminImportsPage() {
                             ],
                         );
 
-                    const mappedBatches =
-                        batchResponse.map(
-                            mapBatch,
+                    const resolvedTotalPages =
+                        Math.max(
+                            1,
+                            Math.ceil(
+                                countResponse /
+                                PAGE_SIZE,
+                            ),
                         );
 
-                    const archiveFiltered =
-                        filters.archive ===
-                            "archived"
-                            ? mappedBatches.filter(
-                                (batch) =>
-                                    batch.archived_at !==
-                                    null,
-                            )
-                            : filters.archive ===
-                                "active"
-                                ? mappedBatches.filter(
-                                    (batch) =>
-                                        batch.archived_at ===
-                                        null,
-                                )
-                                : mappedBatches;
+                    if (
+                        page >
+                        resolvedTotalPages
+                    ) {
+                        setPage(
+                            resolvedTotalPages,
+                        );
+
+                        return;
+                    }
 
                     setBatches(
-                        archiveFiltered,
+                        batchResponse.map(
+                            mapBatch,
+                        ),
                     );
 
-                    setServerTotalItems(
-                        totalResponse,
+                    setTotalItems(
+                        countResponse,
                     );
                 } catch (error) {
                     setBatches([]);
-                    setServerTotalItems(
-                        0,
-                    );
+                    setTotalItems(0);
 
                     setErrorMessage(
                         getErrorMessage(
@@ -642,6 +695,7 @@ export default function SchoolAdminImportsPage() {
             [
                 filters.archive,
                 filters.importType,
+                filters.search,
                 filters.status,
                 page,
             ],
@@ -660,43 +714,25 @@ export default function SchoolAdminImportsPage() {
         filters.archive,
     ]);
 
-    const visibleBatches =
-        useMemo(
-            () =>
-                batches.filter(
-                    (batch) =>
-                        matchesSearch(
-                            batch,
-                            filters.search,
-                        ),
-                ),
-            [
-                batches,
-                filters.search,
-            ],
-        );
-
-    const totalItems =
-        filters.search.trim() ||
-            filters.archive ===
-            "archived"
-            ? visibleBatches.length
-            : serverTotalItems;
-
     const summary =
         useMemo<SummaryCounts>(
             () =>
-                visibleBatches.reduce<SummaryCounts>(
+                batches.reduce<SummaryCounts>(
                     (
                         counts,
                         batch,
                     ) => {
+                        const status =
+                            normaliseStatus(
+                                batch.status,
+                            );
+
                         counts.visible +=
                             1;
 
                         if (
-                            isCompletedStatus(
-                                batch.status,
+                            COMPLETED_STATUSES.has(
+                                status,
                             )
                         ) {
                             counts.completed +=
@@ -704,8 +740,8 @@ export default function SchoolAdminImportsPage() {
                         }
 
                         if (
-                            isProcessingStatus(
-                                batch.status,
+                            PROCESSING_STATUSES.has(
+                                status,
                             )
                         ) {
                             counts.processing +=
@@ -713,8 +749,8 @@ export default function SchoolAdminImportsPage() {
                         }
 
                         if (
-                            isFailedStatus(
-                                batch.status,
+                            FAILED_STATUSES.has(
+                                status,
                             )
                         ) {
                             counts.failed +=
@@ -730,9 +766,8 @@ export default function SchoolAdminImportsPage() {
                         failed: 0,
                     },
                 ),
-            [visibleBatches],
+            [batches],
         );
-
     async function handleUpload(
         payload: ImportUploadPayload,
     ): Promise<void> {
@@ -754,17 +789,24 @@ export default function SchoolAdminImportsPage() {
                 );
             }
 
+            const filename =
+                payload.file.name.trim();
+
+            if (!filename) {
+                throw new Error(
+                    "The selected CSV file does not have a valid filename.",
+                );
+            }
+
             const createPayload:
                 ImportBatchCreate =
             {
                 import_type:
                     importType,
-
                 operation:
                     "create",
-
                 original_filename:
-                    payload.file.name,
+                    filename,
             };
 
             const createdBatch =
@@ -781,7 +823,7 @@ export default function SchoolAdminImportsPage() {
             );
 
             setSuccessMessage(
-                `${payload.file.name} was uploaded successfully as import batch #${createdBatch.id}.`,
+                `${filename} was uploaded successfully as import batch #${createdBatch.id}.`,
             );
 
             setPage(1);
@@ -789,12 +831,18 @@ export default function SchoolAdminImportsPage() {
             await loadBatches();
         } catch (error) {
             const originalMessage =
-                getErrorMessage(error);
+                getErrorMessage(
+                    error,
+                );
 
             setErrorMessage(
                 createdBatchId !==
                     null
-                    ? `${originalMessage} Import batch #${createdBatchId} was created, but its CSV upload did not complete.`
+                    ? (
+                        `${originalMessage} ` +
+                        `Import batch #${createdBatchId} was created, ` +
+                        "but its CSV upload did not complete."
+                    )
                     : originalMessage,
             );
 
@@ -813,12 +861,22 @@ export default function SchoolAdminImportsPage() {
         ) => Promise<ImportBatchRead>,
         successText: string,
     ): Promise<void> {
-        setActionBatchId(batchId);
-        setErrorMessage(null);
-        setSuccessMessage(null);
+        setActionBatchId(
+            batchId,
+        );
+
+        setErrorMessage(
+            null,
+        );
+
+        setSuccessMessage(
+            null,
+        );
 
         try {
-            await action(batchId);
+            await action(
+                batchId,
+            );
 
             setSuccessMessage(
                 successText,
@@ -844,7 +902,7 @@ export default function SchoolAdminImportsPage() {
     ): Promise<void> {
         const confirmed =
             window.confirm(
-                `Cancel import batch #${batch.id}?`,
+                `Cancel import batch #${batch.id}? Rows already processed may remain unchanged.`,
             );
 
         if (!confirmed) {
@@ -862,6 +920,15 @@ export default function SchoolAdminImportsPage() {
         batch:
             ImportBatchTableItem,
     ): Promise<void> {
+        const confirmed =
+            window.confirm(
+                `Archive import batch #${batch.id}? Its history will be retained.`,
+            );
+
+        if (!confirmed) {
+            return;
+        }
+
         await runBatchAction(
             batch.id,
             archiveImportBatch,
@@ -873,6 +940,15 @@ export default function SchoolAdminImportsPage() {
         batch:
             ImportBatchTableItem,
     ): Promise<void> {
+        const confirmed =
+            window.confirm(
+                `Restore import batch #${batch.id}?`,
+            );
+
+        if (!confirmed) {
+            return;
+        }
+
         await runBatchAction(
             batch.id,
             restoreImportBatch,
@@ -884,9 +960,17 @@ export default function SchoolAdminImportsPage() {
         nextFilters:
             ImportFiltersValue,
     ): void {
-        setErrorMessage(null);
-        setSuccessMessage(null);
-        setFilters(nextFilters);
+        setErrorMessage(
+            null,
+        );
+
+        setSuccessMessage(
+            null,
+        );
+
+        setFilters(
+            nextFilters,
+        );
     }
 
     return (
@@ -912,10 +996,9 @@ export default function SchoolAdminImportsPage() {
                                 </h1>
 
                                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300 sm:text-base">
-                                    Upload CSV files,
-                                    validate records and
-                                    monitor every import
-                                    batch from one place.
+                                    Upload CSV files, validate records
+                                    and monitor every import batch from
+                                    one place.
                                 </p>
                             </div>
                         </div>
@@ -924,7 +1007,9 @@ export default function SchoolAdminImportsPage() {
                             type="button"
                             disabled={
                                 isLoading ||
-                                isUploading
+                                isUploading ||
+                                actionBatchId !==
+                                null
                             }
                             className={[
                                 "inline-flex min-h-11 items-center justify-center",
@@ -993,16 +1078,12 @@ export default function SchoolAdminImportsPage() {
                 ) : null}
 
                 <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    <SummaryCard
+                    <ImportSummaryCard
                         title="Visible batches"
-                        label="Visible batches"
                         value={
                             summary.visible
                         }
-                        count={
-                            summary.visible
-                        }
-                        description="Batches on the current page"
+                        description="Batches shown on the current page"
                         icon={
                             <FileSpreadsheet
                                 className="h-5 w-5"
@@ -1012,13 +1093,9 @@ export default function SchoolAdminImportsPage() {
                         tone="blue"
                     />
 
-                    <SummaryCard
+                    <ImportSummaryCard
                         title="Completed"
-                        label="Completed"
                         value={
-                            summary.completed
-                        }
-                        count={
                             summary.completed
                         }
                         description="Completed successfully or with row errors"
@@ -1031,16 +1108,12 @@ export default function SchoolAdminImportsPage() {
                         tone="green"
                     />
 
-                    <SummaryCard
+                    <ImportSummaryCard
                         title="In progress"
-                        label="In progress"
                         value={
                             summary.processing
                         }
-                        count={
-                            summary.processing
-                        }
-                        description="Uploaded, validating, queued or processing"
+                        description="Uploaded, validating, ready, queued or processing"
                         icon={
                             <Clock3
                                 className="h-5 w-5"
@@ -1050,16 +1123,12 @@ export default function SchoolAdminImportsPage() {
                         tone="amber"
                     />
 
-                    <SummaryCard
+                    <ImportSummaryCard
                         title="Failed or cancelled"
-                        label="Failed or cancelled"
                         value={
                             summary.failed
                         }
-                        count={
-                            summary.failed
-                        }
-                        description="Batches requiring attention"
+                        description="Batches requiring administrator attention"
                         icon={
                             <CircleX
                                 className="h-5 w-5"
@@ -1079,7 +1148,9 @@ export default function SchoolAdminImportsPage() {
                             isUploading
                         }
                         disabled={
-                            isLoading
+                            isLoading ||
+                            actionBatchId !==
+                            null
                         }
                         errorMessage={
                             null
@@ -1104,7 +1175,9 @@ export default function SchoolAdminImportsPage() {
 
                 <section className="mb-6">
                     <ImportFilters
-                        value={filters}
+                        value={
+                            filters
+                        }
                         onChange={
                             handleFiltersChange
                         }
@@ -1119,13 +1192,17 @@ export default function SchoolAdminImportsPage() {
 
                 <ImportBatchTable
                     batches={
-                        visibleBatches
+                        batches
                     }
                     isLoading={
                         isLoading
                     }
-                    errorMessage={null}
-                    page={page}
+                    errorMessage={
+                        null
+                    }
+                    page={
+                        page
+                    }
                     pageSize={
                         PAGE_SIZE
                     }

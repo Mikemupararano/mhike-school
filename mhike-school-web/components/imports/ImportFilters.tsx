@@ -38,36 +38,99 @@ type ImportFiltersProps = {
 const DEFAULT_IMPORT_TYPE_OPTIONS: ImportFilterOption[] = [
     { value: "", label: "All import types" },
     { value: "students", label: "Students" },
-    { value: "staff", label: "Staff" },
     { value: "parents", label: "Parents" },
+    { value: "teachers", label: "Teachers" },
+    { value: "staff", label: "Staff" },
     { value: "classes", label: "Classes" },
     { value: "subjects", label: "Subjects" },
-    { value: "teaching_assignments", label: "Teaching assignments" },
+    {
+        value: "teaching_assignments",
+        label: "Teaching assignments",
+    },
+    { value: "courses", label: "Courses" },
+    { value: "enrolments", label: "Enrolments" },
+    { value: "timetables", label: "Timetables" },
+    { value: "attendance", label: "Attendance" },
+    { value: "marks", label: "Marks" },
 ];
 
 const DEFAULT_STATUS_OPTIONS: ImportFilterOption[] = [
     { value: "", label: "All statuses" },
     { value: "created", label: "Created" },
     { value: "pending", label: "Pending" },
+    { value: "uploading", label: "Uploading" },
     { value: "uploaded", label: "Uploaded" },
+    { value: "staged", label: "Staged" },
+    { value: "parsing", label: "Parsing" },
     { value: "validating", label: "Validating" },
     { value: "validated", label: "Validated" },
+    { value: "ready", label: "Ready" },
+    { value: "queued", label: "Queued" },
     { value: "processing", label: "Processing" },
     { value: "importing", label: "Importing" },
     { value: "completed", label: "Completed" },
-    { value: "partially_completed", label: "Partially completed" },
+    {
+        value: "completed_with_errors",
+        label: "Completed with errors",
+    },
+    {
+        value: "partially_completed",
+        label: "Partially completed",
+    },
     { value: "failed", label: "Failed" },
     { value: "cancelled", label: "Cancelled" },
     { value: "archived", label: "Archived" },
 ];
 
-function hasActiveFilters(value: ImportFiltersValue): boolean {
+const DEFAULT_FILTERS: ImportFiltersValue = {
+    search: "",
+    importType: "",
+    status: "",
+    archive: "active",
+};
+
+function hasActiveFilters(
+    value: ImportFiltersValue,
+): boolean {
     return Boolean(
         value.search.trim() ||
         value.importType ||
         value.status ||
         value.archive !== "active",
     );
+}
+
+function normaliseOptions(
+    options: ImportFilterOption[],
+    fallbackLabel: string,
+): ImportFilterOption[] {
+    const seenValues = new Set<string>();
+    const normalisedOptions: ImportFilterOption[] = [];
+
+    for (const option of options) {
+        const value = option.value.trim();
+        const label = option.label.trim();
+
+        if (seenValues.has(value)) {
+            continue;
+        }
+
+        seenValues.add(value);
+
+        normalisedOptions.push({
+            value,
+            label: label || fallbackLabel,
+        });
+    }
+
+    if (!seenValues.has("")) {
+        normalisedOptions.unshift({
+            value: "",
+            label: fallbackLabel,
+        });
+    }
+
+    return normalisedOptions;
 }
 
 export default function ImportFilters({
@@ -81,6 +144,18 @@ export default function ImportFilters({
 }: ImportFiltersProps) {
     const activeFilters = hasActiveFilters(value);
 
+    const resolvedImportTypeOptions =
+        normaliseOptions(
+            importTypeOptions,
+            "All import types",
+        );
+
+    const resolvedStatusOptions =
+        normaliseOptions(
+            statusOptions,
+            "All statuses",
+        );
+
     function updateValue(
         changes: Partial<ImportFiltersValue>,
     ): void {
@@ -91,12 +166,7 @@ export default function ImportFilters({
     }
 
     function clearFilters(): void {
-        onChange({
-            search: "",
-            importType: "",
-            status: "",
-            archive: "active",
-        });
+        onChange(DEFAULT_FILTERS);
     }
 
     return (
@@ -108,11 +178,15 @@ export default function ImportFilters({
             ]
                 .filter(Boolean)
                 .join(" ")}
+            aria-busy={isLoading}
         >
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                     <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
-                        <Filter className="h-5 w-5" aria-hidden="true" />
+                        <Filter
+                            className="h-5 w-5"
+                            aria-hidden="true"
+                        />
                     </span>
 
                     <div>
@@ -130,15 +204,20 @@ export default function ImportFilters({
                     {activeFilters ? (
                         <button
                             type="button"
+                            disabled={isLoading}
                             className={[
                                 "inline-flex min-h-10 items-center justify-center gap-2",
                                 "rounded-xl border border-slate-300 bg-white px-4",
                                 "text-sm font-semibold text-slate-700 transition",
                                 "hover:bg-slate-100",
+                                "disabled:cursor-not-allowed disabled:opacity-50",
                             ].join(" ")}
                             onClick={clearFilters}
                         >
-                            <X className="h-4 w-4" aria-hidden="true" />
+                            <X
+                                className="h-4 w-4"
+                                aria-hidden="true"
+                            />
                             Clear filters
                         </button>
                     ) : null}
@@ -162,7 +241,9 @@ export default function ImportFilters({
                                 className={[
                                     "h-4 w-4",
                                     isLoading ? "animate-spin" : "",
-                                ].join(" ")}
+                                ]
+                                    .filter(Boolean)
+                                    .join(" ")}
                                 aria-hidden="true"
                             />
                             Refresh
@@ -186,6 +267,8 @@ export default function ImportFilters({
                         <input
                             type="search"
                             value={value.search}
+                            disabled={isLoading}
+                            aria-label="Search imports"
                             placeholder="Search by file name or batch ID"
                             className={[
                                 "min-h-11 w-full rounded-xl border border-slate-300",
@@ -193,6 +276,8 @@ export default function ImportFilters({
                                 "outline-none transition",
                                 "placeholder:text-slate-400",
                                 "focus:border-blue-600 focus:ring-4 focus:ring-blue-100",
+                                "disabled:cursor-not-allowed disabled:bg-slate-100",
+                                "disabled:text-slate-500",
                             ].join(" ")}
                             onChange={(event) => {
                                 updateValue({
@@ -204,18 +289,25 @@ export default function ImportFilters({
                         {value.search ? (
                             <button
                                 type="button"
+                                disabled={isLoading}
                                 className={[
                                     "absolute right-2 top-1/2 flex h-7 w-7",
                                     "-translate-y-1/2 items-center justify-center",
                                     "rounded-lg text-slate-500 transition",
                                     "hover:bg-slate-100 hover:text-slate-900",
+                                    "disabled:cursor-not-allowed disabled:opacity-50",
                                 ].join(" ")}
                                 aria-label="Clear search"
                                 onClick={() => {
-                                    updateValue({ search: "" });
+                                    updateValue({
+                                        search: "",
+                                    });
                                 }}
                             >
-                                <X className="h-4 w-4" aria-hidden="true" />
+                                <X
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                />
                             </button>
                         ) : null}
                     </span>
@@ -228,26 +320,36 @@ export default function ImportFilters({
 
                     <select
                         value={value.importType}
+                        disabled={isLoading}
+                        aria-label="Import type"
                         className={[
                             "min-h-11 w-full rounded-xl border border-slate-300",
                             "bg-white px-3 py-2 text-sm text-slate-950",
                             "outline-none transition",
                             "focus:border-blue-600 focus:ring-4 focus:ring-blue-100",
+                            "disabled:cursor-not-allowed disabled:bg-slate-100",
+                            "disabled:text-slate-500",
                         ].join(" ")}
                         onChange={(event) => {
                             updateValue({
-                                importType: event.target.value,
+                                importType:
+                                    event.target.value,
                             });
                         }}
                     >
-                        {importTypeOptions.map((option) => (
-                            <option
-                                key={option.value || "all-import-types"}
-                                value={option.value}
-                            >
-                                {option.label}
-                            </option>
-                        ))}
+                        {resolvedImportTypeOptions.map(
+                            (option) => (
+                                <option
+                                    key={
+                                        option.value ||
+                                        "all-import-types"
+                                    }
+                                    value={option.value}
+                                >
+                                    {option.label}
+                                </option>
+                            ),
+                        )}
                     </select>
                 </label>
 
@@ -258,26 +360,36 @@ export default function ImportFilters({
 
                     <select
                         value={value.status}
+                        disabled={isLoading}
+                        aria-label="Import status"
                         className={[
                             "min-h-11 w-full rounded-xl border border-slate-300",
                             "bg-white px-3 py-2 text-sm text-slate-950",
                             "outline-none transition",
                             "focus:border-blue-600 focus:ring-4 focus:ring-blue-100",
+                            "disabled:cursor-not-allowed disabled:bg-slate-100",
+                            "disabled:text-slate-500",
                         ].join(" ")}
                         onChange={(event) => {
                             updateValue({
-                                status: event.target.value,
+                                status:
+                                    event.target.value,
                             });
                         }}
                     >
-                        {statusOptions.map((option) => (
-                            <option
-                                key={option.value || "all-statuses"}
-                                value={option.value}
-                            >
-                                {option.label}
-                            </option>
-                        ))}
+                        {resolvedStatusOptions.map(
+                            (option) => (
+                                <option
+                                    key={
+                                        option.value ||
+                                        "all-statuses"
+                                    }
+                                    value={option.value}
+                                >
+                                    {option.label}
+                                </option>
+                            ),
+                        )}
                     </select>
                 </label>
 
@@ -294,22 +406,33 @@ export default function ImportFilters({
 
                         <select
                             value={value.archive}
+                            disabled={isLoading}
+                            aria-label="Record visibility"
                             className={[
                                 "min-h-11 w-full appearance-none rounded-xl",
                                 "border border-slate-300 bg-white py-2 pl-10 pr-8",
                                 "text-sm text-slate-950 outline-none transition",
                                 "focus:border-blue-600 focus:ring-4 focus:ring-blue-100",
+                                "disabled:cursor-not-allowed disabled:bg-slate-100",
+                                "disabled:text-slate-500",
                             ].join(" ")}
                             onChange={(event) => {
                                 updateValue({
                                     archive:
-                                        event.target.value as ImportArchiveFilter,
+                                        event.target
+                                            .value as ImportArchiveFilter,
                                 });
                             }}
                         >
-                            <option value="active">Active records</option>
-                            <option value="archived">Archived records</option>
-                            <option value="all">All records</option>
+                            <option value="active">
+                                Active records
+                            </option>
+                            <option value="archived">
+                                Archived records
+                            </option>
+                            <option value="all">
+                                All records
+                            </option>
                         </select>
                     </span>
                 </label>
@@ -320,8 +443,11 @@ export default function ImportFilters({
                     {value.search.trim() ? (
                         <FilterChip
                             label={`Search: ${value.search.trim()}`}
+                            disabled={isLoading}
                             onRemove={() => {
-                                updateValue({ search: "" });
+                                updateValue({
+                                    search: "",
+                                });
                             }}
                         />
                     ) : null}
@@ -329,13 +455,18 @@ export default function ImportFilters({
                     {value.importType ? (
                         <FilterChip
                             label={
-                                importTypeOptions.find(
+                                resolvedImportTypeOptions.find(
                                     (option) =>
-                                        option.value === value.importType,
-                                )?.label || value.importType
+                                        option.value ===
+                                        value.importType,
+                                )?.label ??
+                                value.importType
                             }
+                            disabled={isLoading}
                             onRemove={() => {
-                                updateValue({ importType: "" });
+                                updateValue({
+                                    importType: "",
+                                });
                             }}
                         />
                     ) : null}
@@ -343,12 +474,18 @@ export default function ImportFilters({
                     {value.status ? (
                         <FilterChip
                             label={
-                                statusOptions.find(
-                                    (option) => option.value === value.status,
-                                )?.label || value.status
+                                resolvedStatusOptions.find(
+                                    (option) =>
+                                        option.value ===
+                                        value.status,
+                                )?.label ??
+                                value.status
                             }
+                            disabled={isLoading}
                             onRemove={() => {
-                                updateValue({ status: "" });
+                                updateValue({
+                                    status: "",
+                                });
                             }}
                         />
                     ) : null}
@@ -356,12 +493,16 @@ export default function ImportFilters({
                     {value.archive !== "active" ? (
                         <FilterChip
                             label={
-                                value.archive === "archived"
+                                value.archive ===
+                                    "archived"
                                     ? "Archived records"
                                     : "All records"
                             }
+                            disabled={isLoading}
                             onRemove={() => {
-                                updateValue({ archive: "active" });
+                                updateValue({
+                                    archive: "active",
+                                });
                             }}
                         />
                     ) : null}
@@ -373,24 +514,36 @@ export default function ImportFilters({
 
 type FilterChipProps = {
     label: string;
+    disabled?: boolean;
     onRemove: () => void;
 };
 
 function FilterChip({
     label,
+    disabled = false,
     onRemove,
 }: FilterChipProps) {
     return (
         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 py-1 pl-3 pr-1 text-xs font-semibold text-blue-800">
-            <span className="max-w-56 truncate">{label}</span>
+            <span className="max-w-56 truncate">
+                {label}
+            </span>
 
             <button
                 type="button"
-                className="flex h-6 w-6 items-center justify-center rounded-full transition hover:bg-blue-100"
+                disabled={disabled}
+                className={[
+                    "flex h-6 w-6 items-center justify-center rounded-full",
+                    "transition hover:bg-blue-100",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                ].join(" ")}
                 aria-label={`Remove ${label} filter`}
                 onClick={onRemove}
             >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                <X
+                    className="h-3.5 w-3.5"
+                    aria-hidden="true"
+                />
             </button>
         </span>
     );
