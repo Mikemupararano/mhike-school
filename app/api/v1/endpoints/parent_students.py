@@ -32,7 +32,20 @@ async def create_parent_student_link(
 
     service = ParentStudentService(db)
 
-    return await service.create_link(data)
+    try:
+        link = await service.create_link(
+            data,
+        )
+
+        await db.commit()
+        await db.refresh(
+            link,
+        )
+
+        return link
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.get(
@@ -88,7 +101,13 @@ async def remove_parent_student_link(
 
     service = ParentStudentService(db)
 
-    await service.remove_link(
-        parent_id=parent_id,
-        student_id=student_id,
-    )
+    try:
+        await service.remove_link(
+            parent_id=parent_id,
+            student_id=student_id,
+        )
+
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
