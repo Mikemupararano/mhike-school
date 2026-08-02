@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.imports.processors.classes import process_class_row
 from app.imports.processors.courses import process_course_row
+from app.imports.processors.enrollments import process_enrollment_row
 from app.imports.processors.students import process_student_row
 from app.imports.processors.teachers import process_teacher_row
 from app.imports.registry import (
@@ -10,6 +11,7 @@ from app.imports.registry import (
 )
 from app.imports.validators.classes import validate_class_row
 from app.imports.validators.courses import validate_course_row
+from app.imports.validators.enrollments import validate_enrollment_row
 from app.imports.validators.students import validate_student_row
 from app.imports.validators.teachers import validate_teacher_row
 
@@ -17,6 +19,7 @@ STUDENT_IMPORT_TYPE = "students"
 TEACHER_IMPORT_TYPE = "teachers"
 CLASS_IMPORT_TYPE = "classes"
 COURSE_IMPORT_TYPE = "courses"
+ENROLLMENT_IMPORT_TYPE = "enrollments"
 
 
 def register_import_handlers() -> None:
@@ -53,6 +56,11 @@ def register_import_handlers() -> None:
             COURSE_IMPORT_TYPE,
             validate_course_row,
             process_course_row,
+        ),
+        (
+            ENROLLMENT_IMPORT_TYPE,
+            validate_enrollment_row,
+            process_enrollment_row,
         ),
     )
 
