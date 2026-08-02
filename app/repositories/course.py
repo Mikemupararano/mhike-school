@@ -189,9 +189,9 @@ class CourseRepository:
         The current Course model does not enforce title uniqueness. Import
         matching therefore uses the stable combination of:
 
-        - school_id
-        - teacher_id
-        - title
+        - school_id;
+        - teacher_id;
+        - title.
         """
 
         normalised_title = self._normalise_title(
@@ -211,6 +211,50 @@ class CourseRepository:
         ).where(
             Course.title == normalised_title,
             Course.teacher_id == teacher_id,
+            Course.school_id == school_id,
+        )
+
+        statement = self._apply_relationship_loading(
+            statement,
+            include_relationships=include_relationships,
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return result.scalar_one_or_none()
+
+    async def get_by_title_and_school(
+        self,
+        *,
+        title: str,
+        school_id: int,
+        include_relationships: bool = True,
+    ) -> Course | None:
+        """
+        Return a course matching title within one school.
+
+        This lookup supports timetable imports where a teacher may not be
+        supplied in the row.
+
+        The Course model does not currently enforce title uniqueness within a
+        school. Callers should therefore prefer ``get_by_title_and_teacher``
+        whenever the teacher is known.
+        """
+
+        normalised_title = self._normalise_title(
+            title,
+        )
+        self._validate_positive_integer(
+            school_id,
+            "school_id",
+        )
+
+        statement = select(
+            Course,
+        ).where(
+            Course.title == normalised_title,
             Course.school_id == school_id,
         )
 
