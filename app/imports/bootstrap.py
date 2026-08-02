@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.imports.processors.classes import process_class_row
+from app.imports.processors.courses import process_course_row
 from app.imports.processors.students import process_student_row
 from app.imports.processors.teachers import process_teacher_row
 from app.imports.registry import (
@@ -8,12 +9,14 @@ from app.imports.registry import (
     register_import_handler,
 )
 from app.imports.validators.classes import validate_class_row
+from app.imports.validators.courses import validate_course_row
 from app.imports.validators.students import validate_student_row
 from app.imports.validators.teachers import validate_teacher_row
 
 STUDENT_IMPORT_TYPE = "students"
 TEACHER_IMPORT_TYPE = "teachers"
 CLASS_IMPORT_TYPE = "classes"
+COURSE_IMPORT_TYPE = "courses"
 
 
 def register_import_handlers() -> None:
@@ -22,12 +25,12 @@ def register_import_handlers() -> None:
 
     This function is intentionally idempotent so it can be called safely by:
 
-    - FastAPI startup
-    - Celery workers
-    - Background import tasks
-    - Unit tests
+    - FastAPI startup;
+    - Celery workers;
+    - background import tasks;
+    - unit tests.
 
-    without registering handlers multiple times.
+    Existing handlers are preserved and are not registered twice.
     """
 
     handlers = (
@@ -45,6 +48,11 @@ def register_import_handlers() -> None:
             CLASS_IMPORT_TYPE,
             validate_class_row,
             process_class_row,
+        ),
+        (
+            COURSE_IMPORT_TYPE,
+            validate_course_row,
+            process_course_row,
         ),
     )
 
