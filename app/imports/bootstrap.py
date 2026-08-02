@@ -6,6 +6,9 @@ from app.imports.processors.enrollments import process_enrollment_row
 from app.imports.processors.parents import process_parent_row
 from app.imports.processors.students import process_student_row
 from app.imports.processors.teachers import process_teacher_row
+from app.imports.processors.timetable_periods import (
+    process_timetable_period_row,
+)
 from app.imports.registry import (
     is_registered,
     register_import_handler,
@@ -16,6 +19,9 @@ from app.imports.validators.enrollments import validate_enrollment_row
 from app.imports.validators.parents import validate_parent_row
 from app.imports.validators.students import validate_student_row
 from app.imports.validators.teachers import validate_teacher_row
+from app.imports.validators.timetable_periods import (
+    validate_timetable_period_row,
+)
 
 STUDENT_IMPORT_TYPE = "students"
 TEACHER_IMPORT_TYPE = "teachers"
@@ -23,6 +29,7 @@ CLASS_IMPORT_TYPE = "classes"
 COURSE_IMPORT_TYPE = "courses"
 ENROLLMENT_IMPORT_TYPE = "enrollments"
 PARENT_IMPORT_TYPE = "parents"
+TIMETABLE_PERIOD_IMPORT_TYPE = "timetable_periods"
 
 
 def register_import_handlers() -> None:
@@ -69,6 +76,11 @@ def register_import_handlers() -> None:
             PARENT_IMPORT_TYPE,
             validate_parent_row,
             process_parent_row,
+        ),
+        (
+            TIMETABLE_PERIOD_IMPORT_TYPE,
+            validate_timetable_period_row,
+            process_timetable_period_row,
         ),
     )
 
