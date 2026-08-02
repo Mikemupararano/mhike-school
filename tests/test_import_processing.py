@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
@@ -23,14 +27,179 @@ from app.models.import_batch import (
 )
 from app.models.user import User, UserRole
 from app.repositories.user import UserRepository
+from app.services.import_service import (
+    ImportBatchStateError,
+    retry_import_batch,
+)
 
 pytestmark = pytest.mark.asyncio
+
+
+def create_task_session_maker(
+    db_session: AsyncSession,
+) -> async_sessionmaker[AsyncSession]:
+    """Create a task-compatible session maker using the test database."""
+
+    if db_session.bind is None:
+        raise AssertionError(
+            "The test database session is not bound to an engine.",
+        )
+
+    return async_sessionmaker(
+        bind=db_session.bind,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
+def configure_task_session_maker(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> async_sessionmaker[AsyncSession]:
+    """Configure import tasks to use the current test database."""
+
+    session_maker = create_task_session_maker(
+        db_session,
+    )
+
+    monkeypatch.setattr(
+        import_tasks,
+        "AsyncSessionLocal",
+        session_maker,
+    )
+
+    return session_maker
+
+
+@asynccontextmanager
+async def verification_session(
+    session_maker: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    """Open a clean verification session after a background task runs."""
+
+    async with session_maker() as session:
+        yield session
+
+
+async def get_batch_by_id(
+    db: AsyncSession,
+    batch_id: int,
+) -> ImportBatch:
+    result = await db.execute(
+        select(ImportBatch).where(
+            ImportBatch.id == batch_id,
+        ),
+    )
+
+    return result.scalar_one()
+
+
+async def get_row_by_id(
+    db: AsyncSession,
+    row_id: int,
+) -> ImportRow:
+    result = await db.execute(
+        select(ImportRow).where(
+            ImportRow.id == row_id,
+        ),
+    )
+
+    return result.scalar_one()
+
+
+async def get_user_by_email(
+    db: AsyncSession,
+    *,
+    email: str,
+    school_id: int,
+) -> User | None:
+    result = await db.execute(
+        select(User).where(
+            User.email == email,
+            User.school_id == school_id,
+        ),
+    )
+
+    return result.scalar_one_or_none()
+
+
+def build_import_batch(
+    *,
+    school_id: int,
+    uploaded_by_id: int,
+    import_type: str = "students",
+    operation: ImportOperation = ImportOperation.CREATE,
+    status: ImportStatus = ImportStatus.READY,
+    original_filename: str = "students.csv",
+    total_rows: int = 1,
+    validated_rows: int | None = None,
+    processed_rows: int = 0,
+    successful_rows: int = 0,
+    warning_rows: int = 0,
+    failed_rows: int = 0,
+    skipped_rows: int = 0,
+    current_stage: str | None = "ready",
+) -> ImportBatch:
+    """Build a consistent import batch for processing tests."""
+
+    resolved_validated_rows = total_rows if validated_rows is None else validated_rows
+
+    return ImportBatch(
+        school_id=school_id,
+        uploaded_by_id=uploaded_by_id,
+        import_type=import_type,
+        operation=operation,
+        status=status,
+        original_filename=original_filename,
+        total_rows=total_rows,
+        validated_rows=resolved_validated_rows,
+        processed_rows=processed_rows,
+        successful_rows=successful_rows,
+        warning_rows=warning_rows,
+        failed_rows=failed_rows,
+        skipped_rows=skipped_rows,
+        current_stage=current_stage,
+    )
+
+
+def build_import_row(
+    *,
+    batch_id: int,
+    school_id: int,
+    row_number: int,
+    data: dict[str, Any],
+    status: ImportRowStatus = ImportRowStatus.VALID,
+    attempt_count: int = 0,
+    validation_errors: list[dict[str, Any]] | None = None,
+    validation_warnings: list[dict[str, Any]] | None = None,
+    error_message: str | None = None,
+    created_entity_id: int | None = None,
+) -> ImportRow:
+    """Build a consistent import row for processing tests."""
+
+    normalised_data = {} if status == ImportRowStatus.INVALID else dict(data)
+
+    return ImportRow(
+        batch_id=batch_id,
+        school_id=school_id,
+        row_number=row_number,
+        status=status,
+        original_data=dict(data),
+        normalised_data=normalised_data,
+        validation_errors=validation_errors or [],
+        validation_warnings=validation_warnings or [],
+        error_message=error_message,
+        created_entity_id=created_entity_id,
+        attempt_count=attempt_count,
+    )
 
 
 async def test_student_import_handler_is_registered() -> None:
     register_import_handlers()
 
-    handler = get_import_handler("students")
+    handler = get_import_handler(
+        "students",
+    )
 
     assert handler.validator is not None
     assert handler.processor is process_student_row
@@ -56,7 +225,9 @@ async def test_student_processor_creates_new_student(
 
     await db_session.commit()
 
-    repository = UserRepository(db_session)
+    repository = UserRepository(
+        db_session,
+    )
 
     created_student = await repository.get_by_email(
         email="new.student@example.com",
@@ -65,6 +236,7 @@ async def test_student_processor_creates_new_student(
 
     assert result.action == RowProcessingAction.CREATED
     assert result.entity_id is not None
+
     assert created_student is not None
     assert created_student.id == result.entity_id
     assert created_student.email == "new.student@example.com"
@@ -92,10 +264,13 @@ async def test_student_processor_updates_existing_student(
     )
 
     await db_session.commit()
-    await db_session.refresh(student_user)
+    await db_session.refresh(
+        student_user,
+    )
 
     assert result.action == RowProcessingAction.UPDATED
     assert result.entity_id == student_user.id
+
     assert student_user.full_name == "Updated Student"
     assert student_user.is_active is True
 
@@ -147,35 +322,16 @@ async def test_processing_task_imports_valid_student_row(
     school_id = school_admin_user.school_id
 
     assert school_id is not None
-    assert db_session.bind is not None
 
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
     )
 
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
-        task_session_maker,
-    )
-
-    batch = ImportBatch(
+    batch = build_import_batch(
         school_id=school_id,
         uploaded_by_id=school_admin_user.id,
-        import_type="students",
-        operation=ImportOperation.CREATE,
-        status=ImportStatus.READY,
         original_filename="students.csv",
-        total_rows=1,
-        validated_rows=1,
-        processed_rows=0,
-        successful_rows=0,
-        warning_rows=0,
-        failed_rows=0,
-        skipped_rows=0,
-        current_stage="ready",
     )
 
     db_session.add(batch)
@@ -187,16 +343,11 @@ async def test_processing_task_imports_valid_student_row(
         "last_name": "Student",
     }
 
-    row = ImportRow(
+    row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=2,
-        status=ImportRowStatus.VALID,
-        original_data=dict(row_data),
-        normalised_data=dict(row_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
+        data=row_data,
     )
 
     db_session.add(row)
@@ -210,31 +361,24 @@ async def test_processing_task_imports_valid_student_row(
         school_id=school_id,
     )
 
-    async with task_session_maker() as verification_db:
-        processed_batch = (
-            await verification_db.execute(
-                select(ImportBatch).where(
-                    ImportBatch.id == batch_id,
-                )
-            )
-        ).scalar_one()
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
 
-        processed_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == row_id,
-                )
-            )
-        ).scalar_one()
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
 
-        created_student = (
-            await verification_db.execute(
-                select(User).where(
-                    User.email == "batch.student@example.com",
-                    User.school_id == school_id,
-                )
-            )
-        ).scalar_one_or_none()
+        created_student = await get_user_by_email(
+            verification_db,
+            email="batch.student@example.com",
+            school_id=school_id,
+        )
 
         assert summary["status"] == ImportStatus.COMPLETED.value
         assert summary["processed_rows"] == 1
@@ -272,35 +416,17 @@ async def test_processing_task_updates_existing_student(
     student_email = student_user.email
 
     assert school_id is not None
-    assert db_session.bind is not None
 
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
     )
 
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
-        task_session_maker,
-    )
-
-    batch = ImportBatch(
+    batch = build_import_batch(
         school_id=school_id,
         uploaded_by_id=student_id,
-        import_type="students",
         operation=ImportOperation.UPSERT,
-        status=ImportStatus.READY,
         original_filename="student-updates.csv",
-        total_rows=1,
-        validated_rows=1,
-        processed_rows=0,
-        successful_rows=0,
-        warning_rows=0,
-        failed_rows=0,
-        skipped_rows=0,
-        current_stage="ready",
     )
 
     db_session.add(batch)
@@ -312,16 +438,11 @@ async def test_processing_task_updates_existing_student(
         "last_name": "Updated",
     }
 
-    row = ImportRow(
+    row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=2,
-        status=ImportRowStatus.VALID,
-        original_data=dict(row_data),
-        normalised_data=dict(row_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
+        data=row_data,
     )
 
     db_session.add(row)
@@ -335,28 +456,24 @@ async def test_processing_task_updates_existing_student(
         school_id=school_id,
     )
 
-    async with task_session_maker() as verification_db:
-        processed_batch = (
-            await verification_db.execute(
-                select(ImportBatch).where(
-                    ImportBatch.id == batch_id,
-                )
-            )
-        ).scalar_one()
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
 
-        processed_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == row_id,
-                )
-            )
-        ).scalar_one()
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
 
         updated_student = (
             await verification_db.execute(
                 select(User).where(
                     User.id == student_id,
-                )
+                ),
             )
         ).scalar_one()
 
@@ -366,7 +483,7 @@ async def test_processing_task_updates_existing_student(
                     select(User).where(
                         User.email == student_email,
                         User.school_id == school_id,
-                    )
+                    ),
                 )
             )
             .scalars()
@@ -412,35 +529,19 @@ async def test_processing_task_records_failure_and_continues(
 
     assert school_id is not None
     assert teacher_user.school_id == school_id
-    assert db_session.bind is not None
 
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
     )
 
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
-        task_session_maker,
-    )
-
-    batch = ImportBatch(
+    batch = build_import_batch(
         school_id=school_id,
         uploaded_by_id=school_admin_user.id,
-        import_type="students",
         operation=ImportOperation.UPSERT,
-        status=ImportStatus.READY,
         original_filename="mixed-students.csv",
         total_rows=2,
         validated_rows=2,
-        processed_rows=0,
-        successful_rows=0,
-        warning_rows=0,
-        failed_rows=0,
-        skipped_rows=0,
-        current_stage="ready",
     )
 
     db_session.add(batch)
@@ -452,16 +553,11 @@ async def test_processing_task_records_failure_and_continues(
         "last_name": "Student",
     }
 
-    successful_row = ImportRow(
+    successful_row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=2,
-        status=ImportRowStatus.VALID,
-        original_data=dict(successful_data),
-        normalised_data=dict(successful_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
+        data=successful_data,
     )
 
     failed_data = {
@@ -470,24 +566,20 @@ async def test_processing_task_records_failure_and_continues(
         "last_name": "Conflict",
     }
 
-    failed_row = ImportRow(
+    failed_row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=3,
-        status=ImportRowStatus.VALID,
-        original_data=dict(failed_data),
-        normalised_data=dict(failed_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
+        data=failed_data,
     )
 
     db_session.add_all(
         [
             successful_row,
             failed_row,
-        ]
+        ],
     )
+
     await db_session.commit()
 
     batch_id = batch.id
@@ -499,48 +591,35 @@ async def test_processing_task_records_failure_and_continues(
         school_id=school_id,
     )
 
-    async with task_session_maker() as verification_db:
-        processed_batch = (
-            await verification_db.execute(
-                select(ImportBatch).where(
-                    ImportBatch.id == batch_id,
-                )
-            )
-        ).scalar_one()
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
 
-        processed_successful_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == successful_row_id,
-                )
-            )
-        ).scalar_one()
+        processed_successful_row = await get_row_by_id(
+            verification_db,
+            successful_row_id,
+        )
 
-        processed_failed_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == failed_row_id,
-                )
-            )
-        ).scalar_one()
+        processed_failed_row = await get_row_by_id(
+            verification_db,
+            failed_row_id,
+        )
 
-        created_student = (
-            await verification_db.execute(
-                select(User).where(
-                    User.email == "successful.student@example.com",
-                    User.school_id == school_id,
-                )
-            )
-        ).scalar_one_or_none()
+        created_student = await get_user_by_email(
+            verification_db,
+            email="successful.student@example.com",
+            school_id=school_id,
+        )
 
-        existing_teacher = (
-            await verification_db.execute(
-                select(User).where(
-                    User.email == teacher_email,
-                    User.school_id == school_id,
-                )
-            )
-        ).scalar_one()
+        existing_teacher = await get_user_by_email(
+            verification_db,
+            email=teacher_email,
+            school_id=school_id,
+        )
 
         assert summary["status"] == (ImportStatus.COMPLETED_WITH_ERRORS.value)
         assert summary["processed_rows"] == 2
@@ -564,12 +643,13 @@ async def test_processing_task_records_failure_and_continues(
         assert processed_failed_row.created_entity_id is None
         assert processed_failed_row.processed_at is not None
         assert processed_failed_row.error_message is not None
-        assert "non-student user" in processed_failed_row.error_message
+        assert "non-student user" in (processed_failed_row.error_message)
 
         assert created_student is not None
         assert created_student.full_name == "Successful Student"
         assert created_student.role == UserRole.STUDENT
 
+        assert existing_teacher is not None
         assert existing_teacher.id == teacher_user.id
         assert existing_teacher.is_teacher is True
         assert existing_teacher.is_student is False
@@ -585,35 +665,19 @@ async def test_processing_task_preserves_preexisting_invalid_row(
     school_id = school_admin_user.school_id
 
     assert school_id is not None
-    assert db_session.bind is not None
 
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
     )
 
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
-        task_session_maker,
-    )
-
-    batch = ImportBatch(
+    batch = build_import_batch(
         school_id=school_id,
         uploaded_by_id=school_admin_user.id,
-        import_type="students",
-        operation=ImportOperation.CREATE,
-        status=ImportStatus.READY,
         original_filename="students-with-invalid-row.csv",
         total_rows=2,
         validated_rows=2,
-        processed_rows=0,
-        successful_rows=0,
-        warning_rows=0,
         failed_rows=1,
-        skipped_rows=0,
-        current_stage="ready",
     )
 
     db_session.add(batch)
@@ -625,16 +689,11 @@ async def test_processing_task_preserves_preexisting_invalid_row(
         "last_name": "Student",
     }
 
-    valid_row = ImportRow(
+    valid_row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=2,
-        status=ImportRowStatus.VALID,
-        original_data=dict(valid_data),
-        normalised_data=dict(valid_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
+        data=valid_data,
     )
 
     invalid_data = {
@@ -643,30 +702,28 @@ async def test_processing_task_preserves_preexisting_invalid_row(
         "last_name": "Invalid",
     }
 
-    invalid_row = ImportRow(
+    invalid_row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=3,
+        data=invalid_data,
         status=ImportRowStatus.INVALID,
-        original_data=dict(invalid_data),
-        normalised_data={},
         validation_errors=[
             {
                 "type": "validation_error",
                 "message": "Invalid student row.",
             }
         ],
-        validation_warnings=[],
         error_message="Row validation failed.",
-        attempt_count=0,
     )
 
     db_session.add_all(
         [
             valid_row,
             invalid_row,
-        ]
+        ],
     )
+
     await db_session.commit()
 
     batch_id = batch.id
@@ -678,39 +735,29 @@ async def test_processing_task_preserves_preexisting_invalid_row(
         school_id=school_id,
     )
 
-    async with task_session_maker() as verification_db:
-        processed_batch = (
-            await verification_db.execute(
-                select(ImportBatch).where(
-                    ImportBatch.id == batch_id,
-                )
-            )
-        ).scalar_one()
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
 
-        processed_valid_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == valid_row_id,
-                )
-            )
-        ).scalar_one()
+        processed_valid_row = await get_row_by_id(
+            verification_db,
+            valid_row_id,
+        )
 
-        preserved_invalid_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == invalid_row_id,
-                )
-            )
-        ).scalar_one()
+        preserved_invalid_row = await get_row_by_id(
+            verification_db,
+            invalid_row_id,
+        )
 
-        created_student = (
-            await verification_db.execute(
-                select(User).where(
-                    User.email == "valid.student@example.com",
-                    User.school_id == school_id,
-                )
-            )
-        ).scalar_one_or_none()
+        created_student = await get_user_by_email(
+            verification_db,
+            email="valid.student@example.com",
+            school_id=school_id,
+        )
 
         assert summary["status"] == (ImportStatus.COMPLETED_WITH_ERRORS.value)
         assert summary["processed_rows"] == 2
@@ -742,66 +789,72 @@ async def test_processing_task_preserves_preexisting_invalid_row(
         assert created_student.role == UserRole.STUDENT
 
 
-async def test_processing_task_skips_cancelled_batch(
+@pytest.mark.parametrize(
+    (
+        "batch_status",
+        "expected_reason",
+    ),
+    [
+        (
+            ImportStatus.CANCELLED,
+            "Batch has been cancelled.",
+        ),
+        (
+            ImportStatus.COMPLETED,
+            "Batch has already finished.",
+        ),
+    ],
+)
+async def test_processing_task_skips_terminal_batch(
     db_session: AsyncSession,
     school_admin_user: User,
     monkeypatch: pytest.MonkeyPatch,
+    batch_status: ImportStatus,
+    expected_reason: str,
 ) -> None:
     register_import_handlers()
 
     school_id = school_admin_user.school_id
 
     assert school_id is not None
-    assert db_session.bind is not None
 
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
     )
 
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
-        task_session_maker,
-    )
+    is_completed = batch_status == ImportStatus.COMPLETED
 
-    batch = ImportBatch(
+    batch = build_import_batch(
         school_id=school_id,
         uploaded_by_id=school_admin_user.id,
-        import_type="students",
-        operation=ImportOperation.CREATE,
-        status=ImportStatus.CANCELLED,
-        original_filename="cancelled-students.csv",
-        total_rows=1,
-        validated_rows=1,
-        processed_rows=0,
-        successful_rows=0,
-        warning_rows=0,
-        failed_rows=0,
-        skipped_rows=0,
-        current_stage="cancelled",
+        status=batch_status,
+        original_filename=(
+            "completed-students.csv" if is_completed else "cancelled-students.csv"
+        ),
+        processed_rows=1 if is_completed else 0,
+        successful_rows=1 if is_completed else 0,
+        current_stage=batch_status.value,
     )
 
     db_session.add(batch)
     await db_session.flush()
 
     row_data = {
-        "email": "cancelled.student@example.com",
-        "first_name": "Cancelled",
-        "last_name": "Student",
+        "email": (
+            "already.completed@example.com"
+            if is_completed
+            else "cancelled.student@example.com"
+        ),
+        "first_name": ("Already" if is_completed else "Cancelled"),
+        "last_name": ("Completed" if is_completed else "Student"),
     }
 
-    row = ImportRow(
+    row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=2,
-        status=ImportRowStatus.VALID,
-        original_data=dict(row_data),
-        normalised_data=dict(row_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
+        data=row_data,
     )
 
     db_session.add(row)
@@ -815,163 +868,36 @@ async def test_processing_task_skips_cancelled_batch(
         school_id=school_id,
     )
 
-    async with task_session_maker() as verification_db:
-        unchanged_batch = (
-            await verification_db.execute(
-                select(ImportBatch).where(
-                    ImportBatch.id == batch_id,
-                )
-            )
-        ).scalar_one()
-
-        unchanged_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == row_id,
-                )
-            )
-        ).scalar_one()
-
-        created_student = (
-            await verification_db.execute(
-                select(User).where(
-                    User.email == "cancelled.student@example.com",
-                    User.school_id == school_id,
-                )
-            )
-        ).scalar_one_or_none()
-
-        assert summary == {
-            "batch_id": batch_id,
-            "school_id": school_id,
-            "status": ImportStatus.CANCELLED.value,
-            "skipped": True,
-            "reason": "Batch has been cancelled.",
-        }
-
-        assert unchanged_batch.status == ImportStatus.CANCELLED
-        assert unchanged_batch.processed_rows == 0
-        assert unchanged_batch.successful_rows == 0
-        assert unchanged_batch.failed_rows == 0
-
-        assert unchanged_row.status == ImportRowStatus.VALID
-        assert unchanged_row.attempt_count == 0
-        assert unchanged_row.created_entity_id is None
-        assert unchanged_row.processed_at is None
-
-        assert created_student is None
-
-
-async def test_processing_task_skips_completed_batch(
-    db_session: AsyncSession,
-    school_admin_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    register_import_handlers()
-
-    school_id = school_admin_user.school_id
-
-    assert school_id is not None
-    assert db_session.bind is not None
-
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
+    async with verification_session(
         task_session_maker,
-    )
+    ) as verification_db:
+        unchanged_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
 
-    batch = ImportBatch(
-        school_id=school_id,
-        uploaded_by_id=school_admin_user.id,
-        import_type="students",
-        operation=ImportOperation.CREATE,
-        status=ImportStatus.COMPLETED,
-        original_filename="completed-students.csv",
-        total_rows=1,
-        validated_rows=1,
-        processed_rows=1,
-        successful_rows=1,
-        warning_rows=0,
-        failed_rows=0,
-        skipped_rows=0,
-        current_stage="completed",
-    )
+        unchanged_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
 
-    db_session.add(batch)
-    await db_session.flush()
-
-    row_data = {
-        "email": "already.completed@example.com",
-        "first_name": "Already",
-        "last_name": "Completed",
-    }
-
-    row = ImportRow(
-        batch_id=batch.id,
-        school_id=school_id,
-        row_number=2,
-        status=ImportRowStatus.VALID,
-        original_data=dict(row_data),
-        normalised_data=dict(row_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
-    )
-
-    db_session.add(row)
-    await db_session.commit()
-
-    batch_id = batch.id
-    row_id = row.id
-
-    summary = await import_tasks._process_import_batch_task(
-        batch_id=batch_id,
-        school_id=school_id,
-    )
-
-    async with task_session_maker() as verification_db:
-        unchanged_batch = (
-            await verification_db.execute(
-                select(ImportBatch).where(
-                    ImportBatch.id == batch_id,
-                )
-            )
-        ).scalar_one()
-
-        unchanged_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == row_id,
-                )
-            )
-        ).scalar_one()
-
-        created_student = (
-            await verification_db.execute(
-                select(User).where(
-                    User.email == "already.completed@example.com",
-                    User.school_id == school_id,
-                )
-            )
-        ).scalar_one_or_none()
+        created_student = await get_user_by_email(
+            verification_db,
+            email=row_data["email"],
+            school_id=school_id,
+        )
 
         assert summary == {
             "batch_id": batch_id,
             "school_id": school_id,
-            "status": ImportStatus.COMPLETED.value,
+            "status": batch_status.value,
             "skipped": True,
-            "reason": "Batch has already finished.",
+            "reason": expected_reason,
         }
 
-        assert unchanged_batch.status == ImportStatus.COMPLETED
-        assert unchanged_batch.processed_rows == 1
-        assert unchanged_batch.successful_rows == 1
+        assert unchanged_batch.status == batch_status
+        assert unchanged_batch.processed_rows == (1 if is_completed else 0)
+        assert unchanged_batch.successful_rows == (1 if is_completed else 0)
         assert unchanged_batch.failed_rows == 0
 
         assert unchanged_row.status == ImportRowStatus.VALID
@@ -990,54 +916,29 @@ async def test_processing_task_marks_batch_failed_for_unknown_handler(
     school_id = school_admin_user.school_id
 
     assert school_id is not None
-    assert db_session.bind is not None
 
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
     )
 
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
-        task_session_maker,
-    )
-
-    batch = ImportBatch(
+    batch = build_import_batch(
         school_id=school_id,
         uploaded_by_id=school_admin_user.id,
         import_type="unknown_import_type",
-        operation=ImportOperation.CREATE,
-        status=ImportStatus.READY,
         original_filename="unknown-import.csv",
-        total_rows=1,
-        validated_rows=1,
-        processed_rows=0,
-        successful_rows=0,
-        warning_rows=0,
-        failed_rows=0,
-        skipped_rows=0,
-        current_stage="ready",
     )
 
     db_session.add(batch)
     await db_session.flush()
 
-    row_data = {
-        "external_id": "12345",
-    }
-
-    row = ImportRow(
+    row = build_import_row(
         batch_id=batch.id,
         school_id=school_id,
         row_number=2,
-        status=ImportRowStatus.VALID,
-        original_data=dict(row_data),
-        normalised_data=dict(row_data),
-        validation_errors=[],
-        validation_warnings=[],
-        attempt_count=0,
+        data={
+            "external_id": "12345",
+        },
     )
 
     db_session.add(row)
@@ -1055,27 +956,23 @@ async def test_processing_task_marks_batch_failed_for_unknown_handler(
             school_id=school_id,
         )
 
-    async with task_session_maker() as verification_db:
-        failed_batch = (
-            await verification_db.execute(
-                select(ImportBatch).where(
-                    ImportBatch.id == batch_id,
-                )
-            )
-        ).scalar_one()
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        failed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
 
-        unchanged_row = (
-            await verification_db.execute(
-                select(ImportRow).where(
-                    ImportRow.id == row_id,
-                )
-            )
-        ).scalar_one()
+        unchanged_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
 
         assert failed_batch.status == ImportStatus.FAILED
         assert failed_batch.current_stage == "handler_resolution_failed"
         assert failed_batch.error_message is not None
-        assert "No import handler registered" in failed_batch.error_message
+        assert "No import handler registered" in (failed_batch.error_message)
         assert failed_batch.completed_at is not None
 
         assert unchanged_row.status == ImportRowStatus.VALID
@@ -1088,18 +985,9 @@ async def test_processing_task_raises_when_batch_not_found(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert db_session.bind is not None
-
-    task_session_maker = async_sessionmaker(
-        bind=db_session.bind,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-
-    monkeypatch.setattr(
-        import_tasks,
-        "AsyncSessionLocal",
-        task_session_maker,
+    configure_task_session_maker(
+        db_session,
+        monkeypatch,
     )
 
     with pytest.raises(
@@ -1110,3 +998,427 @@ async def test_processing_task_raises_when_batch_not_found(
             batch_id=999999,
             school_id=1,
         )
+
+
+async def test_retry_import_batch_resets_only_failed_rows(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        operation=ImportOperation.UPSERT,
+        status=ImportStatus.COMPLETED_WITH_ERRORS,
+        original_filename="retry-students.csv",
+        total_rows=3,
+        validated_rows=3,
+        processed_rows=3,
+        successful_rows=1,
+        failed_rows=1,
+        skipped_rows=1,
+        current_stage="completed_with_errors",
+    )
+
+    db_session.add(batch)
+    await db_session.flush()
+
+    successful_row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "email": "successful.retry@example.com",
+            "first_name": "Successful",
+            "last_name": "Retry",
+        },
+        status=ImportRowStatus.IMPORTED,
+        attempt_count=1,
+        created_entity_id=123,
+    )
+
+    successful_row.entity_type = "students"
+    successful_row.processed_at = batch.created_at
+
+    failed_row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=3,
+        data={
+            "email": "failed.retry@example.com",
+            "first_name": "Failed",
+            "last_name": "Retry",
+        },
+        status=ImportRowStatus.FAILED,
+        attempt_count=2,
+        error_message="Temporary processing failure.",
+    )
+
+    failed_row.entity_type = "students"
+    failed_row.processed_at = batch.created_at
+
+    skipped_row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=4,
+        data={
+            "email": "skipped.retry@example.com",
+            "first_name": "Skipped",
+            "last_name": "Retry",
+        },
+        status=ImportRowStatus.SKIPPED,
+        attempt_count=1,
+    )
+
+    skipped_row.entity_type = "students"
+    skipped_row.processed_at = batch.created_at
+
+    db_session.add_all(
+        [
+            successful_row,
+            failed_row,
+            skipped_row,
+        ],
+    )
+
+    await db_session.commit()
+
+    batch_id = batch.id
+    successful_row_id = successful_row.id
+    failed_row_id = failed_row.id
+    skipped_row_id = skipped_row.id
+
+    retry_summary = await retry_import_batch(
+        db_session,
+        batch=batch,
+    )
+
+    assert retry_summary.batch_id == batch_id
+    assert retry_summary.school_id == school_id
+    assert retry_summary.retryable_rows == 1
+    assert retry_summary.status == ImportStatus.READY
+
+    db_session.expire_all()
+
+    retried_batch = await get_batch_by_id(
+        db_session,
+        batch_id,
+    )
+
+    preserved_successful_row = await get_row_by_id(
+        db_session,
+        successful_row_id,
+    )
+
+    reset_failed_row = await get_row_by_id(
+        db_session,
+        failed_row_id,
+    )
+
+    preserved_skipped_row = await get_row_by_id(
+        db_session,
+        skipped_row_id,
+    )
+
+    assert retried_batch.status == ImportStatus.READY
+    assert retried_batch.current_stage == "ready_for_retry"
+    assert retried_batch.error_message is None
+    assert retried_batch.completed_at is None
+    assert retried_batch.cancelled_at is None
+    assert retried_batch.queued_at is None
+    assert retried_batch.started_at is None
+
+    assert preserved_successful_row.status == ImportRowStatus.IMPORTED
+    assert preserved_successful_row.attempt_count == 1
+    assert preserved_successful_row.created_entity_id == 123
+    assert preserved_successful_row.processed_at is not None
+
+    assert reset_failed_row.status == ImportRowStatus.VALID
+    assert reset_failed_row.attempt_count == 2
+    assert reset_failed_row.created_entity_id is None
+    assert reset_failed_row.error_message is None
+    assert reset_failed_row.processed_at is None
+
+    assert preserved_skipped_row.status == ImportRowStatus.SKIPPED
+    assert preserved_skipped_row.attempt_count == 1
+    assert preserved_skipped_row.processed_at is not None
+
+
+async def test_retry_processing_reprocesses_failed_row_only(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        operation=ImportOperation.UPSERT,
+        status=ImportStatus.COMPLETED_WITH_ERRORS,
+        original_filename="retry-processing.csv",
+        total_rows=2,
+        validated_rows=2,
+        processed_rows=2,
+        successful_rows=1,
+        failed_rows=1,
+        current_stage="completed_with_errors",
+    )
+
+    db_session.add(batch)
+    await db_session.flush()
+
+    successful_data = {
+        "email": "already.imported@example.com",
+        "first_name": "Already",
+        "last_name": "Imported",
+    }
+
+    successful_row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data=successful_data,
+        status=ImportRowStatus.IMPORTED,
+        attempt_count=1,
+        created_entity_id=987,
+    )
+
+    successful_row.entity_type = "students"
+    successful_row.processed_at = batch.created_at
+
+    retry_data = {
+        "email": "retry.success@example.com",
+        "first_name": "Retry",
+        "last_name": "Success",
+    }
+
+    failed_row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=3,
+        data=retry_data,
+        status=ImportRowStatus.FAILED,
+        attempt_count=1,
+        error_message="Temporary failure.",
+    )
+
+    failed_row.entity_type = "students"
+    failed_row.processed_at = batch.created_at
+
+    db_session.add_all(
+        [
+            successful_row,
+            failed_row,
+        ],
+    )
+
+    await db_session.commit()
+
+    batch_id = batch.id
+    successful_row_id = successful_row.id
+    failed_row_id = failed_row.id
+
+    await retry_import_batch(
+        db_session,
+        batch=batch,
+    )
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        preserved_successful_row = await get_row_by_id(
+            verification_db,
+            successful_row_id,
+        )
+
+        retried_row = await get_row_by_id(
+            verification_db,
+            failed_row_id,
+        )
+
+        created_student = await get_user_by_email(
+            verification_db,
+            email="retry.success@example.com",
+            school_id=school_id,
+        )
+
+        duplicate_existing_student = await get_user_by_email(
+            verification_db,
+            email="already.imported@example.com",
+            school_id=school_id,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["successful_rows"] == 2
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.successful_rows == 2
+        assert processed_batch.failed_rows == 0
+        assert processed_batch.processed_rows == 2
+
+        assert preserved_successful_row.status == (ImportRowStatus.IMPORTED)
+        assert preserved_successful_row.attempt_count == 1
+        assert preserved_successful_row.created_entity_id == 987
+
+        assert retried_row.status == ImportRowStatus.IMPORTED
+        assert retried_row.attempt_count == 2
+        assert retried_row.created_entity_id is not None
+        assert retried_row.error_message is not None
+        assert "Created student" in retried_row.error_message
+        assert retried_row.processed_at is not None
+
+        assert created_student is not None
+        assert created_student.full_name == "Retry Success"
+
+        assert duplicate_existing_student is None
+
+
+async def test_retry_import_batch_rejects_batch_without_failed_rows(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        status=ImportStatus.COMPLETED,
+        original_filename="completed-without-failures.csv",
+        processed_rows=1,
+        successful_rows=1,
+        failed_rows=0,
+        current_stage="completed",
+    )
+
+    db_session.add(batch)
+    await db_session.commit()
+
+    with pytest.raises(
+        ImportBatchStateError,
+        match="does not allow retry",
+    ):
+        await retry_import_batch(
+            db_session,
+            batch=batch,
+        )
+
+
+async def test_retry_import_batch_rejects_archived_batch(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        status=ImportStatus.COMPLETED_WITH_ERRORS,
+        original_filename="archived-retry.csv",
+        processed_rows=1,
+        failed_rows=1,
+        current_stage="completed_with_errors",
+    )
+
+    batch.is_archived = True
+
+    db_session.add(batch)
+    await db_session.commit()
+
+    with pytest.raises(
+        ImportBatchStateError,
+        match="Archived import batches cannot be retried",
+    ):
+        await retry_import_batch(
+            db_session,
+            batch=batch,
+        )
+
+
+async def test_processing_task_enforces_school_isolation(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        original_filename="school-isolation.csv",
+    )
+
+    db_session.add(batch)
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "email": "isolated.student@example.com",
+            "first_name": "Isolated",
+            "last_name": "Student",
+        },
+    )
+
+    db_session.add(row)
+    await db_session.commit()
+
+    with pytest.raises(
+        import_tasks.ImportBatchNotFoundError,
+        match=(
+            rf"Import batch {batch.id} was not found " rf"for school {school_id + 999}"
+        ),
+    ):
+        await import_tasks._process_import_batch_task(
+            batch_id=batch.id,
+            school_id=school_id + 999,
+        )
+
+    await db_session.refresh(batch)
+    await db_session.refresh(row)
+
+    assert batch.status == ImportStatus.READY
+    assert batch.processed_rows == 0
+    assert batch.successful_rows == 0
+    assert batch.failed_rows == 0
+
+    assert row.status == ImportRowStatus.VALID
+    assert row.attempt_count == 0
+    assert row.created_entity_id is None
+    assert row.processed_at is None
