@@ -46,6 +46,12 @@ export type ImportMetadata =
 export type ImportIssue =
     Record<string, unknown>;
 
+export interface ImportTypeRead {
+    value: string;
+    label: string;
+    description: string | null;
+}
+
 export interface ImportBatchCreate {
     import_type: string;
     operation?: ImportOperation;

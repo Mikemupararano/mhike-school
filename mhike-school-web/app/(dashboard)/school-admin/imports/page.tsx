@@ -23,6 +23,7 @@ import ImportFilters, {
 } from "@/components/imports/ImportFilters";
 import ImportSummaryCard from "@/components/imports/ImportSummaryCard";
 import ImportUploadPanel, {
+    type ImportTypeOption,
     type ImportUploadPayload,
 } from "@/components/imports/ImportUploadPanel";
 import {
@@ -30,6 +31,7 @@ import {
     cancelImportBatch,
     countImportBatches,
     createImportBatch,
+    getSupportedImportTypes,
     listImportBatches,
     restoreImportBatch,
     uploadImportCsv,
@@ -41,6 +43,7 @@ import type {
     ImportBatchRead,
     ImportBatchSummary,
     ImportStatus,
+    ImportTypeRead,
 } from "@/types/import";
 
 const PAGE_SIZE = 20;
@@ -322,6 +325,20 @@ function mapBatch(
     };
 }
 
+function mapImportTypeOption(
+    importType: ImportTypeRead,
+): ImportTypeOption {
+    return {
+        value:
+            importType.value,
+        label:
+            importType.label,
+        description:
+            importType.description ??
+            undefined,
+    };
+}
+
 function matchesSearch(
     batch: ImportBatchTableItem,
     search: string,
@@ -420,6 +437,13 @@ export default function SchoolAdminImportsPage() {
     >([]);
 
     const [
+        supportedImportTypes,
+        setSupportedImportTypes,
+    ] = useState<
+        ImportTypeRead[] | null
+    >(null);
+
+    const [
         totalItems,
         setTotalItems,
     ] = useState(0);
@@ -467,6 +491,64 @@ export default function SchoolAdminImportsPage() {
     ] = useState<
         string | null
     >(null);
+
+    const importTypeOptions =
+        useMemo<
+            ImportTypeOption[] | undefined
+        >(
+            () => {
+                if (
+                    supportedImportTypes ===
+                    null
+                ) {
+                    return undefined;
+                }
+
+                const options =
+                    supportedImportTypes
+                        .map(
+                            mapImportTypeOption,
+                        )
+                        .filter(
+                            (option) =>
+                                option.value
+                                    .trim()
+                                    .length >
+                                0,
+                        );
+
+                return options.length >
+                    0
+                    ? options
+                    : undefined;
+            },
+            [supportedImportTypes],
+        );
+
+    const loadSupportedImportTypes =
+        useCallback(
+            async (): Promise<void> => {
+                try {
+                    const response =
+                        await getSupportedImportTypes();
+
+                    setSupportedImportTypes(
+                        response,
+                    );
+                } catch {
+                    /*
+                     * Keep the value null so ImportUploadPanel uses its
+                     * production-safe built-in list when discovery fails.
+                     *
+                     * Batch loading and uploading remain available.
+                     */
+                    setSupportedImportTypes(
+                        null,
+                    );
+                }
+            },
+            [],
+        );
 
     const loadBatches =
         useCallback(
@@ -702,8 +784,14 @@ export default function SchoolAdminImportsPage() {
         );
 
     useEffect(() => {
-        void loadBatches();
-    }, [loadBatches]);
+        void Promise.all([
+            loadSupportedImportTypes(),
+            loadBatches(),
+        ]);
+    }, [
+        loadSupportedImportTypes,
+        loadBatches,
+    ]);
 
     useEffect(() => {
         setPage(1);
@@ -768,6 +856,7 @@ export default function SchoolAdminImportsPage() {
                 ),
             [batches],
         );
+
     async function handleUpload(
         payload: ImportUploadPayload,
     ): Promise<void> {
@@ -1019,7 +1108,10 @@ export default function SchoolAdminImportsPage() {
                                 "disabled:cursor-not-allowed disabled:opacity-50",
                             ].join(" ")}
                             onClick={() => {
-                                void loadBatches();
+                                void Promise.all([
+                                    loadSupportedImportTypes(),
+                                    loadBatches(),
+                                ]);
                             }}
                         >
                             <RefreshCcw
@@ -1141,6 +1233,9 @@ export default function SchoolAdminImportsPage() {
 
                 <section className="mb-6">
                     <ImportUploadPanel
+                        importTypes={
+                            importTypeOptions
+                        }
                         defaultImportType={
                             DEFAULT_UPLOAD_IMPORT_TYPE
                         }

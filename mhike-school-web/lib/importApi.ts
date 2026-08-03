@@ -15,6 +15,7 @@ import type {
     ImportRowCountParams,
     ImportRowListParams,
     ImportRowRead,
+    ImportTypeRead,
 } from "@/types/import";
 
 const AUTH_TOKEN_STORAGE_KEY =
@@ -460,6 +461,25 @@ export async function listImportBatches(
         ImportBatchSummary[]
     >(
         `/import-batches${query}`,
+        resolveAuthToken(
+            token,
+        ),
+    );
+}
+
+/**
+ * Return the import types currently registered by the backend.
+ *
+ * The Import Wizard can use this endpoint instead of maintaining a separate
+ * hard-coded list of supported import handlers.
+ */
+export async function getSupportedImportTypes(
+    token?: string,
+): Promise<ImportTypeRead[]> {
+    return apiGet<
+        ImportTypeRead[]
+    >(
+        "/import-batches/types",
         resolveAuthToken(
             token,
         ),
