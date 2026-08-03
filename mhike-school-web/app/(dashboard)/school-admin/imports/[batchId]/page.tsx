@@ -104,15 +104,6 @@ const ISSUE_ROW_STATUSES =
 type UnknownRecord =
     Record<string, unknown>;
 
-function normaliseText(
-    value: string,
-): string {
-    return value
-        .trim()
-        .toLowerCase()
-        .replace(/[\s-]+/g, "_");
-}
-
 function humaniseValue(
     value: string,
 ): string {
@@ -984,13 +975,22 @@ export default function ImportBatchDetailsPage() {
         rowStatusFilter,
     ]);
 
+    const batchStatus =
+        batch?.status ??
+        null;
+
+    const batchIsArchived =
+        batch?.is_archived ??
+        false;
+
     useEffect(() => {
         if (
             !batchId ||
-            !batch ||
-            batch.is_archived ||
+            batchStatus ===
+            null ||
+            batchIsArchived ||
             !ACTIVE_STATUSES.has(
-                batch.status,
+                batchStatus,
             )
         ) {
             return;
@@ -1085,8 +1085,8 @@ export default function ImportBatchDetailsPage() {
         };
     }, [
         batchId,
-        batch?.is_archived,
-        batch?.status,
+        batchIsArchived,
+        batchStatus,
         loadBatch,
         loadRows,
     ]);
