@@ -15,6 +15,7 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.imports.registry import registered_import_types
 from app.models.import_batch import (
     ImportBatch,
     ImportRowStatus,
@@ -39,6 +40,7 @@ from app.schemas.import_batch import (
     ImportBatchRead,
     ImportBatchSummary,
     ImportRowRead,
+    ImportTypeRead,
 )
 from app.services.import_service import (
     ImportBatchStateError,
@@ -76,7 +78,9 @@ IMPORT_ADMIN_ROLE_VALUES = {
 }
 
 
-def _normalise_role_value(value: object) -> str:
+def _normalise_role_value(
+    value: object,
+) -> str:
     """Return a canonical string representation of a role value."""
 
     raw_value = getattr(
@@ -88,7 +92,9 @@ def _normalise_role_value(value: object) -> str:
     return str(raw_value).strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def _user_roles(current_user: User) -> set[str]:
+def _user_roles(
+    current_user: User,
+) -> set[str]:
     """
     Resolve all roles belonging to the current user.
 
@@ -133,7 +139,9 @@ def _require_school_id(
 ) -> int:
     """Return the current user's school ID or reject the request."""
 
-    roles = _user_roles(current_user)
+    roles = _user_roles(
+        current_user,
+    )
 
     is_platform_admin = UserRole.PLATFORM_ADMIN.value in roles
 
@@ -412,6 +420,36 @@ async def get_batch_count(
     return {
         "total": total,
     }
+
+
+@router.get(
+    "/types",
+    response_model=list[ImportTypeRead],
+)
+async def list_supported_import_types(
+    current_user: CurrentUser,
+) -> list[ImportTypeRead]:
+    """
+    Return all import types currently registered by the backend.
+
+    The Import Wizard can use this endpoint instead of maintaining a
+    separate hard-coded list of supported import handlers.
+    """
+
+    _require_import_admin(
+        current_user,
+    )
+
+    return [
+        ImportTypeRead(
+            value=import_type,
+            label=import_type.replace(
+                "_",
+                " ",
+            ).title(),
+        )
+        for import_type in registered_import_types()
+    ]
 
 
 @router.get(
