@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.imports.processors.assignment_submissions import (
+    process_assignment_submission_row,
+)
 from app.imports.processors.assignments import process_assignment_row
 from app.imports.processors.classes import process_class_row
 from app.imports.processors.courses import process_course_row
@@ -20,6 +23,9 @@ from app.imports.processors.timetables import process_timetable_row
 from app.imports.registry import (
     is_registered,
     register_import_handler,
+)
+from app.imports.validators.assignment_submissions import (
+    validate_assignment_submission_row,
 )
 from app.imports.validators.assignments import validate_assignment_row
 from app.imports.validators.classes import validate_class_row
@@ -50,6 +56,7 @@ TIMETABLE_IMPORT_TYPE = "timetables"
 TIMETABLE_ENTRY_IMPORT_TYPE = "timetable_entries"
 TIMETABLE_ASSIGNMENT_IMPORT_TYPE = "timetable_assignments"
 ASSIGNMENT_IMPORT_TYPE = "assignments"
+ASSIGNMENT_SUBMISSION_IMPORT_TYPE = "assignment_submissions"
 
 
 def register_import_handlers() -> None:
@@ -121,6 +128,11 @@ def register_import_handlers() -> None:
             ASSIGNMENT_IMPORT_TYPE,
             validate_assignment_row,
             process_assignment_row,
+        ),
+        (
+            ASSIGNMENT_SUBMISSION_IMPORT_TYPE,
+            validate_assignment_submission_row,
+            process_assignment_submission_row,
         ),
     )
 
