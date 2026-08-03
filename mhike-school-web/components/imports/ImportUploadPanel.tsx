@@ -65,16 +65,24 @@ const DEFAULT_ACCEPTED_FILE_TYPES =
 
 const DEFAULT_MAXIMUM_FILE_SIZE_MB = 10;
 
+/**
+ * These values must match the import-type keys registered in:
+ *
+ * app/imports/bootstrap.py
+ *
+ * Do not expose an option here unless the backend has a registered validator
+ * and processor for the same value.
+ */
 const DEFAULT_IMPORT_TYPES: readonly ImportTypeOption[] = [
     {
         value: "students",
         label: "Students",
         description:
-            "Import student identity, year-group and account information.",
+            "Import student identity, account and school information.",
     },
     {
         value: "parents",
-        label: "Parents",
+        label: "Parents and guardians",
         description:
             "Import parent or guardian identity and account information.",
     },
@@ -82,61 +90,67 @@ const DEFAULT_IMPORT_TYPES: readonly ImportTypeOption[] = [
         value: "teachers",
         label: "Teachers",
         description:
-            "Import teaching staff identity, role and account information.",
-    },
-    {
-        value: "staff",
-        label: "Staff",
-        description:
-            "Import non-teaching and administrative staff information.",
+            "Import teaching staff identity, roles and account information.",
     },
     {
         value: "classes",
         label: "Classes",
         description:
-            "Import class groups, forms and year-group structures.",
-    },
-    {
-        value: "subjects",
-        label: "Subjects",
-        description:
-            "Import subjects and curriculum-area information.",
+            "Import class groups, forms and associated school information.",
     },
     {
         value: "courses",
         label: "Courses",
         description:
-            "Import courses and academic programme information.",
+            "Import courses, assigned teachers and academic programme data.",
     },
     {
         value: "enrollments",
         label: "Enrolments",
         description:
-            "Import student class or course enrolments.",
+            "Import student membership of classes and courses.",
     },
     {
-        value: "teaching_assignments",
-        label: "Teaching assignments",
+        value: "timetable_periods",
+        label: "Timetable periods",
         description:
-            "Import teacher, subject and class assignment information.",
+            "Import named timetable periods with their start and end times.",
     },
     {
         value: "timetables",
         label: "Timetables",
         description:
-            "Import timetable periods, lessons and scheduling information.",
+            "Import timetable definitions for an academic year.",
+    },
+    {
+        value: "timetable_entries",
+        label: "Timetable entries",
+        description:
+            "Import scheduled lessons, rooms, teachers, courses and classes.",
+    },
+    {
+        value: "timetable_assignments",
+        label: "Timetable assignments",
+        description:
+            "Assign timetables to students, teachers or class groups.",
+    },
+    {
+        value: "assignments",
+        label: "Assignments",
+        description:
+            "Import coursework, homework and other course assignments.",
+    },
+    {
+        value: "assignment_submissions",
+        label: "Assignment submissions and marks",
+        description:
+            "Import student submissions, scores, feedback and grading data.",
     },
     {
         value: "attendance",
         label: "Attendance",
         description:
-            "Import student attendance and absence information.",
-    },
-    {
-        value: "marks",
-        label: "Marks",
-        description:
-            "Import assessment marks, grades and result information.",
+            "Import student attendance records for existing register sessions.",
     },
 ];
 
@@ -192,8 +206,11 @@ function normaliseImportTypes(
     const resolvedOptions: ImportTypeOption[] = [];
 
     for (const option of options) {
-        const value = option.value.trim();
-        const label = option.label.trim();
+        const value =
+            option.value.trim();
+
+        const label =
+            option.label.trim();
 
         if (
             !value ||
@@ -405,10 +422,24 @@ export default function ImportUploadPanel({
             setSelectedImportType(
                 normalisedDefault,
             );
+
+            return;
+        }
+
+        if (
+            selectedImportType &&
+            !resolvedImportTypes.some(
+                (option) =>
+                    option.value ===
+                    selectedImportType,
+            )
+        ) {
+            setSelectedImportType("");
         }
     }, [
         defaultImportType,
         resolvedImportTypes,
+        selectedImportType,
     ]);
 
     function notifySelectionChange(
@@ -420,26 +451,29 @@ export default function ImportUploadPanel({
             importType,
         });
     }
+
     function updateSelectedFile(
         file: File | null,
     ): void {
-        setSelectedFile((currentFile) => {
-            if (
-                filesMatch(
-                    currentFile,
+        setSelectedFile(
+            (currentFile) => {
+                if (
+                    filesMatch(
+                        currentFile,
+                        file,
+                    )
+                ) {
+                    return currentFile;
+                }
+
+                notifySelectionChange(
                     file,
-                )
-            ) {
-                return currentFile;
-            }
+                    selectedImportType,
+                );
 
-            notifySelectionChange(
-                file,
-                selectedImportType,
-            );
-
-            return file;
-        });
+                return file;
+            },
+        );
     }
 
     function updateImportType(
@@ -484,7 +518,9 @@ export default function ImportUploadPanel({
 
             updateSelectedFile(null);
 
-            if (fileInputRef.current) {
+            if (
+                fileInputRef.current
+            ) {
                 fileInputRef.current.value =
                     "";
             }
@@ -641,6 +677,20 @@ export default function ImportUploadPanel({
             return;
         }
 
+        if (
+            !resolvedImportTypes.some(
+                (option) =>
+                    option.value ===
+                    normalisedImportType,
+            )
+        ) {
+            setValidationError(
+                "The selected import type is not currently supported.",
+            );
+
+            return;
+        }
+
         if (!selectedFile) {
             setValidationError(
                 "Please choose a CSV file before uploading.",
@@ -679,8 +729,8 @@ export default function ImportUploadPanel({
         } catch {
             /*
              * The parent owns API error handling.
-             * The selected file remains available so
-             * the administrator can retry the upload.
+             * The selected file remains available so the administrator can
+             * retry the upload without selecting it again.
              */
         }
     }
@@ -693,7 +743,9 @@ export default function ImportUploadPanel({
             ]
                 .filter(Boolean)
                 .join(" ")}
-            aria-busy={isUploading}
+            aria-busy={
+                isUploading
+            }
         >
             <div>
                 <h2 className="text-xl font-bold text-slate-950">
@@ -707,7 +759,9 @@ export default function ImportUploadPanel({
 
             <form
                 className="mt-6 space-y-5"
-                onSubmit={handleSubmit}
+                onSubmit={
+                    handleSubmit
+                }
                 noValidate
             >
                 <label className="block">
@@ -731,9 +785,12 @@ export default function ImportUploadPanel({
                             "disabled:cursor-not-allowed disabled:bg-slate-100",
                             "disabled:text-slate-500",
                         ].join(" ")}
-                        onChange={(event) => {
+                        onChange={(
+                            event,
+                        ) => {
                             updateImportType(
-                                event.target.value,
+                                event.target
+                                    .value,
                             );
                         }}
                     >
@@ -770,7 +827,9 @@ export default function ImportUploadPanel({
                 </label>
 
                 <input
-                    ref={fileInputRef}
+                    ref={
+                        fileInputRef
+                    }
                     type="file"
                     accept={
                         acceptedFileTypes
@@ -784,6 +843,7 @@ export default function ImportUploadPanel({
                         handleFileInputChange
                     }
                 />
+
                 <div
                     role="button"
                     tabIndex={
@@ -806,7 +866,9 @@ export default function ImportUploadPanel({
                             ? "cursor-not-allowed opacity-60"
                             : "cursor-pointer hover:border-blue-400 hover:bg-blue-50/60",
                     ].join(" ")}
-                    onClick={openFilePicker}
+                    onClick={
+                        openFilePicker
+                    }
                     onKeyDown={
                         handleDropZoneKeyDown
                     }
@@ -819,7 +881,9 @@ export default function ImportUploadPanel({
                     onDragLeave={
                         handleDragLeave
                     }
-                    onDrop={handleDrop}
+                    onDrop={
+                        handleDrop
+                    }
                 >
                     <span
                         className={[
@@ -863,7 +927,9 @@ export default function ImportUploadPanel({
 
                             <div className="min-w-0 flex-1">
                                 <p className="truncate text-sm font-semibold text-slate-950">
-                                    {selectedFile.name}
+                                    {
+                                        selectedFile.name
+                                    }
                                 </p>
 
                                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
@@ -903,7 +969,9 @@ export default function ImportUploadPanel({
                                     "hover:text-slate-900 disabled:cursor-not-allowed",
                                     "disabled:opacity-50",
                                 ].join(" ")}
-                                onClick={(event) => {
+                                onClick={(
+                                    event,
+                                ) => {
                                     event.stopPropagation();
                                     clearSelectedFile();
                                 }}
@@ -928,7 +996,9 @@ export default function ImportUploadPanel({
                         />
 
                         <p className="text-sm font-medium leading-6">
-                            {effectiveErrorMessage}
+                            {
+                                effectiveErrorMessage
+                            }
                         </p>
                     </div>
                 ) : null}
@@ -944,10 +1014,13 @@ export default function ImportUploadPanel({
                         />
 
                         <p className="text-sm font-medium leading-6">
-                            {successMessage}
+                            {
+                                successMessage
+                            }
                         </p>
                     </div>
                 ) : null}
+
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-xs leading-5 text-slate-500">
                         The file will be staged and validated before any
@@ -956,7 +1029,9 @@ export default function ImportUploadPanel({
 
                     <button
                         type="submit"
-                        disabled={!canUpload}
+                        disabled={
+                            !canUpload
+                        }
                         className={[
                             "inline-flex min-h-11 w-full items-center justify-center gap-2",
                             "rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold",
