@@ -4,6 +4,7 @@ from app.imports.processors.assignment_submissions import (
     process_assignment_submission_row,
 )
 from app.imports.processors.assignments import process_assignment_row
+from app.imports.processors.attendance import process_attendance_row
 from app.imports.processors.classes import process_class_row
 from app.imports.processors.courses import process_course_row
 from app.imports.processors.enrollments import process_enrollment_row
@@ -28,6 +29,7 @@ from app.imports.validators.assignment_submissions import (
     validate_assignment_submission_row,
 )
 from app.imports.validators.assignments import validate_assignment_row
+from app.imports.validators.attendance import validate_attendance_row
 from app.imports.validators.classes import validate_class_row
 from app.imports.validators.courses import validate_course_row
 from app.imports.validators.enrollments import validate_enrollment_row
@@ -57,6 +59,7 @@ TIMETABLE_ENTRY_IMPORT_TYPE = "timetable_entries"
 TIMETABLE_ASSIGNMENT_IMPORT_TYPE = "timetable_assignments"
 ASSIGNMENT_IMPORT_TYPE = "assignments"
 ASSIGNMENT_SUBMISSION_IMPORT_TYPE = "assignment_submissions"
+ATTENDANCE_IMPORT_TYPE = "attendance"
 
 
 def register_import_handlers() -> None:
@@ -133,6 +136,11 @@ def register_import_handlers() -> None:
             ASSIGNMENT_SUBMISSION_IMPORT_TYPE,
             validate_assignment_submission_row,
             process_assignment_submission_row,
+        ),
+        (
+            ATTENDANCE_IMPORT_TYPE,
+            validate_attendance_row,
+            process_attendance_row,
         ),
     )
 
