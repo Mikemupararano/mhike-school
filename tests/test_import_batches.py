@@ -30,10 +30,13 @@ class StudentImportRow(BaseModel):
     first_name: str = Field(
         min_length=1,
     )
+
     last_name: str = Field(
         min_length=1,
     )
+
     email: EmailStr
+
     year_group: int = Field(
         ge=1,
         le=13,
@@ -346,6 +349,7 @@ def test_import_batch_routes_are_registered() -> None:
         ("/import-batches", ("POST",)),
         ("/import-batches/count", ("GET",)),
         ("/import-batches/{batch_id}", ("GET",)),
+        ("/import-batches/{batch_id}", ("PATCH",)),
         ("/import-batches/{batch_id}/progress", ("GET",)),
         ("/import-batches/{batch_id}/upload", ("POST",)),
         ("/import-batches/{batch_id}/process", ("POST",)),

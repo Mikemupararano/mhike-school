@@ -25,7 +25,8 @@ from app.models.import_batch import (
     ImportRowStatus,
     ImportStatus,
 )
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, UserStatus
+from app.models.user_role import UserRoleAssignment
 from app.repositories.user import UserRepository
 from app.services.import_service import (
     ImportBatchStateError,
@@ -310,6 +311,204 @@ async def test_student_processor_rejects_existing_non_student(
     assert existing_teacher.id == teacher_id
     assert existing_teacher.is_teacher is True
     assert existing_teacher.is_student is False
+
+
+async def test_student_processor_creates_student_role_assignment(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    result = await process_student_row(
+        db_session,
+        {
+            "email": "role.assignment@example.com",
+            "first_name": "Role",
+            "last_name": "Assignment",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == result.entity_id,
+                    UserRoleAssignment.role == UserRole.STUDENT,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert len(assignments) == 1
+
+
+async def test_student_processor_repairs_legacy_student_role_assignment(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    legacy_student = User(
+        email="legacy.student@example.com",
+        hashed_password=None,
+        full_name="Legacy Student",
+        role=UserRole.STUDENT,
+        status=UserStatus.ACTIVE,
+        is_active=True,
+        school_id=school_id,
+    )
+
+    db_session.add(
+        legacy_student,
+    )
+
+    await db_session.commit()
+
+    result = await process_student_row(
+        db_session,
+        {
+            "email": legacy_student.email,
+            "first_name": "Repaired",
+            "last_name": "Student",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == legacy_student.id,
+                    UserRoleAssignment.role == UserRole.STUDENT,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == legacy_student.id
+    assert len(assignments) == 1
+    assert result.message is not None
+    assert "restored the student role assignment" in result.message
+
+
+async def test_student_processor_does_not_duplicate_student_role_assignment(
+    db_session: AsyncSession,
+    student_user: User,
+) -> None:
+    school_id = student_user.school_id
+
+    assert school_id is not None
+
+    before_assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == student_user.id,
+                    UserRoleAssignment.role == UserRole.STUDENT,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert len(before_assignments) == 1
+
+    result = await process_student_row(
+        db_session,
+        {
+            "email": student_user.email,
+            "first_name": "No",
+            "last_name": "Duplicate",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    after_assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == student_user.id,
+                    UserRoleAssignment.role == UserRole.STUDENT,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == student_user.id
+    assert len(after_assignments) == 1
+
+
+async def test_student_processor_preserves_other_existing_roles(
+    db_session: AsyncSession,
+    student_user: User,
+) -> None:
+    school_id = student_user.school_id
+
+    assert school_id is not None
+
+    db_session.add(
+        UserRoleAssignment(
+            user_id=student_user.id,
+            role=UserRole.TEACHER,
+        ),
+    )
+
+    await db_session.commit()
+
+    result = await process_student_row(
+        db_session,
+        {
+            "email": student_user.email,
+            "first_name": "Multi",
+            "last_name": "Role",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == student_user.id,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    roles = {assignment.role for assignment in assignments}
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == student_user.id
+    assert roles == {
+        UserRole.STUDENT,
+        UserRole.TEACHER,
+    }
 
 
 async def test_processing_task_imports_valid_student_row(

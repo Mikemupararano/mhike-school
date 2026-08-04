@@ -8,7 +8,12 @@ from app.imports.registry import (
     RowProcessingAction,
     RowProcessingResult,
 )
-from app.models.user import User, UserRole, UserStatus
+from app.models.user import (
+    User,
+    UserRole,
+    UserStatus,
+)
+from app.models.user_role import UserRoleAssignment
 from app.repositories.user import UserRepository
 
 
@@ -24,17 +29,122 @@ def _required_string(
     receives malformed data.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
-        raise ValueError(f"Student import field '{field_name}' is required.")
+        raise ValueError(
+            f"Student import field '{field_name}' is required.",
+        )
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
-        raise ValueError(f"Student import field '{field_name}' cannot be blank.")
+        raise ValueError(
+            f"Student import field '{field_name}' cannot be blank.",
+        )
 
     return cleaned
+
+
+def _normalise_role(
+    role: object,
+) -> str:
+    """Return a stable string value for a role enum or string."""
+
+    value = getattr(
+        role,
+        "value",
+        role,
+    )
+
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _has_student_role_assignment(
+    user: User,
+) -> bool:
+    """Return whether the user has a persisted student role assignment."""
+
+    assignments = getattr(
+        user,
+        "user_roles",
+        None,
+    )
+
+    if not assignments:
+        return False
+
+    return any(
+        _normalise_role(
+            assignment.role,
+        )
+        == UserRole.STUDENT.value
+        for assignment in assignments
+    )
+
+
+def _is_existing_student(
+    user: User,
+) -> bool:
+    """
+    Return whether an existing account is already recognised as a student.
+
+    Both the authoritative multi-role assignments and the legacy primary-role
+    field are considered. This permits old student-only records to be repaired
+    without converting unrelated staff or parent accounts.
+    """
+
+    if _has_student_role_assignment(
+        user,
+    ):
+        return True
+
+    legacy_role = getattr(
+        user,
+        "role",
+        None,
+    )
+
+    return (
+        legacy_role is not None
+        and _normalise_role(
+            legacy_role,
+        )
+        == UserRole.STUDENT.value
+    )
+
+
+async def _ensure_student_role_assignment(
+    db: AsyncSession,
+    *,
+    user: User,
+) -> bool:
+    """
+    Ensure the user has a persisted student role assignment.
+
+    Returns True when a new assignment was created and False when the
+    assignment already existed.
+    """
+
+    if _has_student_role_assignment(
+        user,
+    ):
+        return False
+
+    db.add(
+        UserRoleAssignment(
+            user_id=user.id,
+            role=UserRole.STUDENT,
+        ),
+    )
+
+    await db.flush()
+
+    return True
 
 
 async def process_student_row(
@@ -47,23 +157,54 @@ async def process_student_row(
 
     Matching is performed using the email address within the specified school.
 
-    Transaction ownership belongs to the generic import-batch service or task.
-    This processor therefore does not commit or roll back the session.
+    Transaction ownership belongs to the generic import-batch task. This
+    processor therefore flushes changes but does not commit or roll back the
+    session.
 
-    Existing non-student accounts are not converted automatically because that
-    could overwrite a staff or parent account. Multi-role assignment must be
-    handled through an explicit role-management workflow.
+    Existing accounts are updated only when they are already recognised as
+    students through either the multi-role assignment table or the legacy
+    primary-role field. Unrelated staff and parent accounts are not converted
+    automatically.
+
+    Legacy student accounts missing their user_roles assignment are repaired
+    during import while preserving any other existing role assignments.
     """
 
-    if school_id < 1:
-        raise ValueError("school_id must be a positive integer.")
+    if (
+        not isinstance(
+            school_id,
+            int,
+        )
+        or isinstance(
+            school_id,
+            bool,
+        )
+        or school_id < 1
+    ):
+        raise ValueError(
+            "school_id must be a positive integer.",
+        )
 
-    email = _required_string(row, "email").lower()
-    first_name = _required_string(row, "first_name")
-    last_name = _required_string(row, "last_name")
-    full_name = f"{first_name} {last_name}".strip()
+    email = _required_string(
+        row,
+        "email",
+    ).lower()
 
-    repository = UserRepository(db)
+    first_name = _required_string(
+        row,
+        "first_name",
+    )
+
+    last_name = _required_string(
+        row,
+        "last_name",
+    )
+
+    full_name = (f"{first_name} {last_name}").strip()
+
+    repository = UserRepository(
+        db,
+    )
 
     existing_user = await repository.get_by_email(
         email=email,
@@ -81,7 +222,15 @@ async def process_student_row(
             school_id=school_id,
         )
 
-        await repository.create(student)
+        student = await repository.create(
+            student,
+        )
+
+        await _ensure_student_role_assignment(
+            db,
+            user=student,
+        )
+
         await db.flush()
 
         return RowProcessingResult(
@@ -90,9 +239,12 @@ async def process_student_row(
             message=f"Created student '{full_name}'.",
         )
 
-    if not existing_user.is_student:
+    if not _is_existing_student(
+        existing_user,
+    ):
         raise ValueError(
-            f"A non-student user with email '{email}' already exists " "in this school."
+            f"A non-student user with email '{email}' already exists "
+            "in this school.",
         )
 
     existing_user.email = email
@@ -100,11 +252,25 @@ async def process_student_row(
     existing_user.status = UserStatus.ACTIVE
     existing_user.is_active = True
 
-    await repository.save(existing_user)
+    existing_user = await repository.save(
+        existing_user,
+    )
+
+    assignment_created = await _ensure_student_role_assignment(
+        db,
+        user=existing_user,
+    )
+
     await db.flush()
+
+    message = (
+        f"Updated student '{full_name}' and restored the student role " "assignment."
+        if assignment_created
+        else f"Updated student '{full_name}'."
+    )
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,
         entity_id=existing_user.id,
-        message=f"Updated student '{full_name}'.",
+        message=message,
     )

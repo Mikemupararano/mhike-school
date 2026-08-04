@@ -92,14 +92,19 @@ class ImportBatchCreate(ImportBatchBase):
 
 class ImportBatchUpdate(BaseModel):
     """
-    User-editable and workflow-related import batch fields.
+    User-editable import batch configuration.
 
-    School ownership, uploader details and counters are controlled by the
-    application and are deliberately excluded.
+    School ownership, uploader details, workflow status, processing counters,
+    archive state and audit timestamps are controlled by the application and
+    are deliberately excluded.
+
+    Unknown fields are rejected so clients cannot silently submit misspelled
+    fields or attempt to modify system-controlled batch data.
     """
 
     model_config = ConfigDict(
         str_strip_whitespace=True,
+        extra="forbid",
     )
 
     operation: ImportOperation | None = None
@@ -133,8 +138,11 @@ class ImportBatchRead(ImportBatchBase):
     )
 
     id: int
+
     school_id: int
+
     uploaded_by_id: int
+
     status: ImportStatus
 
     total_rows: int = Field(
@@ -249,7 +257,7 @@ class ImportBatchProgress(BaseModel):
     Current validation and processing progress for one import batch.
 
     Values are derived from persisted counters so clients can poll the
-    progress endpoint without loading the batch's individual rows.
+    progress endpoint without loading individual rows.
     """
 
     model_config = ConfigDict(
@@ -431,3 +439,4 @@ class ImportRowRead(ImportRowBase):
     created_at: datetime
 
     updated_at: datetime
+
