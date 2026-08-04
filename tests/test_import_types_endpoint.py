@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from app.imports.registry import registered_import_types
+from app.imports.registry import (
+    registered_import_handlers,
+    registered_import_types,
+)
 from app.models.user import User
 
 
@@ -31,16 +34,30 @@ async def test_school_admin_can_list_supported_import_types(
 
     assert values == registered_import_types()
 
-    assert all(
-        isinstance(
+    expected_handlers = {
+        handler.import_type: handler for handler in registered_import_handlers()
+    }
+
+    assert len(payload) == len(expected_handlers)
+
+    for item in payload:
+        import_type = item["value"]
+        handler = expected_handlers[import_type]
+
+        assert item["label"] == handler.display_name
+        assert item["description"] == handler.description
+
+        assert isinstance(
             item["label"],
             str,
         )
-        and item["label"].strip()
-        for item in payload
-    )
+        assert item["label"].strip()
 
-    assert all(item.get("description") is None for item in payload)
+        assert isinstance(
+            item["description"],
+            str,
+        )
+        assert item["description"].strip()
 
 
 @pytest.mark.asyncio
@@ -63,6 +80,8 @@ async def test_supported_import_types_are_sorted(
     assert values == sorted(
         values,
     )
+
+    assert values == registered_import_types()
 
 
 @pytest.mark.asyncio
@@ -174,4 +193,11 @@ async def test_types_route_is_not_treated_as_batch_id(
         list,
     )
 
-    assert all("value" in item and "label" in item for item in payload)
+    assert all(
+        {
+            "value",
+            "label",
+            "description",
+        }.issubset(item)
+        for item in payload
+    )

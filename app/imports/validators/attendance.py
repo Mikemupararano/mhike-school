@@ -23,6 +23,10 @@ from app.services.import_service import (
 class AttendanceImportSchema(BaseModel):
     """
     Validation schema for one attendance import row.
+
+    Field descriptions, examples, types, required status and validation
+    constraints are also used to generate metadata-driven CSV templates and
+    frontend import guidance.
     """
 
     model_config = ConfigDict(
@@ -33,21 +37,59 @@ class AttendanceImportSchema(BaseModel):
     class_name: str = Field(
         min_length=1,
         max_length=255,
+        description=(
+            "Name of the class associated with the attendance session. "
+            "The class must already exist in the current school."
+        ),
+        examples=["Year 10 Physics"],
     )
 
-    session_date: date
+    session_date: date = Field(
+        description=("Date of the attendance session in ISO format: YYYY-MM-DD."),
+        examples=["2026-08-04"],
+    )
 
-    session_type: AttendanceSessionType
+    session_type: AttendanceSessionType = Field(
+        description=(
+            "Attendance session type. Use one of the supported values "
+            "published in the template metadata."
+        ),
+        examples=["am"],
+    )
 
-    student_email: EmailStr
+    student_email: EmailStr = Field(
+        description=(
+            "Email address of the student whose attendance is being recorded. "
+            "The student must already belong to the current school."
+        ),
+        examples=["student@example.com"],
+    )
 
-    status: AttendanceStatus
+    status: AttendanceStatus = Field(
+        description=(
+            "Attendance status for the student. Use one of the supported "
+            "values published in the template metadata."
+        ),
+        examples=["present"],
+    )
 
-    marked_by_email: EmailStr | None = None
+    marked_by_email: EmailStr | None = Field(
+        default=None,
+        description=(
+            "Optional email address of the staff member who marked the "
+            "attendance record. The user must belong to the current school."
+        ),
+        examples=["teacher@example.com"],
+    )
 
     notes: str | None = Field(
         default=None,
         max_length=500,
+        description=(
+            "Optional attendance note providing additional context, such as "
+            "a reason for lateness or absence."
+        ),
+        examples=["Arrived 10 minutes late due to transport disruption."],
     )
 
     @field_validator("notes")

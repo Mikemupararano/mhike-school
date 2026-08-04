@@ -1,62 +1,108 @@
 export const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
-    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ||
+    process.env.NEXT_PUBLIC_API_URL?.replace(
+        /\/$/,
+        "",
+    ) ||
+    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(
+        /\/$/,
+        "",
+    ) ||
     "http://localhost:8000/api/v1";
 
-const TOKEN_KEY = "mhike_token";
+const TOKEN_KEY =
+    "mhike_token";
+
+type ApiErrorEnvelope = {
+    detail?: unknown;
+    message?: unknown;
+    error?:
+    | unknown
+    | {
+        code?: unknown;
+        message?: unknown;
+    };
+};
 
 export function getToken(): string | null {
-    if (typeof window === "undefined") {
+    if (
+        typeof window ===
+        "undefined"
+    ) {
         return null;
     }
 
-    return sessionStorage.getItem(TOKEN_KEY);
+    return window.sessionStorage.getItem(
+        TOKEN_KEY,
+    );
 }
 
-export function saveToken(token: string): void {
-    if (typeof window === "undefined") {
+export function saveToken(
+    token: string,
+): void {
+    if (
+        typeof window ===
+        "undefined"
+    ) {
         return;
     }
 
-    sessionStorage.setItem(TOKEN_KEY, token);
+    window.sessionStorage.setItem(
+        TOKEN_KEY,
+        token,
+    );
 }
 
 export function clearToken(): void {
-    if (typeof window === "undefined") {
+    if (
+        typeof window ===
+        "undefined"
+    ) {
         return;
     }
 
-    sessionStorage.removeItem(TOKEN_KEY);
+    window.sessionStorage.removeItem(
+        TOKEN_KEY,
+    );
 }
 
-function buildUrl(path: string): string {
-    const base = API_BASE_URL.replace(/\/+$/, "");
+function buildUrl(
+    path: string,
+): string {
+    const base =
+        API_BASE_URL.replace(
+            /\/+$/,
+            "",
+        );
 
-    const normalizedPath = path.startsWith("/")
-        ? path
-        : `/${path}`;
+    const normalisedPath =
+        path.startsWith("/")
+            ? path
+            : `/${path}`;
 
-    return `${base}${normalizedPath}`;
+    return `${base}${normalisedPath}`;
 }
 
 function buildHeaders(
     token?: string,
     hasBody = false,
 ): HeadersInit {
-    const authToken = token ?? getToken();
+    const authToken =
+        token ?? getToken();
 
     return {
         Accept: "application/json",
 
         ...(hasBody
             ? {
-                "Content-Type": "application/json",
+                "Content-Type":
+                    "application/json",
             }
             : {}),
 
         ...(authToken
             ? {
-                Authorization: `Bearer ${authToken}`,
+                Authorization:
+                    `Bearer ${authToken}`,
             }
             : {}),
     };
@@ -65,74 +111,154 @@ function buildHeaders(
 function buildFormHeaders(
     token?: string,
 ): HeadersInit {
-    const authToken = token ?? getToken();
+    const authToken =
+        token ?? getToken();
 
     return {
         Accept: "application/json",
 
         ...(authToken
             ? {
-                Authorization: `Bearer ${authToken}`,
+                Authorization:
+                    `Bearer ${authToken}`,
             }
             : {}),
     };
 }
 
-async function handle<T>(
-    res: Response,
-): Promise<T> {
-    if (!res.ok) {
-        let message = `API error ${res.status}`;
-
-        try {
-            const contentType =
-                res.headers.get("content-type") ?? "";
-
-            if (
-                contentType.includes(
-                    "application/json",
-                )
-            ) {
-                const data = await res.json();
-
-                if (
-                    typeof data?.detail === "string"
-                ) {
-                    message = data.detail;
-                } else if (
-                    typeof data?.message === "string"
-                ) {
-                    message = data.message;
-                } else if (
-                    typeof data?.error === "string"
-                ) {
-                    message = data.error;
-                } else {
-                    message = JSON.stringify(data);
-                }
-            } else {
-                message = await res.text();
-            }
-        } catch {
-            // Keep default message
-        }
-
-        if (
-            res.status === 401 ||
-            res.status === 403
-        ) {
-            clearToken();
-        }
-
-        throw new Error(message);
+function extractApiErrorMessage(
+    data: unknown,
+    fallback: string,
+): string {
+    if (
+        typeof data !==
+        "object" ||
+        data === null
+    ) {
+        return fallback;
     }
 
-    if (res.status === 204) {
+    const envelope =
+        data as ApiErrorEnvelope;
+
+    if (
+        typeof envelope.detail ===
+        "string"
+    ) {
+        return envelope.detail;
+    }
+
+    if (
+        typeof envelope.message ===
+        "string"
+    ) {
+        return envelope.message;
+    }
+
+    if (
+        typeof envelope.error ===
+        "string"
+    ) {
+        return envelope.error;
+    }
+
+    if (
+        typeof envelope.error ===
+        "object" &&
+        envelope.error !== null &&
+        "message" in envelope.error &&
+        typeof envelope.error.message ===
+        "string"
+    ) {
+        return envelope.error.message;
+    }
+
+    try {
+        return JSON.stringify(
+            data,
+        );
+    } catch {
+        return fallback;
+    }
+}
+
+async function getErrorMessage(
+    response: Response,
+): Promise<string> {
+    const fallback =
+        `API error ${response.status}`;
+
+    try {
+        const contentType =
+            response.headers.get(
+                "content-type",
+            ) ?? "";
+
+        if (
+            contentType.includes(
+                "application/json",
+            )
+        ) {
+            const data: unknown =
+                await response.json();
+
+            return extractApiErrorMessage(
+                data,
+                fallback,
+            );
+        }
+
+        const responseText =
+            await response.text();
+
+        return (
+            responseText.trim() ||
+            fallback
+        );
+    } catch {
+        return fallback;
+    }
+}
+
+function handleAuthenticationFailure(
+    response: Response,
+): void {
+    if (
+        response.status === 401 ||
+        response.status === 403
+    ) {
+        clearToken();
+    }
+}
+
+async function handle<T>(
+    response: Response,
+): Promise<T> {
+    if (!response.ok) {
+        const message =
+            await getErrorMessage(
+                response,
+            );
+
+        handleAuthenticationFailure(
+            response,
+        );
+
+        throw new Error(
+            message,
+        );
+    }
+
+    if (
+        response.status === 204
+    ) {
         return undefined as T;
     }
 
     const contentType =
-        res.headers.get("content-type") ?? "";
+        response.headers.get(
+            "content-type",
+        ) ?? "";
 
     if (
         !contentType.includes(
@@ -142,88 +268,95 @@ async function handle<T>(
         return undefined as T;
     }
 
-    return res.json() as Promise<T>;
+    return response.json() as Promise<T>;
 }
 
 export async function apiGet<T>(
     path: string,
     token?: string,
 ): Promise<T> {
+    const response =
+        await fetch(
+            buildUrl(path),
+            {
+                method: "GET",
+                headers:
+                    buildHeaders(
+                        token,
+                    ),
+                cache: "no-store",
+            },
+        );
+
     return handle<T>(
-        await fetch(buildUrl(path), {
-            method: "GET",
-            headers: buildHeaders(token),
-            cache: "no-store",
-        }),
+        response,
     );
 }
+
 export async function apiGetBlob(
     path: string,
     token?: string,
 ): Promise<Blob> {
-    const res = await fetch(buildUrl(path), {
-        method: "GET",
-        headers: buildHeaders(token),
-        cache: "no-store",
-    });
+    const response =
+        await fetch(
+            buildUrl(path),
+            {
+                method: "GET",
+                headers:
+                    buildHeaders(
+                        token,
+                    ),
+                cache: "no-store",
+            },
+        );
 
-    if (!res.ok) {
-        let message = `API error ${res.status}`;
+    if (!response.ok) {
+        const message =
+            await getErrorMessage(
+                response,
+            );
 
-        try {
-            const contentType =
-                res.headers.get("content-type") ?? "";
+        handleAuthenticationFailure(
+            response,
+        );
 
-            if (contentType.includes("application/json")) {
-                const data = await res.json();
-
-                if (typeof data?.detail === "string") {
-                    message = data.detail;
-                } else if (typeof data?.message === "string") {
-                    message = data.message;
-                } else if (typeof data?.error === "string") {
-                    message = data.error;
-                } else {
-                    message = JSON.stringify(data);
-                }
-            } else {
-                const responseText = await res.text();
-
-                if (responseText.trim()) {
-                    message = responseText;
-                }
-            }
-        } catch {
-            // Keep the default error message.
-        }
-
-        if (res.status === 401 || res.status === 403) {
-            clearToken();
-        }
-
-        throw new Error(message);
+        throw new Error(
+            message,
+        );
     }
 
-    return res.blob();
+    return response.blob();
 }
+
 export async function apiPost<T>(
     path: string,
     body?: unknown,
     token?: string,
 ): Promise<T> {
+    const response =
+        await fetch(
+            buildUrl(path),
+            {
+                method: "POST",
+                headers:
+                    buildHeaders(
+                        token,
+                        body !==
+                        undefined,
+                    ),
+                body:
+                    body !==
+                        undefined
+                        ? JSON.stringify(
+                            body,
+                        )
+                        : undefined,
+                cache: "no-store",
+            },
+        );
+
     return handle<T>(
-        await fetch(buildUrl(path), {
-            method: "POST",
-            headers: buildHeaders(
-                token,
-                body !== undefined,
-            ),
-            body:
-                body !== undefined
-                    ? JSON.stringify(body)
-                    : undefined,
-            cache: "no-store",
-        }),
+        response,
     );
 }
 
@@ -232,13 +365,22 @@ export async function apiPostForm<T>(
     formData: FormData,
     token?: string,
 ): Promise<T> {
+    const response =
+        await fetch(
+            buildUrl(path),
+            {
+                method: "POST",
+                headers:
+                    buildFormHeaders(
+                        token,
+                    ),
+                body: formData,
+                cache: "no-store",
+            },
+        );
+
     return handle<T>(
-        await fetch(buildUrl(path), {
-            method: "POST",
-            headers: buildFormHeaders(token),
-            body: formData,
-            cache: "no-store",
-        }),
+        response,
     );
 }
 
@@ -247,13 +389,26 @@ export async function apiPut<T>(
     body: unknown,
     token?: string,
 ): Promise<T> {
+    const response =
+        await fetch(
+            buildUrl(path),
+            {
+                method: "PUT",
+                headers:
+                    buildHeaders(
+                        token,
+                        true,
+                    ),
+                body:
+                    JSON.stringify(
+                        body,
+                    ),
+                cache: "no-store",
+            },
+        );
+
     return handle<T>(
-        await fetch(buildUrl(path), {
-            method: "PUT",
-            headers: buildHeaders(token, true),
-            body: JSON.stringify(body),
-            cache: "no-store",
-        }),
+        response,
     );
 }
 
@@ -262,19 +417,30 @@ export async function apiPatch<T>(
     body?: unknown,
     token?: string,
 ): Promise<T> {
+    const response =
+        await fetch(
+            buildUrl(path),
+            {
+                method: "PATCH",
+                headers:
+                    buildHeaders(
+                        token,
+                        body !==
+                        undefined,
+                    ),
+                body:
+                    body !==
+                        undefined
+                        ? JSON.stringify(
+                            body,
+                        )
+                        : undefined,
+                cache: "no-store",
+            },
+        );
+
     return handle<T>(
-        await fetch(buildUrl(path), {
-            method: "PATCH",
-            headers: buildHeaders(
-                token,
-                body !== undefined,
-            ),
-            body:
-                body !== undefined
-                    ? JSON.stringify(body)
-                    : undefined,
-            cache: "no-store",
-        }),
+        response,
     );
 }
 
@@ -283,18 +449,29 @@ export async function apiDelete<T>(
     body?: unknown,
     token?: string,
 ): Promise<T> {
+    const response =
+        await fetch(
+            buildUrl(path),
+            {
+                method: "DELETE",
+                headers:
+                    buildHeaders(
+                        token,
+                        body !==
+                        undefined,
+                    ),
+                body:
+                    body !==
+                        undefined
+                        ? JSON.stringify(
+                            body,
+                        )
+                        : undefined,
+                cache: "no-store",
+            },
+        );
+
     return handle<T>(
-        await fetch(buildUrl(path), {
-            method: "DELETE",
-            headers: buildHeaders(
-                token,
-                body !== undefined,
-            ),
-            body:
-                body !== undefined
-                    ? JSON.stringify(body)
-                    : undefined,
-            cache: "no-store",
-        }),
+        response,
     );
 }

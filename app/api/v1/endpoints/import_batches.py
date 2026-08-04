@@ -9,13 +9,14 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Response,
     UploadFile,
     status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.imports.registry import registered_import_types
+from app.imports.registry import registered_import_handlers
 from app.models.import_batch import (
     ImportBatch,
     ImportRowStatus,
@@ -42,6 +43,11 @@ from app.schemas.import_batch import (
     ImportRowRead,
     ImportTypeRead,
 )
+from app.schemas.import_template import (
+    ImportTemplateCsvPreviewRead,
+    ImportTemplateListRead,
+    ImportTemplateMetadataRead,
+)
 from app.services.import_service import (
     ImportBatchStateError,
     ImportFileError,
@@ -49,6 +55,12 @@ from app.services.import_service import (
     cancel_import_batch,
     retry_import_batch,
     stage_csv_rows,
+)
+from app.services.import_template_service import (
+    build_import_template_csv_preview,
+    generate_import_template_csv,
+    get_import_template_metadata,
+    list_import_template_summaries,
 )
 from app.tasks.imports import (
     process_import_batch_task,
@@ -112,7 +124,11 @@ def _user_roles(
 
     if isinstance(
         roles,
-        (list, tuple, set),
+        (
+            list,
+            tuple,
+            set,
+        ),
     ):
         resolved_roles.update(
             _normalise_role_value(role) for role in roles if role is not None
@@ -215,6 +231,18 @@ def _raise_import_service_error(
         ) from exc
 
     raise exc
+
+
+def _raise_unknown_import_type(
+    import_type: str,
+    exc: KeyError,
+) -> None:
+    """Convert an unknown registered import type into HTTP 404."""
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=(f"Import type '{import_type}' is not registered."),
+    ) from exc
 
 
 async def _get_school_batch_or_404(
@@ -442,14 +470,155 @@ async def list_supported_import_types(
 
     return [
         ImportTypeRead(
-            value=import_type,
-            label=import_type.replace(
-                "_",
-                " ",
-            ).title(),
+            value=handler.import_type,
+            label=handler.display_name,
+            description=handler.description,
         )
-        for import_type in registered_import_types()
+        for handler in registered_import_handlers()
     ]
+
+
+@router.get(
+    "/templates",
+    response_model=ImportTemplateListRead,
+)
+async def list_import_templates(
+    current_user: CurrentUser,
+) -> ImportTemplateListRead:
+    """
+    Return compact metadata for every registered import template.
+
+    Clients can use this endpoint to discover available templates and display
+    field counts, descriptions and template links without loading full
+    field-level metadata for every import type.
+    """
+
+    _require_import_admin(
+        current_user,
+    )
+
+    return list_import_template_summaries()
+
+
+@router.get(
+    "/templates/{import_type}",
+    response_model=ImportTemplateMetadataRead,
+)
+async def get_import_template(
+    import_type: str,
+    current_user: CurrentUser,
+) -> ImportTemplateMetadataRead:
+    """
+    Return complete metadata for one registered import type.
+
+    Field names, ordering, required status, types, descriptions, examples and
+    validation constraints are derived from the handler's registered Pydantic
+    schema.
+    """
+
+    _require_import_admin(
+        current_user,
+    )
+
+    try:
+        return get_import_template_metadata(
+            import_type,
+        )
+    except KeyError as exc:
+        _raise_unknown_import_type(
+            import_type,
+            exc,
+        )
+
+
+@router.get(
+    "/templates/{import_type}/preview",
+    response_model=ImportTemplateCsvPreviewRead,
+)
+async def preview_import_template(
+    import_type: str,
+    current_user: CurrentUser,
+    include_sample_row: bool = Query(
+        default=True,
+    ),
+) -> ImportTemplateCsvPreviewRead:
+    """
+    Return a text preview of a generated CSV import template.
+
+    The preview preserves the exact CSV line endings and can optionally omit
+    the sample row.
+    """
+
+    _require_import_admin(
+        current_user,
+    )
+
+    try:
+        return build_import_template_csv_preview(
+            import_type,
+            include_sample_row=include_sample_row,
+        )
+    except KeyError as exc:
+        _raise_unknown_import_type(
+            import_type,
+            exc,
+        )
+
+
+@router.get(
+    "/templates/{import_type}/download",
+    response_class=Response,
+    responses={
+        status.HTTP_200_OK: {
+            "content": {
+                "text/csv": {},
+            },
+            "description": ("Generated CSV import template."),
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": ("The requested import type is not registered."),
+        },
+    },
+)
+async def download_import_template(
+    import_type: str,
+    current_user: CurrentUser,
+    include_sample_row: bool = Query(
+        default=True,
+    ),
+) -> Response:
+    """
+    Download a generated CSV template for one registered import type.
+
+    CSV headers follow the authoritative Pydantic schema field order. A sample
+    row is included by default and may be omitted through the query parameter.
+    """
+
+    _require_import_admin(
+        current_user,
+    )
+
+    try:
+        csv_content = generate_import_template_csv(
+            import_type,
+            include_sample_row=include_sample_row,
+        )
+    except KeyError as exc:
+        _raise_unknown_import_type(
+            import_type,
+            exc,
+        )
+
+    filename = f"{import_type.strip().lower()}_import_template.csv"
+
+    return Response(
+        content=csv_content.encode("utf-8-sig"),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (f'attachment; filename="{filename}"'),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get(
@@ -684,7 +853,7 @@ async def upload_batch_file(
             db,
             batch=batch,
             status=ImportStatus.UPLOADED,
-            current_stage="validation_queue_failed",
+            current_stage=("validation_queue_failed"),
             error_message=(
                 "The validation job could not be queued. "
                 "Please try the upload again."
@@ -755,7 +924,7 @@ async def process_batch(
         batch=batch,
         school_id=school_id,
         queued_stage="queued",
-        queue_failure_stage="processing_queue_failed",
+        queue_failure_stage=("processing_queue_failed"),
         queue_failure_message=(
             "The import could not be queued for processing. "
             "The batch remains ready and may be queued again."
@@ -811,7 +980,7 @@ async def retry_batch(
         batch=batch,
         school_id=school_id,
         queued_stage="retry_queued",
-        queue_failure_stage="retry_queue_failed",
+        queue_failure_stage=("retry_queue_failed"),
         queue_failure_message=(
             "The retry job could not be queued. "
             "The batch remains ready and may be queued again."
