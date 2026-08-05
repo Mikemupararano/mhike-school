@@ -234,7 +234,7 @@ async def _create_or_update_parent(
         school_id=school_id,
     )
 
-    full_name = (f"{first_name} {last_name}").strip()
+    full_name = f"{first_name} {last_name}".strip()
 
     if existing_user is None:
         parent = User(
@@ -257,8 +257,6 @@ async def _create_or_update_parent(
             role=UserRole.PARENT,
         )
 
-        await db.flush()
-
         return (
             parent,
             RowProcessingAction.CREATED,
@@ -270,7 +268,7 @@ async def _create_or_update_parent(
         UserRole.PARENT,
     ):
         raise ValueError(
-            f"A non-parent user with email '{email}' already exists " "in this school.",
+            f"A non-parent user with email '{email}' " "already exists in this school.",
         )
 
     existing_user.email = email
@@ -287,8 +285,6 @@ async def _create_or_update_parent(
         user=existing_user,
         role=UserRole.PARENT,
     )
-
-    await db.flush()
 
     return (
         existing_user,
@@ -397,7 +393,9 @@ async def process_parent_row(
     )
 
     if existing_link is not None:
-        message = f"Parent '{email}' is already linked to student '{student_email}'."
+        message = (
+            f"Parent '{email}' is already linked " f"to student '{student_email}'."
+        )
 
         if assignment_created:
             message += " The parent role assignment was restored."

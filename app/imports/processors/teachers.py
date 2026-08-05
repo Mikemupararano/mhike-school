@@ -200,7 +200,7 @@ async def process_teacher_row(
         "last_name",
     )
 
-    full_name = (f"{first_name} {last_name}").strip()
+    full_name = f"{first_name} {last_name}".strip()
 
     repository = UserRepository(
         db,
@@ -231,8 +231,6 @@ async def process_teacher_row(
             user=teacher,
         )
 
-        await db.flush()
-
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=teacher.id,
@@ -261,10 +259,8 @@ async def process_teacher_row(
         user=existing_user,
     )
 
-    await db.flush()
-
     message = (
-        f"Updated teacher '{full_name}' and restored the teacher role " "assignment."
+        f"Updated teacher '{full_name}' and restored the teacher role " f"assignment."
         if assignment_created
         else f"Updated teacher '{full_name}'."
     )

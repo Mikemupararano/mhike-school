@@ -13,7 +13,9 @@ from sqlalchemy.ext.asyncio import (
 
 import app.tasks.imports as import_tasks
 from app.imports.bootstrap import register_import_handlers
+from app.imports.processors.parents import process_parent_row
 from app.imports.processors.students import process_student_row
+from app.imports.processors.teachers import process_teacher_row
 from app.imports.registry import (
     RowProcessingAction,
     get_import_handler,
@@ -27,6 +29,7 @@ from app.models.import_batch import (
 )
 from app.models.user import User, UserRole, UserStatus
 from app.models.user_role import UserRoleAssignment
+from app.repositories.parent_student import ParentStudentRepository
 from app.repositories.user import UserRepository
 from app.services.import_service import (
     ImportBatchStateError,
@@ -1621,3 +1624,828 @@ async def test_processing_task_enforces_school_isolation(
     assert row.attempt_count == 0
     assert row.created_entity_id is None
     assert row.processed_at is None
+
+
+async def test_teacher_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "teachers",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_teacher_row
+
+
+async def test_teacher_processor_creates_new_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+    assert school_id is not None
+
+    result = await process_teacher_row(
+        db_session,
+        {
+            "email": "new.teacher@example.com",
+            "first_name": "New",
+            "last_name": "Teacher",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    teacher = await UserRepository(
+        db_session,
+    ).get_by_email(
+        email="new.teacher@example.com",
+        school_id=school_id,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert teacher is not None
+    assert teacher.id == result.entity_id
+    assert teacher.full_name == "New Teacher"
+    assert teacher.role == UserRole.TEACHER
+    assert teacher.status == UserStatus.ACTIVE
+    assert teacher.is_active is True
+    assert teacher.is_teacher is True
+
+    assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == teacher.id,
+                    UserRoleAssignment.role == UserRole.TEACHER,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert len(assignments) == 1
+
+
+async def test_teacher_processor_updates_existing_teacher_without_duplicate_role(
+    db_session: AsyncSession,
+    teacher_user: User,
+) -> None:
+    school_id = teacher_user.school_id
+    assert school_id is not None
+
+    result = await process_teacher_row(
+        db_session,
+        {
+            "email": teacher_user.email,
+            "first_name": "Updated",
+            "last_name": "Teacher",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+    await db_session.refresh(
+        teacher_user,
+    )
+
+    assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == teacher_user.id,
+                    UserRoleAssignment.role == UserRole.TEACHER,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == teacher_user.id
+    assert teacher_user.full_name == "Updated Teacher"
+    assert teacher_user.status == UserStatus.ACTIVE
+    assert teacher_user.is_active is True
+    assert len(assignments) == 1
+
+
+async def test_teacher_processor_rejects_existing_non_teacher(
+    db_session: AsyncSession,
+    student_user: User,
+) -> None:
+    school_id = student_user.school_id
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="A non-teacher user with email",
+    ):
+        await process_teacher_row(
+            db_session,
+            {
+                "email": student_user.email,
+                "first_name": "Incorrect",
+                "last_name": "Conversion",
+            },
+            school_id,
+        )
+
+    preserved_student = await UserRepository(
+        db_session,
+    ).get_by_email(
+        email=student_user.email,
+        school_id=school_id,
+    )
+
+    assert preserved_student is not None
+    assert preserved_student.id == student_user.id
+    assert preserved_student.is_student is True
+    assert preserved_student.is_teacher is False
+
+
+async def test_teacher_processor_repairs_legacy_role_and_preserves_other_roles(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+    assert school_id is not None
+
+    legacy_teacher = User(
+        email="legacy.teacher@example.com",
+        hashed_password=None,
+        full_name="Legacy Teacher",
+        role=UserRole.TEACHER,
+        status=UserStatus.ACTIVE,
+        is_active=True,
+        school_id=school_id,
+    )
+
+    db_session.add(
+        legacy_teacher,
+    )
+    await db_session.flush()
+
+    db_session.add(
+        UserRoleAssignment(
+            user_id=legacy_teacher.id,
+            role=UserRole.STUDENT,
+        ),
+    )
+
+    await db_session.commit()
+
+    result = await process_teacher_row(
+        db_session,
+        {
+            "email": legacy_teacher.email,
+            "first_name": "Repaired",
+            "last_name": "Teacher",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == legacy_teacher.id,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    roles = {assignment.role for assignment in assignments}
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == legacy_teacher.id
+    assert result.message is not None
+    assert "restored the teacher role assignment" in result.message
+    assert roles == {
+        UserRole.STUDENT,
+        UserRole.TEACHER,
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid_school_id",
+    [
+        0,
+        -1,
+        True,
+    ],
+)
+async def test_teacher_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    invalid_school_id: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_teacher_row(
+            db_session,
+            {
+                "email": "invalid.school@example.com",
+                "first_name": "Invalid",
+                "last_name": "School",
+            },
+            invalid_school_id,
+        )
+
+
+async def test_processing_task_imports_valid_teacher_row(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+    assert school_id is not None
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="teachers",
+        original_filename="teachers.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "email": "batch.teacher@example.com",
+            "first_name": "Batch",
+            "last_name": "Teacher",
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        teacher = await get_user_by_email(
+            verification_db,
+            email="batch.teacher@example.com",
+            school_id=school_id,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 1
+        assert summary["updated_rows"] == 0
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.failed_rows == 0
+
+        assert processed_row.status == ImportRowStatus.IMPORTED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "teachers"
+        assert processed_row.created_entity_id is not None
+        assert processed_row.processed_at is not None
+
+        assert teacher is not None
+        assert teacher.id == processed_row.created_entity_id
+        assert teacher.full_name == "Batch Teacher"
+        assert teacher.role == UserRole.TEACHER
+        assert teacher.is_teacher is True
+
+
+async def test_parent_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "parents",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_parent_row
+
+
+async def test_parent_processor_creates_parent_and_student_link(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    result = await process_parent_row(
+        db_session,
+        {
+            "email": "new.parent@example.com",
+            "first_name": "New",
+            "last_name": "Parent",
+            "student_email": student_user.email,
+            "phone": "+44 7700 900123",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    parent = await UserRepository(
+        db_session,
+    ).get_by_email(
+        email="new.parent@example.com",
+        school_id=school_id,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert result.message is not None
+    assert "Created parent" in result.message
+
+    assert parent is not None
+    assert parent.full_name == "New Parent"
+    assert parent.role == UserRole.PARENT
+    assert parent.status == UserStatus.ACTIVE
+    assert parent.is_active is True
+    assert parent.has_role(
+        UserRole.PARENT,
+    )
+
+    link = await ParentStudentRepository(
+        db_session,
+    ).get_link_in_school(
+        parent_id=parent.id,
+        student_id=student_user.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert link is not None
+    assert link.id == result.entity_id
+
+
+async def test_parent_processor_updates_existing_parent_and_creates_link(
+    db_session: AsyncSession,
+    parent_user: User,
+    student_user: User,
+) -> None:
+    school_id = parent_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    result = await process_parent_row(
+        db_session,
+        {
+            "email": parent_user.email,
+            "first_name": "Updated",
+            "last_name": "Parent",
+            "student_email": student_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+    await db_session.refresh(
+        parent_user,
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id is not None
+    assert parent_user.full_name == "Updated Parent"
+    assert parent_user.status == UserStatus.ACTIVE
+    assert parent_user.is_active is True
+    assert parent_user.has_role(
+        UserRole.PARENT,
+    )
+
+    link = await ParentStudentRepository(
+        db_session,
+    ).get_link_in_school(
+        parent_id=parent_user.id,
+        student_id=student_user.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert link is not None
+    assert link.id == result.entity_id
+
+
+async def test_parent_processor_skips_duplicate_parent_student_link(
+    db_session: AsyncSession,
+    parent_user: User,
+    student_user: User,
+) -> None:
+    school_id = parent_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    first_result = await process_parent_row(
+        db_session,
+        {
+            "email": parent_user.email,
+            "first_name": "Existing",
+            "last_name": "Parent",
+            "student_email": student_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    second_result = await process_parent_row(
+        db_session,
+        {
+            "email": parent_user.email,
+            "first_name": "Existing",
+            "last_name": "Parent",
+            "student_email": student_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    assert first_result.action == RowProcessingAction.UPDATED
+    assert second_result.action == RowProcessingAction.SKIPPED
+    assert second_result.entity_id == first_result.entity_id
+    assert second_result.message is not None
+    assert "already linked" in second_result.message
+
+
+async def test_parent_processor_rejects_existing_non_parent(
+    db_session: AsyncSession,
+    teacher_user: User,
+    student_user: User,
+) -> None:
+    school_id = teacher_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    with pytest.raises(
+        ValueError,
+        match="A non-parent user with email",
+    ):
+        await process_parent_row(
+            db_session,
+            {
+                "email": teacher_user.email,
+                "first_name": "Incorrect",
+                "last_name": "Conversion",
+                "student_email": student_user.email,
+            },
+            school_id,
+        )
+
+    preserved_teacher = await UserRepository(
+        db_session,
+    ).get_by_email(
+        email=teacher_user.email,
+        school_id=school_id,
+    )
+
+    assert preserved_teacher is not None
+    assert preserved_teacher.id == teacher_user.id
+    assert preserved_teacher.has_role(
+        UserRole.TEACHER,
+    )
+    assert not preserved_teacher.has_role(
+        UserRole.PARENT,
+    )
+
+
+async def test_parent_processor_rejects_missing_student(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="No student with email",
+    ):
+        await process_parent_row(
+            db_session,
+            {
+                "email": "missing.student.parent@example.com",
+                "first_name": "Missing",
+                "last_name": "Student",
+                "student_email": "not.found.student@example.com",
+            },
+            school_id,
+        )
+
+
+async def test_parent_processor_repairs_legacy_roles_and_preserves_other_roles(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    legacy_student = User(
+        email="legacy.linked.student@example.com",
+        hashed_password=None,
+        full_name="Legacy Linked Student",
+        role=UserRole.STUDENT,
+        status=UserStatus.ACTIVE,
+        is_active=True,
+        school_id=school_id,
+    )
+
+    legacy_parent = User(
+        email="legacy.parent@example.com",
+        hashed_password=None,
+        full_name="Legacy Parent",
+        role=UserRole.PARENT,
+        status=UserStatus.ACTIVE,
+        is_active=True,
+        school_id=school_id,
+    )
+
+    db_session.add_all(
+        [
+            legacy_student,
+            legacy_parent,
+        ],
+    )
+    await db_session.flush()
+
+    db_session.add(
+        UserRoleAssignment(
+            user_id=legacy_parent.id,
+            role=UserRole.TEACHER,
+        ),
+    )
+
+    await db_session.commit()
+
+    result = await process_parent_row(
+        db_session,
+        {
+            "email": legacy_parent.email,
+            "first_name": "Repaired",
+            "last_name": "Parent",
+            "student_email": legacy_student.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    parent_roles = {
+        assignment.role
+        for assignment in (
+            (
+                await db_session.execute(
+                    select(UserRoleAssignment).where(
+                        UserRoleAssignment.user_id == legacy_parent.id,
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    }
+
+    student_roles = {
+        assignment.role
+        for assignment in (
+            (
+                await db_session.execute(
+                    select(UserRoleAssignment).where(
+                        UserRoleAssignment.user_id == legacy_student.id,
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    }
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.message is not None
+    assert "restored the parent role assignment" in result.message
+    assert parent_roles == {
+        UserRole.PARENT,
+        UserRole.TEACHER,
+    }
+    assert student_roles == {
+        UserRole.STUDENT,
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid_school_id",
+    [
+        0,
+        -1,
+        True,
+    ],
+)
+async def test_parent_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    invalid_school_id: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_parent_row(
+            db_session,
+            {
+                "email": "invalid.school.parent@example.com",
+                "first_name": "Invalid",
+                "last_name": "School",
+                "student_email": "student@example.com",
+            },
+            invalid_school_id,
+        )
+
+
+async def test_parent_processor_rejects_phone_over_maximum_length(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    with pytest.raises(
+        ValueError,
+        match="phone.*cannot exceed 50 characters",
+    ):
+        await process_parent_row(
+            db_session,
+            {
+                "email": "long.phone.parent@example.com",
+                "first_name": "Long",
+                "last_name": "Phone",
+                "student_email": student_user.email,
+                "phone": "1" * 51,
+            },
+            school_id,
+        )
+
+
+async def test_processing_task_imports_valid_parent_row(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="parents",
+        original_filename="parents.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "email": "batch.parent@example.com",
+            "first_name": "Batch",
+            "last_name": "Parent",
+            "student_email": student_user.email,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        parent = await get_user_by_email(
+            verification_db,
+            email="batch.parent@example.com",
+            school_id=school_id,
+        )
+
+        assert parent is not None
+
+        link = await ParentStudentRepository(
+            verification_db,
+        ).get_link_in_school(
+            parent_id=parent.id,
+            student_id=student_user.id,
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 1
+        assert summary["updated_rows"] == 0
+        assert summary["skipped_rows"] == 0
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.failed_rows == 0
+        assert processed_batch.skipped_rows == 0
+
+        assert processed_row.status == ImportRowStatus.IMPORTED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "parents"
+        assert processed_row.created_entity_id is not None
+        assert processed_row.processed_at is not None
+
+        assert parent.full_name == "Batch Parent"
+        assert parent.role == UserRole.PARENT
+        assert parent.has_role(
+            UserRole.PARENT,
+        )
+
+        assert link is not None
+        assert link.id == processed_row.created_entity_id

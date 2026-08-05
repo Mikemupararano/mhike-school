@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+)
 
 from app.services.import_service import (
     RowValidationResult,
@@ -13,13 +18,13 @@ from app.services.import_service import (
 
 class ParentImportSchema(BaseModel):
     """
-    Validation schema for one staged parent import row.
+    Validate one staged parent import row.
 
-    Parent imports resolve the linked student using the student's email
-    address. The processor creates or reuses the parent account and then
-    creates the parent-student relationship.
+    Parent imports resolve the linked student using ``student_email``. The
+    processor creates or updates the parent account and then creates or reuses
+    the parent-student relationship.
 
-    Additional columns are retained so future parent-import fields can be
+    Additional columns are retained so future parent-specific fields can be
     introduced without redesigning the generic import framework.
     """
 
@@ -54,14 +59,9 @@ def validate_parent_row(
     """
     Validate and normalise one staged parent import row.
 
-    Database-dependent checks belong in the parent processor, including:
-
-    - student existence;
-    - student school membership;
-    - student role validation;
-    - existing parent account checks;
-    - parent role checks;
-    - duplicate parent-student relationship detection.
+    Database-dependent checks belong in the parent processor, including
+    student existence, school membership, role validation, parent account
+    conflicts and duplicate parent-student relationships.
     """
 
     return validate_row_with_schema(
