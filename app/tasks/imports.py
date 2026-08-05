@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.exc import OperationalError
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import TaskAsyncSessionLocal as AsyncSessionLocal
 from app.imports.registry import (
     RowProcessingAction,
     RowProcessingResult,

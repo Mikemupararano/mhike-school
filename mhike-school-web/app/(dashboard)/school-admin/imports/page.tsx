@@ -22,28 +22,20 @@ import ImportFilters, {
     type ImportFiltersValue,
 } from "@/components/imports/ImportFilters";
 import ImportSummaryCard from "@/components/imports/ImportSummaryCard";
-import ImportUploadPanel, {
-    type ImportTypeOption,
-    type ImportUploadPayload,
-} from "@/components/imports/ImportUploadPanel";
+import ImportWizard from "@/components/imports/ImportWizard";
 import {
     archiveImportBatch,
     cancelImportBatch,
     countImportBatches,
-    createImportBatch,
-    getSupportedImportTypes,
     listImportBatches,
     restoreImportBatch,
-    uploadImportCsv,
 } from "@/lib/importApi";
 import type {
     ImportBatchCountParams,
-    ImportBatchCreate,
     ImportBatchListParams,
     ImportBatchRead,
     ImportBatchSummary,
     ImportStatus,
-    ImportTypeRead,
 } from "@/types/import";
 
 const PAGE_SIZE = 20;
@@ -325,20 +317,6 @@ function mapBatch(
     };
 }
 
-function mapImportTypeOption(
-    importType: ImportTypeRead,
-): ImportTypeOption {
-    return {
-        value:
-            importType.value,
-        label:
-            importType.label,
-        description:
-            importType.description ??
-            undefined,
-    };
-}
-
 function matchesSearch(
     batch: ImportBatchTableItem,
     search: string,
@@ -437,13 +415,6 @@ export default function SchoolAdminImportsPage() {
     >([]);
 
     const [
-        supportedImportTypes,
-        setSupportedImportTypes,
-    ] = useState<
-        ImportTypeRead[] | null
-    >(null);
-
-    const [
         totalItems,
         setTotalItems,
     ] = useState(0);
@@ -467,11 +438,6 @@ export default function SchoolAdminImportsPage() {
     ] = useState(true);
 
     const [
-        isUploading,
-        setIsUploading,
-    ] = useState(false);
-
-    const [
         actionBatchId,
         setActionBatchId,
     ] = useState<
@@ -491,64 +457,6 @@ export default function SchoolAdminImportsPage() {
     ] = useState<
         string | null
     >(null);
-
-    const importTypeOptions =
-        useMemo<
-            ImportTypeOption[] | undefined
-        >(
-            () => {
-                if (
-                    supportedImportTypes ===
-                    null
-                ) {
-                    return undefined;
-                }
-
-                const options =
-                    supportedImportTypes
-                        .map(
-                            mapImportTypeOption,
-                        )
-                        .filter(
-                            (option) =>
-                                option.value
-                                    .trim()
-                                    .length >
-                                0,
-                        );
-
-                return options.length >
-                    0
-                    ? options
-                    : undefined;
-            },
-            [supportedImportTypes],
-        );
-
-    const loadSupportedImportTypes =
-        useCallback(
-            async (): Promise<void> => {
-                try {
-                    const response =
-                        await getSupportedImportTypes();
-
-                    setSupportedImportTypes(
-                        response,
-                    );
-                } catch {
-                    /*
-                     * Keep the value null so ImportUploadPanel uses its
-                     * production-safe built-in list when discovery fails.
-                     *
-                     * Batch loading and uploading remain available.
-                     */
-                    setSupportedImportTypes(
-                        null,
-                    );
-                }
-            },
-            [],
-        );
 
     const loadBatches =
         useCallback(
@@ -784,12 +692,8 @@ export default function SchoolAdminImportsPage() {
         );
 
     useEffect(() => {
-        void Promise.all([
-            loadSupportedImportTypes(),
-            loadBatches(),
-        ]);
+        void loadBatches();
     }, [
-        loadSupportedImportTypes,
         loadBatches,
     ]);
 
@@ -856,92 +760,6 @@ export default function SchoolAdminImportsPage() {
                 ),
             [batches],
         );
-
-    async function handleUpload(
-        payload: ImportUploadPayload,
-    ): Promise<void> {
-        setIsUploading(true);
-        setErrorMessage(null);
-        setSuccessMessage(null);
-
-        let createdBatchId:
-            number | null =
-            null;
-
-        try {
-            const importType =
-                payload.importType.trim();
-
-            if (!importType) {
-                throw new Error(
-                    "Please select an import type before uploading the CSV file.",
-                );
-            }
-
-            const filename =
-                payload.file.name.trim();
-
-            if (!filename) {
-                throw new Error(
-                    "The selected CSV file does not have a valid filename.",
-                );
-            }
-
-            const createPayload:
-                ImportBatchCreate =
-            {
-                import_type:
-                    importType,
-                operation:
-                    "create",
-                original_filename:
-                    filename,
-            };
-
-            const createdBatch =
-                await createImportBatch(
-                    createPayload,
-                );
-
-            createdBatchId =
-                createdBatch.id;
-
-            await uploadImportCsv(
-                createdBatch.id,
-                payload.file,
-            );
-
-            setSuccessMessage(
-                `${filename} was uploaded successfully as import batch #${createdBatch.id}.`,
-            );
-
-            setPage(1);
-
-            await loadBatches();
-        } catch (error) {
-            const originalMessage =
-                getErrorMessage(
-                    error,
-                );
-
-            setErrorMessage(
-                createdBatchId !==
-                    null
-                    ? (
-                        `${originalMessage} ` +
-                        `Import batch #${createdBatchId} was created, ` +
-                        "but its CSV upload did not complete."
-                    )
-                    : originalMessage,
-            );
-
-            throw error;
-        } finally {
-            setIsUploading(
-                false,
-            );
-        }
-    }
 
     async function runBatchAction(
         batchId: number,
@@ -1096,7 +914,6 @@ export default function SchoolAdminImportsPage() {
                             type="button"
                             disabled={
                                 isLoading ||
-                                isUploading ||
                                 actionBatchId !==
                                 null
                             }
@@ -1108,10 +925,7 @@ export default function SchoolAdminImportsPage() {
                                 "disabled:cursor-not-allowed disabled:opacity-50",
                             ].join(" ")}
                             onClick={() => {
-                                void Promise.all([
-                                    loadSupportedImportTypes(),
-                                    loadBatches(),
-                                ]);
+                                void loadBatches();
                             }}
                         >
                             <RefreshCcw
@@ -1232,28 +1046,19 @@ export default function SchoolAdminImportsPage() {
                 </section>
 
                 <section className="mb-6">
-                    <ImportUploadPanel
-                        importTypes={
-                            importTypeOptions
-                        }
+                    <ImportWizard
                         defaultImportType={
                             DEFAULT_UPLOAD_IMPORT_TYPE
-                        }
-                        isUploading={
-                            isUploading
                         }
                         disabled={
                             isLoading ||
                             actionBatchId !==
                             null
                         }
-                        errorMessage={
-                            null
+                        navigateToBatchOnComplete={
+                            false
                         }
-                        successMessage={
-                            null
-                        }
-                        onSelectionChange={() => {
+                        onBatchCreated={() => {
                             setErrorMessage(
                                 null,
                             );
@@ -1262,9 +1067,21 @@ export default function SchoolAdminImportsPage() {
                                 null,
                             );
                         }}
-                        onUpload={
-                            handleUpload
-                        }
+                        onCompleted={async (
+                            completedBatch,
+                        ) => {
+                            setErrorMessage(
+                                null,
+                            );
+
+                            setSuccessMessage(
+                                `Import batch #${completedBatch.id} was uploaded and queued for validation.`,
+                            );
+
+                            setPage(1);
+
+                            await loadBatches();
+                        }}
                     />
                 </section>
 

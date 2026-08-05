@@ -1043,18 +1043,8 @@ export default function ImportWizard({
                 setSuccessMessage(null);
 
                 try {
-                    let targetBatch =
+                    const targetBatch =
                         await ensureBatchCreated();
-
-                    targetBatch =
-                        await persistMapping(
-                            targetBatch,
-                        );
-
-                    targetBatch =
-                        await persistOptions(
-                            targetBatch,
-                        );
 
                     const uploadedBatch =
                         await uploadImportCsv(
@@ -1097,8 +1087,6 @@ export default function ImportWizard({
                 isWorking,
                 navigateToBatchOnComplete,
                 onCompleted,
-                persistMapping,
-                persistOptions,
                 router,
                 selectedFile,
             ],
@@ -1172,9 +1160,7 @@ export default function ImportWizard({
                 return false;
             }
 
-            switch (
-            currentStep.id
-            ) {
+            switch (currentStep.id) {
                 case "type":
                     return (
                         selectedImportType.length >
@@ -1583,8 +1569,7 @@ export default function ImportWizard({
                     )}
                 </div>
 
-                {missingRequiredFields.length >
-                    0 ? (
+                {missingRequiredFields.length > 0 ? (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                         <p className="font-semibold">
                             Required fields still
@@ -1604,8 +1589,7 @@ export default function ImportWizard({
                     </div>
                 ) : null}
 
-                {duplicateTargetColumns.size >
-                    0 ? (
+                {duplicateTargetColumns.size > 0 ? (
                     <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
                         A destination field cannot
                         be mapped more than once.
@@ -1958,8 +1942,7 @@ export default function ImportWizard({
                     Back
                 </button>
 
-                {currentStep.id ===
-                    "review" ? (
+                {currentStep.id === "review" ? (
                     <button
                         type="button"
                         disabled={
