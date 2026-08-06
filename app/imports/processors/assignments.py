@@ -181,6 +181,32 @@ def _optional_boolean(
     return value
 
 
+def _validate_school_id(
+    school_id: int,
+) -> None:
+    """
+    Require a positive integer school identifier.
+
+    Boolean values are rejected explicitly because ``bool`` is a subclass
+    of ``int`` in Python.
+    """
+
+    if (
+        not isinstance(
+            school_id,
+            int,
+        )
+        or isinstance(
+            school_id,
+            bool,
+        )
+        or school_id < 1
+    ):
+        raise ValueError(
+            "school_id must be a positive integer.",
+        )
+
+
 def _normalise_email(
     value: str,
     field_name: str,
@@ -335,21 +361,23 @@ async def process_assignment_row(
     """
     Create or update one assignment from validated import data.
 
-    Matching is performed using:
+    Matching is performed using the school-scoped natural key:
 
-    - school
-    - course
-    - title
+    - ``school_id``;
+    - ``course_id``;
+    - normalised ``title``.
+
+    The course is resolved through its stable import identity of title,
+    owning teacher and school. When ``created_by_email`` is omitted, the
+    owning course teacher becomes the assignment creator.
 
     Transaction ownership belongs to the generic import service or
-    background task. This processor therefore never commits or rolls
-    back the session.
+    background task. This processor never commits or rolls back the session.
     """
 
-    if not isinstance(school_id, int) or isinstance(school_id, bool) or school_id < 1:
-        raise ValueError(
-            "school_id must be a positive integer.",
-        )
+    _validate_school_id(
+        school_id,
+    )
 
     title = _required_string(
         row,
@@ -458,7 +486,7 @@ async def process_assignment_row(
     existing_assignment.course_id = course.id
     existing_assignment.created_by = creator.id
 
-    await repository.save(
+    existing_assignment = await repository.save(
         existing_assignment,
     )
 

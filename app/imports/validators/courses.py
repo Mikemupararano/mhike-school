@@ -18,13 +18,18 @@ class CourseImportSchema(BaseModel):
     A course requires:
 
     - a title;
-    - a teacher email used to resolve the owning teacher within the school.
+    - a teacher email used to resolve the owning teacher within the
+      current school.
 
-    The description is optional. Imported courses are created unpublished;
-    publishing remains a separate explicit workflow.
+    The description is optional.
 
-    Additional columns are retained so future course-import fields can be
-    introduced without redesigning the generic import framework.
+    Imported courses are always created unpublished. Publishing and
+    unpublishing remain explicit application workflows and are never
+    performed implicitly during import.
+
+    Additional CSV columns are intentionally preserved so future course
+    import fields can be introduced without redesigning the generic
+    import framework.
     """
 
     model_config = ConfigDict(
@@ -49,14 +54,17 @@ def validate_course_row(
     row: Mapping[str, Any],
 ) -> RowValidationResult:
     """
-    Validate and normalise one course import row.
+    Validate and normalise one staged course import row.
 
-    Database-dependent checks belong in the course processor, including:
+    This validator performs only schema-level validation.
+
+    Database-dependent validation intentionally belongs in the course
+    processor, including:
 
     - teacher existence;
     - teacher school membership;
     - teacher role validation;
-    - matching an existing course by title, teacher and school.
+    - matching existing courses by school, teacher and title.
     """
 
     return validate_row_with_schema(

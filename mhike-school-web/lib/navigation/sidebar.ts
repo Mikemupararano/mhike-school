@@ -208,6 +208,11 @@ export const schoolAdminSidebar: SidebarSection[] = [
                 icon: School,
             },
             {
+                label: "Courses",
+                href: "/school-admin/courses",
+                icon: BookOpen,
+            },
+            {
                 label: "Imports",
                 href: "/school-admin/imports",
                 icon: FileSpreadsheet,

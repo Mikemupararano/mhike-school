@@ -10,10 +10,8 @@ from app.imports.registry import (
 )
 from app.models.class_group import ClassGroup
 from app.models.course import Course
-from app.models.timetable_entry import (
-    TimetableDay,
-    TimetableEntry,
-)
+from app.models.timetable_entry import TimetableDay
+from app.schemas.timetable import TimetableEntryCreate
 from app.models.user import User, UserRole
 from app.repositories.class_group import ClassGroupRepository
 from app.repositories.course import CourseRepository
@@ -424,25 +422,19 @@ async def process_timetable_entry_row(
     )
 
     if existing_entry is None:
-        entry = TimetableEntry(
-            timetable_id=timetable.id,
-            school_id=school_id,
-            class_group_id=(class_group.id if class_group is not None else None),
-            course_id=(course.id if course is not None else None),
-            teacher_id=(teacher.id if teacher is not None else None),
-            timetable_period_id=period.id,
-            day_of_week=day_of_week,
-            room=room,
-            title=title,
-            notes=notes,
-        )
-
-        db.add(
-            entry,
-        )
-        await db.flush()
-        await db.refresh(
-            entry,
+        entry = await timetable_repository.create_entry(
+            TimetableEntryCreate(
+                timetable_id=timetable.id,
+                school_id=school_id,
+                class_group_id=(class_group.id if class_group is not None else None),
+                course_id=(course.id if course is not None else None),
+                teacher_id=(teacher.id if teacher is not None else None),
+                timetable_period_id=period.id,
+                day_of_week=day_of_week,
+                room=room,
+                title=title,
+                notes=notes,
+            ),
         )
 
         return RowProcessingResult(
@@ -458,7 +450,7 @@ async def process_timetable_entry_row(
     existing_entry.title = title
     existing_entry.notes = notes
 
-    await timetable_repository.save_entry(
+    existing_entry = await timetable_repository.save_entry(
         existing_entry,
     )
 

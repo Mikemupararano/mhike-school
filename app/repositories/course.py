@@ -88,7 +88,18 @@ class CourseRepository:
         include_relationships: bool,
     ):
         """
-        Apply standard course relationship loading when requested.
+        Apply the standard eager-loading configuration.
+
+        When relationship loading is enabled, the repository returns
+        fully hydrated Course objects including:
+
+        - teacher;
+        - school;
+        - modules;
+        - assignments.
+
+        Centralising this configuration keeps repository methods consistent
+        and avoids duplicated relationship-loading logic.
         """
 
         if not include_relationships:
@@ -100,6 +111,12 @@ class CourseRepository:
             ),
             selectinload(
                 Course.school,
+            ),
+            selectinload(
+                Course.modules,
+            ),
+            selectinload(
+                Course.assignments,
             ),
         )
 
@@ -274,9 +291,13 @@ class CourseRepository:
         school_id: int,
         *,
         published: bool | None = None,
+        include_relationships: bool = True,
     ) -> list[Course]:
         """
         Return courses belonging to one school.
+
+        Results are ordered newest first. Relationship loading can be
+        disabled for lightweight internal lookups.
         """
 
         self._validate_positive_integer(
@@ -284,18 +305,10 @@ class CourseRepository:
             "school_id",
         )
 
-        statement = (
-            select(
-                Course,
-            )
-            .options(
-                selectinload(
-                    Course.teacher,
-                ),
-            )
-            .where(
-                Course.school_id == school_id,
-            )
+        statement = select(
+            Course,
+        ).where(
+            Course.school_id == school_id,
         )
 
         if published is not None:
@@ -310,12 +323,17 @@ class CourseRepository:
             Course.id.desc(),
         )
 
+        statement = self._apply_relationship_loading(
+            statement,
+            include_relationships=include_relationships,
+        )
+
         result = await self.db.execute(
             statement,
         )
 
         return list(
-            result.scalars().all(),
+            result.scalars().unique().all(),
         )
 
     async def list_by_teacher(
@@ -324,11 +342,13 @@ class CourseRepository:
         *,
         school_id: int | None = None,
         published: bool | None = None,
+        include_relationships: bool = True,
     ) -> list[Course]:
         """
         Return courses assigned to one teacher.
 
         Supplying ``school_id`` is recommended for school-facing workflows.
+        Relationship loading can be disabled for lightweight internal lookups.
         """
 
         self._validate_positive_integer(
@@ -336,18 +356,10 @@ class CourseRepository:
             "teacher_id",
         )
 
-        statement = (
-            select(
-                Course,
-            )
-            .options(
-                selectinload(
-                    Course.teacher,
-                ),
-            )
-            .where(
-                Course.teacher_id == teacher_id,
-            )
+        statement = select(
+            Course,
+        ).where(
+            Course.teacher_id == teacher_id,
         )
 
         if school_id is not None:
@@ -372,12 +384,17 @@ class CourseRepository:
             Course.id.desc(),
         )
 
+        statement = self._apply_relationship_loading(
+            statement,
+            include_relationships=include_relationships,
+        )
+
         result = await self.db.execute(
             statement,
         )
 
         return list(
-            result.scalars().all(),
+            result.scalars().unique().all(),
         )
 
     async def exists(

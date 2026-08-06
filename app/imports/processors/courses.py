@@ -25,14 +25,18 @@ def _required_string(
     These checks protect direct processor calls and defensive code paths.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         raise ValueError(
             f"Course import field '{field_name}' is required.",
         )
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         raise ValueError(
@@ -48,16 +52,43 @@ def _optional_string(
 ) -> str | None:
     """
     Return an optional, trimmed string value.
+
+    Missing, null and whitespace-only values are normalised to ``None``.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         return None
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     return cleaned or None
+
+
+def _validate_school_id(
+    school_id: int,
+) -> None:
+    """Require a positive integer school identifier."""
+
+    if (
+        not isinstance(
+            school_id,
+            int,
+        )
+        or isinstance(
+            school_id,
+            bool,
+        )
+        or school_id < 1
+    ):
+        raise ValueError(
+            "school_id must be a positive integer.",
+        )
 
 
 async def _resolve_teacher_id(
@@ -70,10 +101,10 @@ async def _resolve_teacher_id(
     Resolve a teacher email to a same-school teacher user.
 
     Course ownership requires an explicit teacher role, matching the
-    existing course and class assignment rules.
+    established course and class assignment rules.
     """
 
-    normalised_email = teacher_email.lower()
+    normalised_email = teacher_email.strip().lower()
 
     teacher = await UserRepository(
         db,
@@ -84,7 +115,7 @@ async def _resolve_teacher_id(
 
     if teacher is None:
         raise ValueError(
-            f"No teacher with email '{normalised_email}' exists " "in this school.",
+            f"No teacher with email '{normalised_email}' " "exists in this school.",
         )
 
     if not teacher.has_role(
@@ -106,33 +137,24 @@ async def process_course_row(
     """
     Create or update one course from validated import data.
 
-    Matching is performed using the combination of:
+    Matching is performed using the school-scoped natural key:
 
-    - school_id;
-    - teacher_id;
-    - title.
+    - ``school_id``;
+    - ``teacher_id``;
+    - normalised ``title``.
 
-    Imported courses always remain unpublished. Publishing is a separate,
-    explicit workflow and is never performed implicitly by an import.
+    Imported courses are created unpublished. Existing publication state is
+    preserved during updates because publishing and unpublishing are explicit
+    application workflows and must never happen implicitly during import.
 
-    Transaction ownership belongs to the generic import service or task.
-    This processor therefore never commits or rolls back the session.
+    Transaction ownership belongs to the generic import service or background
+    task. This processor therefore flushes through repositories but never
+    commits or rolls back the session.
     """
 
-    if (
-        not isinstance(
-            school_id,
-            int,
-        )
-        or isinstance(
-            school_id,
-            bool,
-        )
-        or school_id < 1
-    ):
-        raise ValueError(
-            "school_id must be a positive integer.",
-        )
+    _validate_school_id(
+        school_id,
+    )
 
     title = _required_string(
         row,
@@ -156,7 +178,7 @@ async def process_course_row(
 
     if description is not None and len(description) > 2000:
         raise ValueError(
-            "Course import field 'description' cannot exceed 2000 characters.",
+            "Course import field 'description' " "cannot exceed 2000 characters.",
         )
 
     teacher_id = await _resolve_teacher_id(
@@ -185,7 +207,7 @@ async def process_course_row(
             published=False,
         )
 
-        await repository.create(
+        course = await repository.create(
             course,
         )
 
@@ -197,12 +219,11 @@ async def process_course_row(
 
     existing_course.title = title
     existing_course.description = description
-
-    # Preserve the publication state of an existing course.
-    # An import must never publish or unpublish a course implicitly.
     existing_course.teacher_id = teacher_id
 
-    await repository.save(
+    # Deliberately preserve ``published``. Imports must never publish or
+    # unpublish an existing course as a side effect.
+    existing_course = await repository.save(
         existing_course,
     )
 

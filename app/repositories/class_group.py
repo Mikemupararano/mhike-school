@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.class_group import ClassGroup
+from app.models.enrollment import Enrollment
 
 
 class ClassGroupRepository:
@@ -81,11 +82,29 @@ class ClassGroupRepository:
         *,
         include_school: bool = True,
     ) -> Any:
-        """Apply the standard eager-loading options for class groups."""
+        """
+        Apply the standard eager-loading options for class groups.
+
+        The standard relationship graph includes:
+
+        - the assigned teacher;
+        - class enrolments;
+        - the student associated with each enrolment;
+        - the owning school when requested.
+
+        Centralising the loader configuration keeps repository methods
+        consistent, prevents N+1 query patterns and ensures class-detail
+        workflows receive the student information required for display.
+        """
 
         options = [
             selectinload(
                 ClassGroup.teacher,
+            ),
+            selectinload(
+                ClassGroup.enrollments,
+            ).selectinload(
+                Enrollment.user,
             ),
         ]
 

@@ -9,8 +9,8 @@ from app.imports.registry import (
     RowProcessingAction,
     RowProcessingResult,
 )
-from app.models.timetable_period import TimetablePeriod
 from app.repositories.timetable import TimetableRepository
+from app.schemas.timetable import TimetablePeriodCreate
 
 
 def _required_string(
@@ -20,18 +20,22 @@ def _required_string(
     """
     Return a required, trimmed string value.
 
-    The validator should normally reject malformed rows before processing.
+    Validation should normally reject malformed rows before processing.
     These checks protect direct processor calls and defensive code paths.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         raise ValueError(
             f"Timetable period import field '{field_name}' is required.",
         )
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         raise ValueError(
@@ -47,11 +51,26 @@ def _required_positive_integer(
 ) -> int:
     """
     Return a required positive integer value.
+
+    Boolean values are explicitly rejected because ``bool`` is a subclass
+    of ``int`` in Python.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+    if (
+        not isinstance(
+            value,
+            int,
+        )
+        or isinstance(
+            value,
+            bool,
+        )
+        or value < 1
+    ):
         raise ValueError(
             f"Timetable period import field '{field_name}' "
             "must be a positive integer.",
@@ -67,22 +86,32 @@ def _required_time(
     """
     Return a required ``datetime.time`` value.
 
-    Validated import rows are stored in JSON, so time values normally arrive
-    as ISO-formatted strings such as ``09:00:00``. Direct processor calls may
-    still provide ``datetime.time`` instances.
+    Validated staged rows are persisted as JSON, so time values normally
+    arrive as ISO-formatted strings such as ``09:00:00``. Direct processor
+    calls may provide ``datetime.time`` instances.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
-    if isinstance(value, time):
+    if isinstance(
+        value,
+        time,
+    ):
         return value
 
-    if isinstance(value, str):
+    if isinstance(
+        value,
+        str,
+    ):
         cleaned = value.strip()
 
         if cleaned:
             try:
-                return time.fromisoformat(cleaned)
+                return time.fromisoformat(
+                    cleaned,
+                )
             except ValueError:
                 pass
 
@@ -100,8 +129,8 @@ def _optional_boolean(
     """
     Return an optional boolean value.
 
-    The generic validator should already coerce accepted source values.
-    This processor therefore requires an actual bool when the field exists.
+    Schema validation should already normalise accepted source values.
+    Defensive processor calls must therefore provide an actual ``bool``.
     """
 
     value = row.get(
@@ -109,12 +138,38 @@ def _optional_boolean(
         default,
     )
 
-    if not isinstance(value, bool):
+    if not isinstance(
+        value,
+        bool,
+    ):
         raise ValueError(
             f"Timetable period import field '{field_name}' " "must be a boolean.",
         )
 
     return value
+
+
+def _validate_school_id(
+    school_id: int,
+) -> None:
+    """
+    Require a positive integer school identifier.
+    """
+
+    if (
+        not isinstance(
+            school_id,
+            int,
+        )
+        or isinstance(
+            school_id,
+            bool,
+        )
+        or school_id < 1
+    ):
+        raise ValueError(
+            "school_id must be a positive integer.",
+        )
 
 
 async def process_timetable_period_row(
@@ -125,19 +180,23 @@ async def process_timetable_period_row(
     """
     Create or update one timetable period from validated import data.
 
-    Matching is performed using ``period_number`` within the current school.
+    Existing periods are matched using ``period_number`` within the
+    authenticated school.
 
-    Duplicate short names are rejected when they belong to a different
-    period in the same school.
+    ``short_name`` must also be unique within the school. A matching short
+    name is allowed only when it belongs to the same period being updated.
 
-    Transaction ownership belongs to the generic import service or task.
-    This processor therefore never commits or rolls back the session.
+    New records are passed to the repository as
+    ``TimetablePeriodCreate`` schemas, matching the repository contract.
+    Existing records are updated as ORM entities through ``save_period``.
+
+    Transaction ownership belongs to the generic import service or
+    background task. This processor never commits or rolls back the session.
     """
 
-    if not isinstance(school_id, int) or isinstance(school_id, bool) or school_id < 1:
-        raise ValueError(
-            "school_id must be a positive integer.",
-        )
+    _validate_school_id(
+        school_id,
+    )
 
     name = _required_string(
         row,
@@ -154,16 +213,6 @@ async def process_timetable_period_row(
         "period_number",
     )
 
-    start_time_value = _required_time(
-        row,
-        "start_time",
-    )
-
-    end_time_value = _required_time(
-        row,
-        "end_time",
-    )
-
     if len(name) > 100:
         raise ValueError(
             "Timetable period import field 'name' " "cannot exceed 100 characters.",
@@ -174,6 +223,16 @@ async def process_timetable_period_row(
             "Timetable period import field 'short_name' "
             "cannot exceed 20 characters.",
         )
+
+    start_time_value = _required_time(
+        row,
+        "start_time",
+    )
+
+    end_time_value = _required_time(
+        row,
+        "end_time",
+    )
 
     if end_time_value <= start_time_value:
         raise ValueError(
@@ -228,31 +287,25 @@ async def process_timetable_period_row(
         )
 
     if existing_period is None:
-        period = TimetablePeriod(
-            school_id=school_id,
-            name=name,
-            short_name=short_name,
-            period_number=period_number,
-            start_time=start_time_value,
-            end_time=end_time_value,
-            is_registration=is_registration,
-            is_break=is_break,
-            is_lunch=is_lunch,
-            is_active=is_active,
-        )
-
-        db.add(
-            period,
-        )
-        await db.flush()
-        await db.refresh(
-            period,
+        period = await repository.create_period(
+            TimetablePeriodCreate(
+                school_id=school_id,
+                name=name,
+                short_name=short_name,
+                period_number=period_number,
+                start_time=start_time_value,
+                end_time=end_time_value,
+                is_registration=is_registration,
+                is_break=is_break,
+                is_lunch=is_lunch,
+                is_active=is_active,
+            ),
         )
 
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=period.id,
-            message=(f"Created timetable period '{name}' ({short_name})."),
+            message=(f"Created timetable period '{name}' " f"({short_name})."),
         )
 
     existing_period.name = name
@@ -265,12 +318,12 @@ async def process_timetable_period_row(
     existing_period.is_lunch = is_lunch
     existing_period.is_active = is_active
 
-    await repository.save_period(
+    existing_period = await repository.save_period(
         existing_period,
     )
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,
         entity_id=existing_period.id,
-        message=(f"Updated timetable period '{name}' ({short_name})."),
+        message=(f"Updated timetable period '{name}' " f"({short_name})."),
     )

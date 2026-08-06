@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Any
 
 import pytest
@@ -12,8 +13,15 @@ from sqlalchemy.ext.asyncio import (
 )
 
 import app.tasks.imports as import_tasks
+from app.schemas.attendance import AttendanceRecordCreate
 from app.imports.bootstrap import register_import_handlers
+from app.imports.processors.assignment_submissions import (
+    process_assignment_submission_row,
+)
+from app.imports.processors.assignments import process_assignment_row
+from app.imports.processors.attendance import process_attendance_row
 from app.imports.processors.classes import process_class_row
+from app.imports.processors.courses import process_course_row
 from app.imports.processors.enrollments import process_enrollment_row
 from app.imports.processors.parents import process_parent_row
 from app.imports.processors.students import process_student_row
@@ -22,8 +30,24 @@ from app.imports.registry import (
     RowProcessingAction,
     get_import_handler,
 )
+from app.models.assignment import Assignment
+from app.models.assignment_submission import AssignmentSubmission
+from app.models.attendance_record import AttendanceStatus
+from app.models.attendance_session import (
+    AttendanceSession,
+    AttendanceSessionType,
+)
 from app.models.class_group import ClassGroup
+from app.models.course import Course
 from app.models.enrollment import Enrollment
+from app.repositories.assignment import AssignmentRepository
+from app.repositories.assignment_submission import (
+    AssignmentSubmissionRepository,
+)
+from app.repositories.attendance import AttendanceRepository
+from app.repositories.class_group import ClassGroupRepository
+from app.repositories.course import CourseRepository
+
 from app.models.import_batch import (
     ImportBatch,
     ImportOperation,
@@ -3730,3 +3754,1393 @@ async def test_processing_task_records_enrollment_failure(
         assert "not registered as a student" in processed_row.error_message
 
         assert enrollment is None
+
+
+async def test_course_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "courses",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_course_row
+
+
+async def test_course_processor_creates_new_course(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    result = await process_course_row(
+        db_session,
+        {
+            "title": "Imported Physics Course",
+            "description": "A production-grade imported physics course.",
+            "teacher_email": teacher_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    course = await CourseRepository(
+        db_session,
+    ).get_by_title_and_teacher(
+        title="Imported Physics Course",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert result.message == "Created course 'Imported Physics Course'."
+
+    assert course is not None
+    assert course.id == result.entity_id
+    assert course.title == "Imported Physics Course"
+    assert course.description == ("A production-grade imported physics course.")
+    assert course.teacher_id == teacher_user.id
+    assert course.school_id == school_id
+    assert course.published is False
+
+
+async def test_course_processor_updates_existing_course(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    existing_course = Course(
+        title="Imported Chemistry Course",
+        description="Original description.",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        published=False,
+    )
+
+    existing_course = await CourseRepository(
+        db_session,
+    ).create(
+        existing_course,
+    )
+
+    await db_session.commit()
+
+    result = await process_course_row(
+        db_session,
+        {
+            "title": existing_course.title,
+            "description": "Updated imported course description.",
+            "teacher_email": teacher_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+    await db_session.refresh(
+        existing_course,
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == existing_course.id
+    assert result.message == ("Updated course 'Imported Chemistry Course'.")
+
+    assert existing_course.title == "Imported Chemistry Course"
+    assert existing_course.description == ("Updated imported course description.")
+    assert existing_course.teacher_id == teacher_user.id
+    assert existing_course.school_id == school_id
+    assert existing_course.published is False
+
+async def test_course_processor_preserves_publication_state(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    course = Course(
+        title="Published Physics Course",
+        description="Original description.",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        published=True,
+    )
+
+    course = await CourseRepository(
+        db_session,
+    ).create(
+        course,
+    )
+
+    await db_session.commit()
+
+    result = await process_course_row(
+        db_session,
+        {
+            "title": "Published Physics Course",
+            "description": "Updated imported description.",
+            "teacher_email": teacher_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+    await db_session.refresh(course)
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert course.description == "Updated imported description."
+
+    # Imports must never publish or unpublish an existing course.
+    assert course.published is True
+
+
+async def test_course_processor_rejects_missing_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="No teacher with email",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "Course Without Teacher",
+                "description": "This course should not be created.",
+                "teacher_email": "missing.teacher@example.com",
+            },
+            school_id,
+        )
+
+    course = await CourseRepository(
+        db_session,
+    ).get_by_title_and_school(
+        title="Course Without Teacher",
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert course is None
+
+async def test_course_processor_rejects_non_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    with pytest.raises(
+        ValueError,
+        match="is not registered as a teacher",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "Invalid Teacher Course",
+                "description": "This should fail.",
+                "teacher_email": student_user.email,
+            },
+            school_id,
+        )
+
+    course = await CourseRepository(
+        db_session,
+    ).get_by_title_and_school(
+        title="Invalid Teacher Course",
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert course is None
+
+
+async def test_course_processor_rejects_non_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    with pytest.raises(
+        ValueError,
+        match="is not registered as a teacher",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "Invalid Teacher Course",
+                "description": "This should fail.",
+                "teacher_email": student_user.email,
+            },
+            school_id,
+        )
+
+    course = await CourseRepository(
+        db_session,
+    ).get_by_title_and_school(
+        title="Invalid Teacher Course",
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert course is None
+
+
+async def test_course_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    teacher_user: User,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "Invalid School Course",
+                "description": "This should fail.",
+                "teacher_email": teacher_user.email,
+            },
+            0,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "Invalid School Course",
+                "teacher_email": teacher_user.email,
+            },
+            -1,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "Invalid School Course",
+                "teacher_email": teacher_user.email,
+            },
+            True,
+        )
+
+
+async def test_course_processor_rejects_title_too_long(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="Course import field 'title' cannot exceed 255 characters",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "A" * 256,
+                "description": "This should fail.",
+                "teacher_email": teacher_user.email,
+            },
+            school_id,
+        )
+
+    course = await CourseRepository(
+        db_session,
+    ).get_by_title_and_teacher(
+        title="A" * 255,
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert course is None
+
+async def test_course_processor_rejects_description_too_long(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="Course import field 'description' cannot exceed 2000 characters",
+    ):
+        await process_course_row(
+            db_session,
+            {
+                "title": "Description Validation Course",
+                "description": "A" * 2001,
+                "teacher_email": teacher_user.email,
+            },
+            school_id,
+        )
+
+    course = await CourseRepository(
+        db_session,
+    ).get_by_title_and_teacher(
+        title="Description Validation Course",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert course is None
+
+
+async def test_processing_task_imports_valid_course_row(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="courses",
+        original_filename="courses.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "title": "Background Physics Course",
+            "description": "Created through the generic import task.",
+            "teacher_email": teacher_user.email,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        course = await CourseRepository(
+            verification_db,
+        ).get_by_title_and_teacher(
+            title="Background Physics Course",
+            teacher_id=teacher_user.id,
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 1
+        assert summary["updated_rows"] == 0
+        assert summary["skipped_rows"] == 0
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.skipped_rows == 0
+        assert processed_batch.failed_rows == 0
+
+        assert processed_row.status == ImportRowStatus.IMPORTED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "courses"
+        assert processed_row.created_entity_id is not None
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "Created course" in processed_row.error_message
+
+        assert course is not None
+        assert course.id == processed_row.created_entity_id
+        assert course.title == "Background Physics Course"
+        assert course.description == ("Created through the generic import task.")
+        assert course.teacher_id == teacher_user.id
+        assert course.school_id == school_id
+        assert course.published is False
+async def test_processing_task_updates_existing_course(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    existing_course = Course(
+        title="Background Updated Course",
+        description="Original background description.",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        published=True,
+    )
+
+    existing_course = await CourseRepository(
+        db_session,
+    ).create(
+        existing_course,
+    )
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="courses",
+        operation=ImportOperation.UPSERT,
+        original_filename="course-updates.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "title": existing_course.title,
+            "description": "Updated through the generic import task.",
+            "teacher_email": teacher_user.email,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+    course_id = existing_course.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        updated_course = await CourseRepository(
+            verification_db,
+        ).get_by_id_and_school(
+            course_id=course_id,
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 0
+        assert summary["updated_rows"] == 1
+        assert summary["skipped_rows"] == 0
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.skipped_rows == 0
+        assert processed_batch.failed_rows == 0
+
+        assert processed_row.status == ImportRowStatus.UPDATED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "courses"
+        assert processed_row.created_entity_id == course_id
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "Updated course" in processed_row.error_message
+
+        assert updated_course is not None
+        assert updated_course.id == course_id
+        assert updated_course.description == (
+            "Updated through the generic import task."
+        )
+
+        # The import must preserve the existing publication state.
+        assert updated_course.published is True
+
+
+async def test_processing_task_records_course_failure_and_continues(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    student_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+    assert student_user.school_id == school_id
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="courses",
+        operation=ImportOperation.UPSERT,
+        original_filename="mixed-courses.csv",
+        total_rows=2,
+        validated_rows=2,
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    successful_row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "title": "Successful Imported Course",
+            "description": "This row should succeed.",
+            "teacher_email": teacher_user.email,
+        },
+    )
+
+    failed_row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=3,
+        data={
+            "title": "Invalid Teacher Course",
+            "description": "This row should fail.",
+            "teacher_email": student_user.email,
+        },
+    )
+
+    db_session.add_all(
+        [
+            successful_row,
+            failed_row,
+        ],
+    )
+
+    await db_session.commit()
+
+    batch_id = batch.id
+    successful_row_id = successful_row.id
+    failed_row_id = failed_row.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_successful_row = await get_row_by_id(
+            verification_db,
+            successful_row_id,
+        )
+
+        processed_failed_row = await get_row_by_id(
+            verification_db,
+            failed_row_id,
+        )
+
+        successful_course = await CourseRepository(
+            verification_db,
+        ).get_by_title_and_teacher(
+            title="Successful Imported Course",
+            teacher_id=teacher_user.id,
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        invalid_course = await CourseRepository(
+            verification_db,
+        ).get_by_title_and_school(
+            title="Invalid Teacher Course",
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED_WITH_ERRORS.value
+        assert summary["processed_rows"] == 2
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 1
+        assert summary["updated_rows"] == 0
+        assert summary["skipped_rows"] == 0
+        assert summary["failed_rows"] == 1
+
+        assert processed_batch.status == ImportStatus.COMPLETED_WITH_ERRORS
+        assert processed_batch.processed_rows == 2
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.skipped_rows == 0
+        assert processed_batch.failed_rows == 1
+
+        assert processed_successful_row.status == ImportRowStatus.IMPORTED
+        assert processed_successful_row.attempt_count == 1
+        assert processed_successful_row.created_entity_id is not None
+        assert processed_successful_row.processed_at is not None
+        assert processed_successful_row.error_message is not None
+        assert "Created course" in (processed_successful_row.error_message)
+
+        assert processed_failed_row.status == ImportRowStatus.FAILED
+        assert processed_failed_row.attempt_count == 1
+        assert processed_failed_row.created_entity_id is None
+        assert processed_failed_row.processed_at is not None
+        assert processed_failed_row.error_message is not None
+        assert "not registered as a teacher" in (processed_failed_row.error_message)
+
+        assert successful_course is not None
+        assert successful_course.published is False
+
+        assert invalid_course is None
+
+
+async def test_assignment_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "assignments",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_assignment_row
+
+
+async def test_assignment_processor_creates_new_assignment(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    course = Course(
+        title="Assignment Import Course",
+        description="Course used for assignment import testing.",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        published=False,
+    )
+
+    course = await CourseRepository(
+        db_session,
+    ).create(
+        course,
+    )
+
+    await db_session.commit()
+
+    result = await process_assignment_row(
+        db_session,
+        {
+            "title": "Imported Physics Assignment",
+            "description": "Complete the mechanics questions.",
+            "course_title": course.title,
+            "teacher_email": teacher_user.email,
+            "due_date": "2026-10-15T16:00:00+00:00",
+            "max_score": 80,
+            "is_published": False,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    assignment = await AssignmentRepository(
+        db_session,
+    ).get_by_title_and_course(
+        title="Imported Physics Assignment",
+        course_id=course.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert result.message == ("Created assignment 'Imported Physics Assignment'.")
+
+    assert assignment is not None
+    assert assignment.id == result.entity_id
+    assert assignment.title == "Imported Physics Assignment"
+    assert assignment.description == ("Complete the mechanics questions.")
+    assert assignment.course_id == course.id
+    assert assignment.school_id == school_id
+    assert assignment.created_by == teacher_user.id
+    assert assignment.max_score == 80
+    assert assignment.is_published is False
+    assert assignment.due_date is not None
+    assert assignment.due_date.isoformat() == ("2026-10-15T16:00:00")
+async def test_assignment_processor_updates_existing_assignment(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    course = Course(
+        title="Assignment Update Course",
+        description="Course used for assignment update testing.",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        published=False,
+    )
+
+    course = await CourseRepository(
+        db_session,
+    ).create(
+        course,
+    )
+
+    existing_assignment = Assignment(
+        title="Imported Assignment To Update",
+        description="Original description.",
+        course_id=course.id,
+        school_id=school_id,
+        created_by=teacher_user.id,
+        max_score=50,
+        is_published=False,
+    )
+
+    existing_assignment = await AssignmentRepository(
+        db_session,
+    ).create(
+        existing_assignment,
+    )
+
+    await db_session.commit()
+
+    original_assignment_id = existing_assignment.id
+
+    result = await process_assignment_row(
+        db_session,
+        {
+            "title": "Imported Assignment To Update",
+            "description": "Updated through the import framework.",
+            "course_title": course.title,
+            "teacher_email": teacher_user.email,
+            "max_score": 100,
+            "is_published": True,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    updated_assignment = await AssignmentRepository(
+        db_session,
+    ).get_by_title_and_course(
+        title="Imported Assignment To Update",
+        course_id=course.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == original_assignment_id
+    assert result.message == (
+        "Updated assignment 'Imported Assignment To Update'."
+    )
+    assert updated_assignment is not None
+    assert updated_assignment.id == original_assignment_id
+    assert updated_assignment.description == ("Updated through the import framework.")
+    assert updated_assignment.max_score == 100
+    assert updated_assignment.is_published is True
+
+
+async def test_assignment_processor_rejects_missing_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="No teacher with email",
+    ):
+        await process_assignment_row(
+            db_session,
+            {
+                "title": "Assignment Without Teacher",
+                "description": "This row should fail.",
+                "course_title": "Missing Course",
+                "teacher_email": "missing.teacher@example.com",
+                "max_score": 100,
+                "is_published": False,
+            },
+            school_id,
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_school_id",
+    [
+        0,
+        -1,
+        True,
+    ],
+)
+async def test_assignment_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    invalid_school_id: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_assignment_row(
+            db_session,
+            {
+                "title": "Invalid School Assignment",
+                "course_title": "Invalid Course",
+                "teacher_email": "teacher@example.com",
+                "max_score": 100,
+                "is_published": False,
+            },
+            invalid_school_id,
+        )
+
+async def test_assignment_submission_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "assignment_submissions",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_assignment_submission_row
+
+async def test_assignment_submission_processor_creates_new_submission(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+    assert student_user.school_id == school_id
+
+    course = Course(
+        title="Submission Import Course",
+        description="Course used for submission import testing.",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        published=False,
+    )
+
+    course = await CourseRepository(
+        db_session,
+    ).create(
+        course,
+    )
+
+    assignment = Assignment(
+        title="Submission Import Assignment",
+        description="Assignment used for submission import testing.",
+        course_id=course.id,
+        school_id=school_id,
+        created_by=teacher_user.id,
+        max_score=100,
+        is_published=True,
+    )
+
+    assignment = await AssignmentRepository(
+        db_session,
+    ).create(
+        assignment,
+    )
+
+    await db_session.commit()
+
+    result = await process_assignment_submission_row(
+        db_session,
+        {
+            "teacher_email": teacher_user.email,
+            "student_email": student_user.email,
+            "course_title": course.title,
+            "assignment_title": assignment.title,
+            "submission_text": "My imported submission.",
+            "status": "submitted",
+            "submitted_at": "2026-10-20T15:30:00+00:00",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    submission = await AssignmentSubmissionRepository(
+        db_session,
+    ).get_by_assignment_and_student(
+        assignment_id=assignment.id,
+        student_id=student_user.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert result.message == "Assignment submission created."
+
+    assert submission is not None
+    assert submission.id == result.entity_id
+    assert submission.assignment_id == assignment.id
+    assert submission.student_id == student_user.id
+    assert submission.school_id == school_id
+    assert submission.submission_text == "My imported submission."
+    assert submission.status == "submitted"
+    assert submission.score is None
+    assert submission.feedback is None
+    assert submission.graded_by is None
+    assert submission.graded_at is None
+
+
+async def test_assignment_submission_processor_updates_existing_submission(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+    assert student_user.school_id == school_id
+
+    course = Course(
+        title="Submission Update Course",
+        description="Course used for submission update testing.",
+        teacher_id=teacher_user.id,
+        school_id=school_id,
+        published=False,
+    )
+
+    course = await CourseRepository(
+        db_session,
+    ).create(
+        course,
+    )
+
+    assignment = Assignment(
+        title="Submission Update Assignment",
+        description="Assignment used for submission update testing.",
+        course_id=course.id,
+        school_id=school_id,
+        created_by=teacher_user.id,
+        max_score=100,
+        is_published=True,
+    )
+
+    assignment = await AssignmentRepository(
+        db_session,
+    ).create(
+        assignment,
+    )
+
+    existing_submission = AssignmentSubmission(
+        assignment_id=assignment.id,
+        student_id=student_user.id,
+        school_id=school_id,
+        submission_text="Original submission.",
+        attachment_url=None,
+        status="submitted",
+        score=None,
+        feedback=None,
+        graded_by=None,
+        graded_at=None,
+    )
+
+    existing_submission = await AssignmentSubmissionRepository(
+        db_session,
+    ).create(
+        existing_submission,
+    )
+
+    await db_session.commit()
+
+    original_submission_id = existing_submission.id
+
+    result = await process_assignment_submission_row(
+        db_session,
+        {
+            "teacher_email": teacher_user.email,
+            "student_email": student_user.email,
+            "course_title": course.title,
+            "assignment_title": assignment.title,
+            "submission_text": "Updated imported submission.",
+            "status": "graded",
+            "score": 88,
+            "feedback": "Strong work.",
+            "graded_by_email": teacher_user.email,
+            "graded_at": "2026-10-21T10:00:00+00:00",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    updated_submission = await AssignmentSubmissionRepository(
+        db_session,
+    ).get_by_assignment_and_student(
+        assignment_id=assignment.id,
+        student_id=student_user.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == original_submission_id
+    assert result.message == "Assignment submission updated."
+
+    assert updated_submission is not None
+    assert updated_submission.id == original_submission_id
+    assert updated_submission.submission_text == ("Updated imported submission.")
+    assert updated_submission.status == "graded"
+    assert updated_submission.score == 88
+    assert updated_submission.feedback == "Strong work."
+    assert updated_submission.graded_by == teacher_user.id
+    assert updated_submission.graded_at is not None
+
+@pytest.mark.parametrize(
+    "invalid_school_id",
+    [
+        0,
+        -1,
+        True,
+    ],
+)
+async def test_assignment_submission_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    invalid_school_id: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_assignment_submission_row(
+            db_session,
+            {
+                "teacher_email": "teacher@example.com",
+                "student_email": "student@example.com",
+                "course_title": "Invalid Course",
+                "assignment_title": "Invalid Assignment",
+                "status": "submitted",
+            },
+            invalid_school_id,
+        )
+
+
+async def test_attendance_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "attendance",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_attendance_row
+
+
+async def test_attendance_processor_creates_new_record(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+    assert student_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Attendance Import Class",
+        school_id=school_id,
+        teacher_id=teacher_user.id,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    session = AttendanceSession(
+        school_id=school_id,
+        class_group_id=class_group.id,
+        session_date=date(
+            2026,
+            10,
+            22,
+        ),
+        session_type=AttendanceSessionType.AM,
+        is_submitted=False,
+    )
+
+    db_session.add(
+        session,
+    )
+    await db_session.flush()
+    await db_session.commit()
+
+    result = await process_attendance_row(
+        db_session,
+        {
+            "class_name": class_group.name,
+            "session_date": "2026-10-22",
+            "session_type": "am",
+            "student_email": student_user.email,
+            "status": "present",
+            "marked_by_email": teacher_user.email,
+            "notes": "Imported attendance record.",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    record = await AttendanceRepository(
+        db_session,
+    ).get_record_by_session_and_student(
+        attendance_session_id=session.id,
+        student_id=student_user.id,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+
+    assert record is not None
+    assert record.id == result.entity_id
+    assert record.attendance_session_id == session.id
+    assert record.student_id == student_user.id
+    assert record.status == AttendanceStatus.PRESENT
+    assert record.marked_by_id == teacher_user.id
+    assert record.notes == "Imported attendance record."
+
+async def test_attendance_processor_updates_existing_record(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+    assert student_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Attendance Update Class",
+        school_id=school_id,
+        teacher_id=teacher_user.id,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    session = AttendanceSession(
+        school_id=school_id,
+        class_group_id=class_group.id,
+        session_date=date(
+            2026,
+            10,
+            23,
+        ),
+        session_type=AttendanceSessionType.AM,
+        is_submitted=False,
+    )
+
+    db_session.add(
+        session,
+    )
+    await db_session.flush()
+
+    existing_record = await AttendanceRepository(
+        db_session,
+    ).create_record(
+        AttendanceRecordCreate(
+            attendance_session_id=session.id,
+            student_id=student_user.id,
+            status=AttendanceStatus.PRESENT,
+            marked_by_id=teacher_user.id,
+            notes="Original attendance record.",
+        ),
+    )
+
+    await db_session.commit()
+
+    original_record_id = existing_record.id
+
+    result = await process_attendance_row(
+        db_session,
+        {
+            "class_name": class_group.name,
+            "session_date": "2026-10-23",
+            "session_type": "am",
+            "student_email": student_user.email,
+            "status": "unauthorised_absence",
+            "marked_by_email": teacher_user.email,
+            "notes": "Updated through attendance import.",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    updated_record = await AttendanceRepository(
+        db_session,
+    ).get_record_by_session_and_student(
+        attendance_session_id=session.id,
+        student_id=student_user.id,
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == original_record_id
+
+    assert updated_record is not None
+    assert updated_record.id == original_record_id
+    assert updated_record.status == AttendanceStatus.UNAUTHORISED_ABSENCE
+    assert updated_record.marked_by_id == teacher_user.id
+    assert updated_record.notes == (
+        "Updated through attendance import."
+    )
+
+@pytest.mark.parametrize(
+    "invalid_school_id",
+    [
+        0,
+        -1,
+        True,
+    ],
+)
+async def test_attendance_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    invalid_school_id: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_attendance_row(
+            db_session,
+            {
+                "class_name": "Invalid Attendance Class",
+                "session_date": "2026-10-24",
+                "session_type": "am",
+                "student_email": "student@example.com",
+                "status": "present",
+            },
+            invalid_school_id,
+        )
+

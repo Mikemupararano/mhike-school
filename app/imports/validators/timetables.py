@@ -19,12 +19,12 @@ from app.services.import_service import (
 
 class TimetableImportSchema(BaseModel):
     """
-    Validation schema for one staged master-timetable import row.
+    Validate one staged master-timetable import row.
 
     The school identifier is never trusted from the uploaded file. It is
     supplied by the authenticated import context during processing.
 
-    Additional columns are retained so future timetable-import fields can be
+    Additional columns are retained so future timetable import fields can be
     introduced without redesigning the generic import framework.
     """
 
@@ -49,12 +49,14 @@ class TimetableImportSchema(BaseModel):
 
     is_active: bool = True
 
-    @model_validator(mode="after")
+    @model_validator(
+        mode="after",
+    )
     def validate_effective_date_range(
         self,
     ) -> TimetableImportSchema:
         """
-        Ensure the timetable end date is not earlier than its start date.
+        Require the optional end date to be on or after the start date.
         """
 
         if self.effective_to is not None and self.effective_to < self.effective_from:
@@ -71,7 +73,8 @@ def validate_timetable_row(
     """
     Validate and normalise one staged master-timetable import row.
 
-    Database-dependent rules belong in the processor, including:
+    Database-dependent rules intentionally belong in the processor,
+    including:
 
     - school isolation;
     - matching by name and academic year;

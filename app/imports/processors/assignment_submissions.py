@@ -60,6 +60,32 @@ def _normalise_optional_string(
     return cleaned or None
 
 
+def _validate_school_id(
+    school_id: int,
+) -> None:
+    """
+    Require a positive integer school identifier.
+
+    Boolean values are rejected explicitly because ``bool`` is a subclass
+    of ``int`` in Python.
+    """
+
+    if (
+        not isinstance(
+            school_id,
+            int,
+        )
+        or isinstance(
+            school_id,
+            bool,
+        )
+        or school_id < 1
+    ):
+        raise ValueError(
+            "school_id must be a positive integer.",
+        )
+
+
 def _normalise_email(
     value: Any,
     field_name: str,
@@ -315,13 +341,21 @@ async def process_assignment_submission_row(
     school_id: int,
 ) -> RowProcessingResult:
     """
-    Create or update an assignment submission.
+    Create or update one assignment submission from validated import data.
+
+    The submission is resolved by the school-scoped natural key of
+    ``assignment_id`` and ``student_id`` after resolving the teacher,
+    course and assignment from stable import identities.
+
+    ``AssignmentSubmissionRepository`` intentionally accepts ORM entities
+    for both ``create`` and ``save``. Transaction ownership belongs to the
+    generic import service or background task, so this processor never
+    commits or rolls back the session.
     """
 
-    if not isinstance(school_id, int) or isinstance(school_id, bool) or school_id < 1:
-        raise ValueError(
-            "school_id must be a positive integer.",
-        )
+    _validate_school_id(
+        school_id,
+    )
 
     teacher = await _resolve_teacher(
         db,
@@ -368,14 +402,13 @@ async def process_assignment_submission_row(
         include_relationships=False,
     )
 
-    status = (
+    status = _normalise_string(
         row.get(
             "status",
             "submitted",
-        )
-        .strip()
-        .lower()
-    )
+        ),
+        "status",
+    ).lower()
 
     submitted_at = (
         _parse_datetime(

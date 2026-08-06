@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from app.imports.registry import (
 )
 from app.models.attendance_record import AttendanceStatus
 from app.models.attendance_session import AttendanceSessionType
+from app.models.class_group import ClassGroup
 from app.models.user import User, UserRole
 from app.repositories.attendance import AttendanceRepository
 from app.repositories.class_group import ClassGroupRepository
@@ -93,9 +94,20 @@ def _required_date(
     Return a required ISO date value.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
-    if isinstance(value, date):
+    if isinstance(
+        value,
+        datetime,
+    ):
+        return value.date()
+
+    if isinstance(
+        value,
+        date,
+    ):
         return value
 
     if isinstance(value, str):
@@ -163,6 +175,32 @@ def _required_status(
     )
 
 
+def _validate_school_id(
+    school_id: int,
+) -> None:
+    """
+    Require a positive integer school identifier.
+
+    Boolean values are rejected explicitly because ``bool`` is a subclass
+    of ``int`` in Python.
+    """
+
+    if (
+        not isinstance(
+            school_id,
+            int,
+        )
+        or isinstance(
+            school_id,
+            bool,
+        )
+        or school_id < 1
+    ):
+        raise ValueError(
+            "school_id must be a positive integer.",
+        )
+
+
 def _normalise_email(
     value: str,
     field_name: str,
@@ -203,14 +241,14 @@ async def _resolve_class_group(
     *,
     class_name: str,
     school_id: int,
-):
+) -> ClassGroup:
     """
     Resolve a class group within the current school.
     """
 
     class_group = await ClassGroupRepository(
         db,
-    ).get_by_name(
+    ).get_by_name_and_school(
         name=class_name,
         school_id=school_id,
         include_relationships=False,
@@ -308,26 +346,28 @@ async def process_attendance_row(
     """
     Create or update one attendance record from validated import data.
 
-    Sessions are resolved using:
+    Sessions are resolved using the school-scoped natural key:
 
-    - school
-    - class group
-    - session date
-    - session type
+    - ``school_id``;
+    - ``class_group_id``;
+    - ``session_date``;
+    - ``session_type``.
 
     Attendance records are matched using:
 
-    - attendance session
-    - student
+    - ``attendance_session_id``;
+    - ``student_id``.
 
-    Transaction ownership belongs to the generic import service or task.
-    This processor therefore never commits or rolls back.
+    The repository contract intentionally uses ``AttendanceRecordCreate``
+    for creation and ``AttendanceRecordUpdate`` for updates.
+
+    Transaction ownership belongs to the generic import service or
+    background task. This processor never commits or rolls back the session.
     """
 
-    if not isinstance(school_id, int) or isinstance(school_id, bool) or school_id < 1:
-        raise ValueError(
-            "school_id must be a positive integer.",
-        )
+    _validate_school_id(
+        school_id,
+    )
 
     class_name = _required_string(
         row,
