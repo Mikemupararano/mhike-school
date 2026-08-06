@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+)
 
 from app.services.import_service import (
     RowValidationResult,
@@ -13,12 +18,12 @@ from app.services.import_service import (
 
 class ClassImportSchema(BaseModel):
     """
-    Validation schema for one staged class import row.
+    Validate one staged class import row.
 
     A class requires a name. Teacher assignment is optional and, when
-    supplied, is resolved by teacher email within the current school.
+    supplied, is resolved by email within the current school.
 
-    Additional columns are retained so future class-import fields can be
+    Additional columns are retained so future class-specific fields can be
     introduced without redesigning the generic import framework.
     """
 
@@ -39,14 +44,11 @@ def validate_class_row(
     row: Mapping[str, Any],
 ) -> RowValidationResult:
     """
-    Validate and normalise one class import row.
+    Validate and normalise one staged class import row.
 
-    Database-dependent checks belong in the class processor, including:
-
-    - duplicate class names within a school;
-    - teacher existence;
-    - teacher school membership;
-    - teacher role validation.
+    Database-dependent checks belong in the class processor, including class
+    name matching, teacher existence, school membership and teacher-role
+    validation.
     """
 
     return validate_row_with_schema(

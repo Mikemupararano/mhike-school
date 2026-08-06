@@ -25,14 +25,18 @@ def _required_string(
     These checks protect direct processor calls and defensive code paths.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         raise ValueError(
             f"Class import field '{field_name}' is required.",
         )
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         raise ValueError(
@@ -46,16 +50,18 @@ def _optional_string(
     row: dict[str, Any],
     field_name: str,
 ) -> str | None:
-    """
-    Return an optional, trimmed string value.
-    """
+    """Return an optional, trimmed string value."""
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         return None
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     return cleaned or None
 
@@ -69,15 +75,15 @@ async def _resolve_teacher_id(
     """
     Resolve an optional teacher email to a same-school teacher user.
 
-    The class import deliberately requires the explicit teacher role, matching
-    the existing ClassService behaviour. Broader teaching permissions are not
-    used here because imports should not silently widen assignment rules.
+    Class imports deliberately require the explicit teacher role, matching
+    the existing class-management behaviour. Broader permissions are not used
+    because imports should not silently widen teacher-assignment rules.
     """
 
     if teacher_email is None:
         return None
 
-    normalised_email = teacher_email.lower()
+    normalised_email = teacher_email.strip().lower()
 
     teacher = await UserRepository(
         db,
@@ -88,7 +94,8 @@ async def _resolve_teacher_id(
 
     if teacher is None:
         raise ValueError(
-            f"No teacher with email '{normalised_email}' exists " "in this school.",
+            f"No teacher with email '{normalised_email}' "
+            "exists in this school.",
         )
 
     if not teacher.has_role(
@@ -175,7 +182,7 @@ async def process_class_row(
             teacher_id=teacher_id,
         )
 
-        await repository.create(
+        class_group = await repository.create(
             class_group,
         )
 
@@ -188,7 +195,7 @@ async def process_class_row(
     existing_class.name = name
     existing_class.teacher_id = teacher_id
 
-    await repository.save(
+    existing_class = await repository.save(
         existing_class,
     )
 

@@ -3,8 +3,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import (
+    Mapped,
+    mapped_column,
+    relationship,
+)
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -18,19 +27,15 @@ if TYPE_CHECKING:
 
 class ClassGroup(Base):
     """
-    Represents a teaching class within one school.
+    Represent a teaching class within one school.
 
-    A class group has:
+    A class group belongs to one school and may have an assigned teacher.
+    Student membership is managed through enrolment records.
 
-    - a school;
-    - an optional assigned teacher;
-    - pupil enrolments;
-    - shared reporting content for each reporting session and subject.
-
-    Subject information is not stored directly on the class group because
-    the same class group may be used across different reporting contexts.
-    ReportGroupContent therefore scopes shared report text using the class,
-    reporting session and subject name.
+    Subject information is intentionally not stored directly on the class
+    group because the same group may be used in different reporting contexts.
+    ``ReportGroupContent`` scopes shared reporting content by class group,
+    reporting session and subject.
     """
 
     __tablename__ = "class_groups"
@@ -44,30 +49,36 @@ class ClassGroup(Base):
     )
 
     # ------------------------------------------------------------------
-    # Identity
+    # Identity and ownership
     # ------------------------------------------------------------------
 
     id: Mapped[int] = mapped_column(
         primary_key=True,
     )
 
-    # The existing database does not have an index on class_groups.name.
+    # The current production schema does not define a standalone index on
+    # class_groups.name. School-scoped uniqueness is enforced by
+    # uq_class_name_school.
     name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
     )
 
-    # These foreign keys intentionally match the existing database schema.
-    # No ON DELETE actions are declared here because the current database
-    # constraints were created without them.
+    # These foreign keys intentionally mirror the existing database schema.
+    # No ON DELETE behaviour is declared because the production constraints
+    # were created without it.
     school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id"),
+        ForeignKey(
+            "schools.id",
+        ),
         nullable=False,
         index=True,
     )
 
     teacher_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"),
+        ForeignKey(
+            "users.id",
+        ),
         nullable=True,
         index=True,
     )
@@ -77,7 +88,9 @@ class ClassGroup(Base):
     # ------------------------------------------------------------------
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        DateTime(
+            timezone=True,
+        ),
         server_default=func.now(),
         nullable=False,
     )
@@ -116,3 +129,12 @@ class ClassGroup(Base):
         passive_deletes=True,
         lazy="selectin",
     )
+
+    def __repr__(self) -> str:
+        return (
+            "<ClassGroup "
+            f"id={self.id!r} "
+            f"name={self.name!r} "
+            f"school_id={self.school_id!r} "
+            f"teacher_id={self.teacher_id!r}>"
+        )

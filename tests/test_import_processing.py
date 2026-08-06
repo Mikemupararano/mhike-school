@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
 
 import app.tasks.imports as import_tasks
 from app.imports.bootstrap import register_import_handlers
+from app.imports.processors.classes import process_class_row
 from app.imports.processors.parents import process_parent_row
 from app.imports.processors.students import process_student_row
 from app.imports.processors.teachers import process_teacher_row
@@ -20,6 +21,7 @@ from app.imports.registry import (
     RowProcessingAction,
     get_import_handler,
 )
+from app.models.class_group import ClassGroup
 from app.models.import_batch import (
     ImportBatch,
     ImportOperation,
@@ -29,6 +31,7 @@ from app.models.import_batch import (
 )
 from app.models.user import User, UserRole, UserStatus
 from app.models.user_role import UserRoleAssignment
+from app.repositories.class_group import ClassGroupRepository
 from app.repositories.parent_student import ParentStudentRepository
 from app.repositories.user import UserRepository
 from app.services.import_service import (
@@ -536,7 +539,9 @@ async def test_processing_task_imports_valid_student_row(
         original_filename="students.csv",
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     row_data = {
@@ -552,7 +557,9 @@ async def test_processing_task_imports_valid_student_row(
         data=row_data,
     )
 
-    db_session.add(row)
+    db_session.add(
+        row,
+    )
     await db_session.commit()
 
     batch_id = batch.id
@@ -631,7 +638,9 @@ async def test_processing_task_updates_existing_student(
         original_filename="student-updates.csv",
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     row_data = {
@@ -647,7 +656,9 @@ async def test_processing_task_updates_existing_student(
         data=row_data,
     )
 
-    db_session.add(row)
+    db_session.add(
+        row,
+    )
     await db_session.commit()
 
     batch_id = batch.id
@@ -746,7 +757,9 @@ async def test_processing_task_records_failure_and_continues(
         validated_rows=2,
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     successful_data = {
@@ -823,19 +836,19 @@ async def test_processing_task_records_failure_and_continues(
             school_id=school_id,
         )
 
-        assert summary["status"] == (ImportStatus.COMPLETED_WITH_ERRORS.value)
+        assert summary["status"] == ImportStatus.COMPLETED_WITH_ERRORS.value
         assert summary["processed_rows"] == 2
         assert summary["successful_rows"] == 1
         assert summary["imported_rows"] == 1
         assert summary["updated_rows"] == 0
         assert summary["failed_rows"] == 1
 
-        assert processed_batch.status == (ImportStatus.COMPLETED_WITH_ERRORS)
+        assert processed_batch.status == ImportStatus.COMPLETED_WITH_ERRORS
         assert processed_batch.processed_rows == 2
         assert processed_batch.successful_rows == 1
         assert processed_batch.failed_rows == 1
 
-        assert processed_successful_row.status == (ImportRowStatus.IMPORTED)
+        assert processed_successful_row.status == ImportRowStatus.IMPORTED
         assert processed_successful_row.attempt_count == 1
         assert processed_successful_row.created_entity_id is not None
         assert processed_successful_row.processed_at is not None
@@ -845,7 +858,7 @@ async def test_processing_task_records_failure_and_continues(
         assert processed_failed_row.created_entity_id is None
         assert processed_failed_row.processed_at is not None
         assert processed_failed_row.error_message is not None
-        assert "non-student user" in (processed_failed_row.error_message)
+        assert "non-student user" in processed_failed_row.error_message
 
         assert created_student is not None
         assert created_student.full_name == "Successful Student"
@@ -882,7 +895,9 @@ async def test_processing_task_preserves_preexisting_invalid_row(
         failed_rows=1,
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     valid_data = {
@@ -914,7 +929,7 @@ async def test_processing_task_preserves_preexisting_invalid_row(
             {
                 "type": "validation_error",
                 "message": "Invalid student row.",
-            }
+            },
         ],
         error_message="Row validation failed.",
     )
@@ -961,7 +976,7 @@ async def test_processing_task_preserves_preexisting_invalid_row(
             school_id=school_id,
         )
 
-        assert summary["status"] == (ImportStatus.COMPLETED_WITH_ERRORS.value)
+        assert summary["status"] == ImportStatus.COMPLETED_WITH_ERRORS.value
         assert summary["processed_rows"] == 2
         assert summary["successful_rows"] == 1
         assert summary["imported_rows"] == 1
@@ -969,7 +984,7 @@ async def test_processing_task_preserves_preexisting_invalid_row(
         assert summary["invalid_rows"] == 1
         assert summary["failed_rows"] == 1
 
-        assert processed_batch.status == (ImportStatus.COMPLETED_WITH_ERRORS)
+        assert processed_batch.status == ImportStatus.COMPLETED_WITH_ERRORS
         assert processed_batch.processed_rows == 2
         assert processed_batch.successful_rows == 1
         assert processed_batch.failed_rows == 1
@@ -1039,7 +1054,9 @@ async def test_processing_task_skips_terminal_batch(
         current_stage=batch_status.value,
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     row_data = {
@@ -1059,7 +1076,9 @@ async def test_processing_task_skips_terminal_batch(
         data=row_data,
     )
 
-    db_session.add(row)
+    db_session.add(
+        row,
+    )
     await db_session.commit()
 
     batch_id = batch.id
@@ -1131,7 +1150,9 @@ async def test_processing_task_marks_batch_failed_for_unknown_handler(
         original_filename="unknown-import.csv",
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     row = build_import_row(
@@ -1143,7 +1164,9 @@ async def test_processing_task_marks_batch_failed_for_unknown_handler(
         },
     )
 
-    db_session.add(row)
+    db_session.add(
+        row,
+    )
     await db_session.commit()
 
     batch_id = batch.id
@@ -1174,7 +1197,7 @@ async def test_processing_task_marks_batch_failed_for_unknown_handler(
         assert failed_batch.status == ImportStatus.FAILED
         assert failed_batch.current_stage == "handler_resolution_failed"
         assert failed_batch.error_message is not None
-        assert "No import handler registered" in (failed_batch.error_message)
+        assert "No import handler registered" in failed_batch.error_message
         assert failed_batch.completed_at is not None
 
         assert unchanged_row.status == ImportRowStatus.VALID
@@ -1225,7 +1248,9 @@ async def test_retry_import_batch_resets_only_failed_rows(
         current_stage="completed_with_errors",
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     successful_row = build_import_row(
@@ -1379,7 +1404,9 @@ async def test_retry_processing_reprocesses_failed_row_only(
         current_stage="completed_with_errors",
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     successful_data = {
@@ -1482,7 +1509,7 @@ async def test_retry_processing_reprocesses_failed_row_only(
         assert processed_batch.failed_rows == 0
         assert processed_batch.processed_rows == 2
 
-        assert preserved_successful_row.status == (ImportRowStatus.IMPORTED)
+        assert preserved_successful_row.status == ImportRowStatus.IMPORTED
         assert preserved_successful_row.attempt_count == 1
         assert preserved_successful_row.created_entity_id == 987
 
@@ -1518,7 +1545,9 @@ async def test_retry_import_batch_rejects_batch_without_failed_rows(
         current_stage="completed",
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.commit()
 
     with pytest.raises(
@@ -1551,7 +1580,9 @@ async def test_retry_import_batch_rejects_archived_batch(
 
     batch.is_archived = True
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.commit()
 
     with pytest.raises(
@@ -1584,7 +1615,9 @@ async def test_processing_task_enforces_school_isolation(
         original_filename="school-isolation.csv",
     )
 
-    db_session.add(batch)
+    db_session.add(
+        batch,
+    )
     await db_session.flush()
 
     row = build_import_row(
@@ -1598,7 +1631,9 @@ async def test_processing_task_enforces_school_isolation(
         },
     )
 
-    db_session.add(row)
+    db_session.add(
+        row,
+    )
     await db_session.commit()
 
     with pytest.raises(
@@ -1612,8 +1647,12 @@ async def test_processing_task_enforces_school_isolation(
             school_id=school_id + 999,
         )
 
-    await db_session.refresh(batch)
-    await db_session.refresh(row)
+    await db_session.refresh(
+        batch,
+    )
+    await db_session.refresh(
+        row,
+    )
 
     assert batch.status == ImportStatus.READY
     assert batch.processed_rows == 0
@@ -1642,6 +1681,7 @@ async def test_teacher_processor_creates_new_teacher(
     school_admin_user: User,
 ) -> None:
     school_id = school_admin_user.school_id
+
     assert school_id is not None
 
     result = await process_teacher_row(
@@ -1665,6 +1705,7 @@ async def test_teacher_processor_creates_new_teacher(
 
     assert result.action == RowProcessingAction.CREATED
     assert result.entity_id is not None
+
     assert teacher is not None
     assert teacher.id == result.entity_id
     assert teacher.full_name == "New Teacher"
@@ -1694,6 +1735,7 @@ async def test_teacher_processor_updates_existing_teacher_without_duplicate_role
     teacher_user: User,
 ) -> None:
     school_id = teacher_user.school_id
+
     assert school_id is not None
 
     result = await process_teacher_row(
@@ -1726,9 +1768,12 @@ async def test_teacher_processor_updates_existing_teacher_without_duplicate_role
 
     assert result.action == RowProcessingAction.UPDATED
     assert result.entity_id == teacher_user.id
+
     assert teacher_user.full_name == "Updated Teacher"
     assert teacher_user.status == UserStatus.ACTIVE
     assert teacher_user.is_active is True
+    assert teacher_user.is_teacher is True
+
     assert len(assignments) == 1
 
 
@@ -1737,6 +1782,7 @@ async def test_teacher_processor_rejects_existing_non_teacher(
     student_user: User,
 ) -> None:
     school_id = student_user.school_id
+
     assert school_id is not None
 
     with pytest.raises(
@@ -1771,6 +1817,7 @@ async def test_teacher_processor_repairs_legacy_role_and_preserves_other_roles(
     school_admin_user: User,
 ) -> None:
     school_id = school_admin_user.school_id
+
     assert school_id is not None
 
     legacy_teacher = User(
@@ -1827,6 +1874,7 @@ async def test_teacher_processor_repairs_legacy_role_and_preserves_other_roles(
     assert result.entity_id == legacy_teacher.id
     assert result.message is not None
     assert "restored the teacher role assignment" in result.message
+
     assert roles == {
         UserRole.STUDENT,
         UserRole.TEACHER,
@@ -1868,6 +1916,7 @@ async def test_processing_task_imports_valid_teacher_row(
     register_import_handlers()
 
     school_id = school_admin_user.school_id
+
     assert school_id is not None
 
     task_session_maker = configure_task_session_maker(
@@ -2239,43 +2288,43 @@ async def test_parent_processor_repairs_legacy_roles_and_preserves_other_roles(
 
     await db_session.commit()
 
-    parent_roles = {
-        assignment.role
-        for assignment in (
-            (
-                await db_session.execute(
-                    select(UserRoleAssignment).where(
-                        UserRoleAssignment.user_id == legacy_parent.id,
-                    ),
-                )
+    parent_assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == legacy_parent.id,
+                ),
             )
-            .scalars()
-            .all()
         )
-    }
+        .scalars()
+        .all()
+    )
 
-    student_roles = {
-        assignment.role
-        for assignment in (
-            (
-                await db_session.execute(
-                    select(UserRoleAssignment).where(
-                        UserRoleAssignment.user_id == legacy_student.id,
-                    ),
-                )
+    student_assignments = (
+        (
+            await db_session.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.user_id == legacy_student.id,
+                ),
             )
-            .scalars()
-            .all()
         )
-    }
+        .scalars()
+        .all()
+    )
+
+    parent_roles = {assignment.role for assignment in parent_assignments}
+
+    student_roles = {assignment.role for assignment in student_assignments}
 
     assert result.action == RowProcessingAction.UPDATED
     assert result.message is not None
     assert "restored the parent role assignment" in result.message
+
     assert parent_roles == {
         UserRole.PARENT,
         UserRole.TEACHER,
     }
+
     assert student_roles == {
         UserRole.STUDENT,
     }
@@ -2449,3 +2498,603 @@ async def test_processing_task_imports_valid_parent_row(
 
         assert link is not None
         assert link.id == processed_row.created_entity_id
+
+
+async def test_class_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "classes",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_class_row
+
+
+async def test_class_processor_creates_class_without_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    result = await process_class_row(
+        db_session,
+        {
+            "name": "Year 7 Science",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).get_by_name_and_school(
+        name="Year 7 Science",
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert result.message == "Created class 'Year 7 Science'."
+
+    assert class_group is not None
+    assert class_group.id == result.entity_id
+    assert class_group.name == "Year 7 Science"
+    assert class_group.school_id == school_id
+    assert class_group.teacher_id is None
+
+
+async def test_class_processor_creates_class_with_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    result = await process_class_row(
+        db_session,
+        {
+            "name": "Year 8 Physics",
+            "teacher_email": teacher_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).get_by_name_and_school(
+        name="Year 8 Physics",
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+
+    assert class_group is not None
+    assert class_group.id == result.entity_id
+    assert class_group.name == "Year 8 Physics"
+    assert class_group.school_id == school_id
+    assert class_group.teacher_id == teacher_user.id
+
+
+async def test_class_processor_updates_existing_class_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Year 9 Chemistry",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    await db_session.commit()
+
+    result = await process_class_row(
+        db_session,
+        {
+            "name": "Year 9 Chemistry",
+            "teacher_email": teacher_user.email,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+    await db_session.refresh(
+        class_group,
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == class_group.id
+    assert result.message == "Updated class 'Year 9 Chemistry'."
+
+    assert class_group.name == "Year 9 Chemistry"
+    assert class_group.school_id == school_id
+    assert class_group.teacher_id == teacher_user.id
+
+
+async def test_class_processor_removes_existing_teacher_assignment(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Year 10 Biology",
+        school_id=school_id,
+        teacher_id=teacher_user.id,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    await db_session.commit()
+
+    result = await process_class_row(
+        db_session,
+        {
+            "name": "Year 10 Biology",
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+    await db_session.refresh(
+        class_group,
+    )
+
+    assert result.action == RowProcessingAction.UPDATED
+    assert result.entity_id == class_group.id
+    assert class_group.teacher_id is None
+
+
+async def test_class_processor_rejects_missing_teacher(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="No teacher with email",
+    ):
+        await process_class_row(
+            db_session,
+            {
+                "name": "Year 11 Physics",
+                "teacher_email": "missing.teacher@example.com",
+            },
+            school_id,
+        )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).get_by_name_and_school(
+        name="Year 11 Physics",
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert class_group is None
+
+
+async def test_class_processor_rejects_non_teacher_user(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    with pytest.raises(
+        ValueError,
+        match="is not registered as a teacher",
+    ):
+        await process_class_row(
+            db_session,
+            {
+                "name": "Year 12 Mathematics",
+                "teacher_email": student_user.email,
+            },
+            school_id,
+        )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).get_by_name_and_school(
+        name="Year 12 Mathematics",
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert class_group is None
+
+
+@pytest.mark.parametrize(
+    "invalid_school_id",
+    [
+        0,
+        -1,
+        True,
+    ],
+)
+async def test_class_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    invalid_school_id: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_class_row(
+            db_session,
+            {
+                "name": "Invalid School Class",
+            },
+            invalid_school_id,
+        )
+
+
+async def test_class_processor_rejects_overlong_name(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="name.*cannot exceed 255 characters",
+    ):
+        await process_class_row(
+            db_session,
+            {
+                "name": "C" * 256,
+            },
+            school_id,
+        )
+
+
+async def test_processing_task_imports_valid_class_row(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="classes",
+        original_filename="classes.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "name": "Browser Science Class",
+            "teacher_email": teacher_user.email,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        class_group = await ClassGroupRepository(
+            verification_db,
+        ).get_by_name_and_school(
+            name="Browser Science Class",
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 1
+        assert summary["updated_rows"] == 0
+        assert summary["skipped_rows"] == 0
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.failed_rows == 0
+        assert processed_batch.skipped_rows == 0
+
+        assert processed_row.status == ImportRowStatus.IMPORTED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "classes"
+        assert processed_row.created_entity_id is not None
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "Created class" in processed_row.error_message
+
+        assert class_group is not None
+        assert class_group.id == processed_row.created_entity_id
+        assert class_group.name == "Browser Science Class"
+        assert class_group.school_id == school_id
+        assert class_group.teacher_id == teacher_user.id
+
+
+async def test_processing_task_updates_existing_class(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Existing Import Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="classes",
+        operation=ImportOperation.UPSERT,
+        original_filename="class-updates.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "name": class_group.name,
+            "teacher_email": teacher_user.email,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+    class_id = class_group.id
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        updated_class = await ClassGroupRepository(
+            verification_db,
+        ).get_by_id_and_school(
+            class_id=class_id,
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 0
+        assert summary["updated_rows"] == 1
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.failed_rows == 0
+
+        assert processed_row.status == ImportRowStatus.UPDATED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "classes"
+        assert processed_row.created_entity_id == class_id
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "Updated class" in processed_row.error_message
+
+        assert updated_class is not None
+        assert updated_class.id == class_id
+        assert updated_class.teacher_id == teacher_user.id
+
+
+async def test_processing_task_records_class_teacher_failure(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="classes",
+        original_filename="invalid-class-teachers.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "name": "Invalid Teacher Class",
+            "teacher_email": student_user.email,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        class_group = await ClassGroupRepository(
+            verification_db,
+        ).get_by_name_and_school(
+            name="Invalid Teacher Class",
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED_WITH_ERRORS.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 0
+        assert summary["imported_rows"] == 0
+        assert summary["updated_rows"] == 0
+        assert summary["failed_rows"] == 1
+
+        assert processed_batch.status == ImportStatus.COMPLETED_WITH_ERRORS
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 0
+        assert processed_batch.failed_rows == 1
+
+        assert processed_row.status == ImportRowStatus.FAILED
+        assert processed_row.attempt_count == 1
+        assert processed_row.created_entity_id is None
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "not registered as a teacher" in (processed_row.error_message)
+
+        assert class_group is None

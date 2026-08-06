@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -58,6 +60,46 @@ class ClassGroupRepository:
                 f"{field_name} must be a positive integer.",
             )
 
+    @classmethod
+    def _validate_teacher_id(
+        cls,
+        teacher_id: int | None,
+    ) -> None:
+        """Validate an optional teacher identifier."""
+
+        if teacher_id is None:
+            return
+
+        cls._validate_positive_integer(
+            teacher_id,
+            "teacher_id",
+        )
+
+    @staticmethod
+    def _with_relationships(
+        statement: Any,
+        *,
+        include_school: bool = True,
+    ) -> Any:
+        """Apply the standard eager-loading options for class groups."""
+
+        options = [
+            selectinload(
+                ClassGroup.teacher,
+            ),
+        ]
+
+        if include_school:
+            options.append(
+                selectinload(
+                    ClassGroup.school,
+                ),
+            )
+
+        return statement.options(
+            *options,
+        )
+
     async def get_by_id(
         self,
         class_id: int,
@@ -83,13 +125,8 @@ class ClassGroupRepository:
         )
 
         if include_relationships:
-            statement = statement.options(
-                selectinload(
-                    ClassGroup.teacher,
-                ),
-                selectinload(
-                    ClassGroup.school,
-                ),
+            statement = self._with_relationships(
+                statement,
             )
 
         result = await self.db.execute(
@@ -126,13 +163,8 @@ class ClassGroupRepository:
         )
 
         if include_relationships:
-            statement = statement.options(
-                selectinload(
-                    ClassGroup.teacher,
-                ),
-                selectinload(
-                    ClassGroup.school,
-                ),
+            statement = self._with_relationships(
+                statement,
             )
 
         result = await self.db.execute(
@@ -188,13 +220,8 @@ class ClassGroupRepository:
         )
 
         if include_relationships:
-            statement = statement.options(
-                selectinload(
-                    ClassGroup.teacher,
-                ),
-                selectinload(
-                    ClassGroup.school,
-                ),
+            statement = self._with_relationships(
+                statement,
             )
 
         result = await self.db.execute(
@@ -307,6 +334,8 @@ class ClassGroupRepository:
     async def list_by_school(
         self,
         school_id: int,
+        *,
+        include_relationships: bool = True,
     ) -> list[ClassGroup]:
         """
         Return all class groups belonging to one school.
@@ -317,14 +346,9 @@ class ClassGroupRepository:
             "school_id",
         )
 
-        result = await self.db.execute(
+        statement = (
             select(
                 ClassGroup,
-            )
-            .options(
-                selectinload(
-                    ClassGroup.teacher,
-                ),
             )
             .where(
                 ClassGroup.school_id == school_id,
@@ -332,11 +356,20 @@ class ClassGroupRepository:
             .order_by(
                 ClassGroup.created_at.desc(),
                 ClassGroup.id.desc(),
-            ),
+            )
+        )
+
+        if include_relationships:
+            statement = self._with_relationships(
+                statement,
+            )
+
+        result = await self.db.execute(
+            statement,
         )
 
         return list(
-            result.scalars().all(),
+            result.scalars().unique().all(),
         )
 
     async def list_by_teacher(
@@ -344,6 +377,7 @@ class ClassGroupRepository:
         teacher_id: int,
         *,
         school_id: int | None = None,
+        include_relationships: bool = True,
     ) -> list[ClassGroup]:
         """
         Return class groups assigned to one teacher.
@@ -377,12 +411,17 @@ class ClassGroupRepository:
             ClassGroup.id.desc(),
         )
 
+        if include_relationships:
+            statement = self._with_relationships(
+                statement,
+            )
+
         result = await self.db.execute(
             statement,
         )
 
         return list(
-            result.scalars().all(),
+            result.scalars().unique().all(),
         )
 
     async def create(
@@ -401,11 +440,9 @@ class ClassGroupRepository:
             "school_id",
         )
 
-        if class_group.teacher_id is not None:
-            self._validate_positive_integer(
-                class_group.teacher_id,
-                "teacher_id",
-            )
+        self._validate_teacher_id(
+            class_group.teacher_id,
+        )
 
         self.db.add(
             class_group,
@@ -443,11 +480,9 @@ class ClassGroupRepository:
             "school_id",
         )
 
-        if class_group.teacher_id is not None:
-            self._validate_positive_integer(
-                class_group.teacher_id,
-                "teacher_id",
-            )
+        self._validate_teacher_id(
+            class_group.teacher_id,
+        )
 
         self.db.add(
             class_group,
