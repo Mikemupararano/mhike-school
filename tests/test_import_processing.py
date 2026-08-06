@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
 import app.tasks.imports as import_tasks
 from app.imports.bootstrap import register_import_handlers
 from app.imports.processors.classes import process_class_row
+from app.imports.processors.enrollments import process_enrollment_row
 from app.imports.processors.parents import process_parent_row
 from app.imports.processors.students import process_student_row
 from app.imports.processors.teachers import process_teacher_row
@@ -22,6 +23,7 @@ from app.imports.registry import (
     get_import_handler,
 )
 from app.models.class_group import ClassGroup
+from app.models.enrollment import Enrollment
 from app.models.import_batch import (
     ImportBatch,
     ImportOperation,
@@ -32,6 +34,7 @@ from app.models.import_batch import (
 from app.models.user import User, UserRole, UserStatus
 from app.models.user_role import UserRoleAssignment
 from app.repositories.class_group import ClassGroupRepository
+from app.repositories.enrollment import EnrollmentRepository
 from app.repositories.parent_student import ParentStudentRepository
 from app.repositories.user import UserRepository
 from app.services.import_service import (
@@ -3098,3 +3101,632 @@ async def test_processing_task_records_class_teacher_failure(
         assert "not registered as a teacher" in (processed_row.error_message)
 
         assert class_group is None
+
+
+async def test_enrollment_import_handler_is_registered() -> None:
+    register_import_handlers()
+
+    handler = get_import_handler(
+        "enrollments",
+    )
+
+    assert handler.validator is not None
+    assert handler.processor is process_enrollment_row
+
+
+async def test_enrollment_processor_creates_enrollment(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Enrollment Processor Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    result = await process_enrollment_row(
+        db_session,
+        {
+            "student_email": student_user.email,
+            "class_name": class_group.name,
+        },
+        school_id,
+    )
+
+    await db_session.commit()
+
+    enrollment = await EnrollmentRepository(
+        db_session,
+    ).get_by_student_and_class_in_school(
+        student_id=student_user.id,
+        class_id=class_group.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert result.action == RowProcessingAction.CREATED
+    assert result.entity_id is not None
+    assert result.message == (
+        f"Enrolled student '{student_user.email}' " f"in class '{class_group.name}'."
+    )
+
+    assert enrollment is not None
+    assert enrollment.id == result.entity_id
+    assert enrollment.user_id == student_user.id
+    assert enrollment.class_id == class_group.id
+
+
+async def test_enrollment_processor_skips_duplicate_enrollment(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Duplicate Enrollment Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    existing_enrollment = Enrollment(
+        user_id=student_user.id,
+        class_id=class_group.id,
+    )
+
+    existing_enrollment = await EnrollmentRepository(
+        db_session,
+    ).create(
+        existing_enrollment,
+    )
+
+    await db_session.commit()
+
+    result = await process_enrollment_row(
+        db_session,
+        {
+            "student_email": student_user.email,
+            "class_name": class_group.name,
+        },
+        school_id,
+    )
+
+    assert result.action == RowProcessingAction.SKIPPED
+    assert result.entity_id == existing_enrollment.id
+    assert result.message == (
+        f"Student '{student_user.email}' is already enrolled "
+        f"in class '{class_group.name}'."
+    )
+
+    matching_enrollments = await EnrollmentRepository(
+        db_session,
+    ).list_by_student(
+        student_user.id,
+        school_id=school_id,
+    )
+
+    matching_ids = {
+        enrollment.id
+        for enrollment in matching_enrollments
+        if enrollment.class_id == class_group.id
+    }
+
+    assert matching_ids == {
+        existing_enrollment.id,
+    }
+
+
+async def test_enrollment_processor_rejects_missing_student(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    class_group = ClassGroup(
+        name="Missing Student Enrollment Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="No student with email",
+    ):
+        await process_enrollment_row(
+            db_session,
+            {
+                "student_email": "missing.student@example.com",
+                "class_name": class_group.name,
+            },
+            school_id,
+        )
+
+
+async def test_enrollment_processor_rejects_missing_class(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    with pytest.raises(
+        ValueError,
+        match="No class named",
+    ):
+        await process_enrollment_row(
+            db_session,
+            {
+                "student_email": student_user.email,
+                "class_name": "Missing Enrollment Class",
+            },
+            school_id,
+        )
+
+
+async def test_enrollment_processor_rejects_non_student_user(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Non Student Enrollment Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="is not registered as a student",
+    ):
+        await process_enrollment_row(
+            db_session,
+            {
+                "student_email": teacher_user.email,
+                "class_name": class_group.name,
+            },
+            school_id,
+        )
+
+    enrollment = await EnrollmentRepository(
+        db_session,
+    ).get_by_student_and_class_in_school(
+        student_id=teacher_user.id,
+        class_id=class_group.id,
+        school_id=school_id,
+        include_relationships=False,
+    )
+
+    assert enrollment is None
+
+
+@pytest.mark.parametrize(
+    "invalid_school_id",
+    [
+        0,
+        -1,
+        True,
+    ],
+)
+async def test_enrollment_processor_rejects_invalid_school_id(
+    db_session: AsyncSession,
+    invalid_school_id: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="school_id must be a positive integer",
+    ):
+        await process_enrollment_row(
+            db_session,
+            {
+                "student_email": "student@example.com",
+                "class_name": "Invalid School Enrollment",
+            },
+            invalid_school_id,
+        )
+
+
+async def test_enrollment_processor_rejects_overlong_class_name(
+    db_session: AsyncSession,
+    school_admin_user: User,
+) -> None:
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+
+    with pytest.raises(
+        ValueError,
+        match="class_name.*cannot exceed 255 characters",
+    ):
+        await process_enrollment_row(
+            db_session,
+            {
+                "student_email": "student@example.com",
+                "class_name": "C" * 256,
+            },
+            school_id,
+        )
+
+
+async def test_processing_task_imports_valid_enrollment_row(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Background Enrollment Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="enrollments",
+        original_filename="enrollments.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "student_email": student_user.email,
+            "class_name": class_group.name,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+    class_id = class_group.id
+    student_id = student_user.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        enrollment = await EnrollmentRepository(
+            verification_db,
+        ).get_by_student_and_class_in_school(
+            student_id=student_id,
+            class_id=class_id,
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 1
+        assert summary["imported_rows"] == 1
+        assert summary["updated_rows"] == 0
+        assert summary["skipped_rows"] == 0
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 1
+        assert processed_batch.skipped_rows == 0
+        assert processed_batch.failed_rows == 0
+
+        assert processed_row.status == ImportRowStatus.IMPORTED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "enrollments"
+        assert processed_row.created_entity_id is not None
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "Enrolled student" in processed_row.error_message
+
+        assert enrollment is not None
+        assert enrollment.id == processed_row.created_entity_id
+        assert enrollment.user_id == student_id
+        assert enrollment.class_id == class_id
+
+
+async def test_processing_task_skips_duplicate_enrollment_row(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    student_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert student_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Background Duplicate Enrollment Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    existing_enrollment = Enrollment(
+        user_id=student_user.id,
+        class_id=class_group.id,
+    )
+
+    existing_enrollment = await EnrollmentRepository(
+        db_session,
+    ).create(
+        existing_enrollment,
+    )
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="enrollments",
+        operation=ImportOperation.UPSERT,
+        original_filename="duplicate-enrollments.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "student_email": student_user.email,
+            "class_name": class_group.name,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+    existing_enrollment_id = existing_enrollment.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 0
+        assert summary["imported_rows"] == 0
+        assert summary["updated_rows"] == 0
+        assert summary["skipped_rows"] == 1
+        assert summary["failed_rows"] == 0
+
+        assert processed_batch.status == ImportStatus.COMPLETED
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 0
+        assert processed_batch.skipped_rows == 1
+        assert processed_batch.failed_rows == 0
+
+        assert processed_row.status == ImportRowStatus.SKIPPED
+        assert processed_row.attempt_count == 1
+        assert processed_row.entity_type == "enrollments"
+        assert processed_row.created_entity_id == existing_enrollment_id
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "already enrolled" in processed_row.error_message
+
+
+async def test_processing_task_records_enrollment_failure(
+    db_session: AsyncSession,
+    school_admin_user: User,
+    teacher_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_import_handlers()
+
+    school_id = school_admin_user.school_id
+
+    assert school_id is not None
+    assert teacher_user.school_id == school_id
+
+    class_group = ClassGroup(
+        name="Invalid Background Enrollment Class",
+        school_id=school_id,
+        teacher_id=None,
+    )
+
+    class_group = await ClassGroupRepository(
+        db_session,
+    ).create(
+        class_group,
+    )
+
+    task_session_maker = configure_task_session_maker(
+        db_session,
+        monkeypatch,
+    )
+
+    batch = build_import_batch(
+        school_id=school_id,
+        uploaded_by_id=school_admin_user.id,
+        import_type="enrollments",
+        original_filename="invalid-enrollments.csv",
+    )
+
+    db_session.add(
+        batch,
+    )
+    await db_session.flush()
+
+    row = build_import_row(
+        batch_id=batch.id,
+        school_id=school_id,
+        row_number=2,
+        data={
+            "student_email": teacher_user.email,
+            "class_name": class_group.name,
+        },
+    )
+
+    db_session.add(
+        row,
+    )
+    await db_session.commit()
+
+    batch_id = batch.id
+    row_id = row.id
+
+    summary = await import_tasks._process_import_batch_task(
+        batch_id=batch_id,
+        school_id=school_id,
+    )
+
+    async with verification_session(
+        task_session_maker,
+    ) as verification_db:
+        processed_batch = await get_batch_by_id(
+            verification_db,
+            batch_id,
+        )
+
+        processed_row = await get_row_by_id(
+            verification_db,
+            row_id,
+        )
+
+        enrollment = await EnrollmentRepository(
+            verification_db,
+        ).get_by_student_and_class_in_school(
+            student_id=teacher_user.id,
+            class_id=class_group.id,
+            school_id=school_id,
+            include_relationships=False,
+        )
+
+        assert summary["status"] == ImportStatus.COMPLETED_WITH_ERRORS.value
+        assert summary["processed_rows"] == 1
+        assert summary["successful_rows"] == 0
+        assert summary["imported_rows"] == 0
+        assert summary["updated_rows"] == 0
+        assert summary["skipped_rows"] == 0
+        assert summary["failed_rows"] == 1
+
+        assert processed_batch.status == ImportStatus.COMPLETED_WITH_ERRORS
+        assert processed_batch.processed_rows == 1
+        assert processed_batch.successful_rows == 0
+        assert processed_batch.skipped_rows == 0
+        assert processed_batch.failed_rows == 1
+
+        assert processed_row.status == ImportRowStatus.FAILED
+        assert processed_row.attempt_count == 1
+        assert processed_row.created_entity_id is None
+        assert processed_row.processed_at is not None
+        assert processed_row.error_message is not None
+        assert "not registered as a student" in processed_row.error_message
+
+        assert enrollment is None

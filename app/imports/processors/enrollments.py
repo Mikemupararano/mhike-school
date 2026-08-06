@@ -26,14 +26,18 @@ def _required_string(
     These checks protect direct processor calls and defensive code paths.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         raise ValueError(
             f"Enrollment import field '{field_name}' is required.",
         )
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         raise ValueError(
@@ -43,28 +47,10 @@ def _required_string(
     return cleaned
 
 
-async def process_enrollment_row(
-    db: AsyncSession,
-    row: dict[str, Any],
+def _validate_school_id(
     school_id: int,
-) -> RowProcessingResult:
-    """
-    Create one student-to-class enrolment from validated import data.
-
-    Stable import identifiers are used:
-
-    - ``student_email`` resolves the student within the current school;
-    - ``class_name`` resolves the class within the current school.
-
-    Existing identical enrolments are treated as successful no-op outcomes
-    and return ``RowProcessingAction.SKIPPED``.
-
-    Missing students, missing classes, wrong-role users and cross-school
-    references fail the row.
-
-    Transaction ownership belongs to the generic import service or task.
-    This processor therefore never commits or rolls back the session.
-    """
+) -> None:
+    """Require a positive integer school identifier."""
 
     if (
         not isinstance(
@@ -80,6 +66,35 @@ async def process_enrollment_row(
         raise ValueError(
             "school_id must be a positive integer.",
         )
+
+
+async def process_enrollment_row(
+    db: AsyncSession,
+    row: dict[str, Any],
+    school_id: int,
+) -> RowProcessingResult:
+    """
+    Create one student-to-class enrolment from validated import data.
+
+    Stable import identifiers are used:
+
+    - ``student_email`` resolves a student within the current school;
+    - ``class_name`` resolves a class group within the current school.
+
+    An existing identical enrolment is treated as a successful idempotent
+    outcome and returns ``RowProcessingAction.SKIPPED``.
+
+    Missing students, missing classes, incorrect user roles and cross-school
+    references fail the row.
+
+    Transaction ownership belongs to the generic import service or task.
+    This processor therefore flushes through repositories but never commits
+    or rolls back the session.
+    """
+
+    _validate_school_id(
+        school_id,
+    )
 
     student_email = _required_string(
         row,
@@ -105,7 +120,7 @@ async def process_enrollment_row(
 
     if student is None:
         raise ValueError(
-            f"No student with email '{student_email}' exists " "in this school.",
+            f"No student with email '{student_email}' " "exists in this school.",
         )
 
     if not student.has_role(
@@ -155,7 +170,7 @@ async def process_enrollment_row(
         class_id=class_group.id,
     )
 
-    await repository.create(
+    enrollment = await repository.create(
         enrollment,
     )
 

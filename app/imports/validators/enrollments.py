@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+)
 
 from app.services.import_service import (
     RowValidationResult,
@@ -13,18 +18,16 @@ from app.services.import_service import (
 
 class EnrollmentImportSchema(BaseModel):
     """
-    Validation schema for one staged enrolment import row.
+    Validate one staged enrolment import row.
 
-    Imports use stable identifiers rather than database IDs.
+    Enrolment imports use stable identifiers rather than database IDs:
 
-    Required fields:
+    - ``student_email`` identifies a student within the current school;
+    - ``class_name`` identifies a class group within the current school.
 
-    - student_email
-    - class_name
-
-    Database-dependent checks (student existence, class existence,
-    duplicate enrolments, school membership and student role) belong
-    in the enrolment processor.
+    Database-dependent checks—including student existence, class existence,
+    school membership, student-role validation and duplicate enrolments—are
+    intentionally deferred to the enrolment processor.
     """
 
     model_config = ConfigDict(
@@ -44,7 +47,7 @@ def validate_enrollment_row(
     row: Mapping[str, Any],
 ) -> RowValidationResult:
     """
-    Validate and normalise one enrolment import row.
+    Validate and normalise one staged enrolment import row.
 
     Database lookups are intentionally deferred to the processor.
     """
