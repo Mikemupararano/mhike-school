@@ -1055,9 +1055,6 @@ export default function SchoolAdminImportsPage() {
                             actionBatchId !==
                             null
                         }
-                        navigateToBatchOnComplete={
-                            false
-                        }
                         onBatchCreated={() => {
                             setErrorMessage(
                                 null,

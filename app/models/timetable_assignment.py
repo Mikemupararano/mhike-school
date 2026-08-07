@@ -16,6 +16,10 @@ from app.db.base import Base
 
 
 def utc_now() -> datetime:
+    """
+    Return the current timezone-aware UTC datetime.
+    """
+
     return datetime.now(UTC)
 
 
@@ -45,43 +49,58 @@ class TimetableAssignment(Base):
     )
 
     timetable_id: Mapped[int] = mapped_column(
-        ForeignKey("timetables.id", ondelete="CASCADE"),
+        ForeignKey(
+            "timetables.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey(
+            "schools.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     assignment_type: Mapped[TimetableAssignmentType] = mapped_column(
-        SqlEnum(TimetableAssignmentType),
+        SqlEnum(
+            TimetableAssignmentType,
+            name="timetableassignmenttype",
+        ),
         nullable=False,
         index=True,
     )
 
     user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
         nullable=True,
         index=True,
     )
 
     class_group_id: Mapped[int | None] = mapped_column(
-        ForeignKey("class_groups.id", ondelete="CASCADE"),
+        ForeignKey(
+            "class_groups.id",
+            ondelete="CASCADE",
+        ),
         nullable=True,
         index=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
