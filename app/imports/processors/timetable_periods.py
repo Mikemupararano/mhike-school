@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -116,7 +117,7 @@ def _required_time(
                 pass
 
     raise ValueError(
-        f"Timetable period import field '{field_name}' " "must be a valid time.",
+        f"Timetable period import field '{field_name}' must be a valid time.",
     )
 
 
@@ -143,7 +144,7 @@ def _optional_boolean(
         bool,
     ):
         raise ValueError(
-            f"Timetable period import field '{field_name}' " "must be a boolean.",
+            f"Timetable period import field '{field_name}' must be a boolean.",
         )
 
     return value
@@ -172,13 +173,68 @@ def _validate_school_id(
         )
 
 
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+
+    Persisted import options should contain real JSON booleans. Malformed
+    values are rejected rather than relying on Python truthiness.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether an existing timetable period may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    therefore defaults to False when the option is absent.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
+    )
+
+
 async def process_timetable_period_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one timetable period from validated import data.
+    Create, update or skip one timetable period from validated import data.
 
     Existing periods are matched using ``period_number`` within the
     authenticated school.
@@ -186,12 +242,24 @@ async def process_timetable_period_row(
     ``short_name`` must also be unique within the school. A matching short
     name is allowed only when it belongs to the same period being updated.
 
-    New records are passed to the repository as
-    ``TimetablePeriodCreate`` schemas, matching the repository contract.
-    Existing records are updated as ORM entities through ``save_period``.
+    Existing period behaviour is controlled by the batch-level
+    ``update_existing_records`` option.
 
-    Transaction ownership belongs to the generic import service or
-    background task. This processor never commits or rolls back the session.
+    When updates are disabled, an existing period is left unchanged and the
+    row returns ``SKIPPED``.
+
+    When updates are enabled, imported period fields may be applied to the
+    existing record.
+
+    Direct processor calls that omit ``import_options`` retain historical
+    update-existing behaviour for backwards compatibility.
+
+    New records are passed to the repository as ``TimetablePeriodCreate``
+    schemas, matching the repository contract. Existing records are updated
+    as ORM entities through ``save_period``.
+
+    Transaction ownership belongs to the generic import service or background
+    task. This processor never commits or rolls back the session.
     """
 
     _validate_school_id(
@@ -215,7 +283,7 @@ async def process_timetable_period_row(
 
     if len(name) > 100:
         raise ValueError(
-            "Timetable period import field 'name' " "cannot exceed 100 characters.",
+            "Timetable period import field 'name' cannot exceed 100 characters.",
         )
 
     if len(short_name) > 20:
@@ -273,6 +341,28 @@ async def process_timetable_period_row(
         period_number=period_number,
     )
 
+    # ------------------------------------------------------------------
+    # Existing period: leave untouched when updates are disabled.
+    # ------------------------------------------------------------------
+
+    if existing_period is not None and not _should_update_existing_records(
+        import_options,
+    ):
+        return RowProcessingResult(
+            action=RowProcessingAction.SKIPPED,
+            entity_id=existing_period.id,
+            message=(
+                f"Skipped existing timetable period '{existing_period.name}' "
+                f"(period {period_number}) because updating existing records "
+                "is disabled."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Short-name uniqueness only needs to be enforced when creating or
+    # updating a record.
+    # ------------------------------------------------------------------
+
     short_name_match = await repository.get_period_by_short_name(
         school_id=school_id,
         short_name=short_name,
@@ -285,6 +375,10 @@ async def process_timetable_period_row(
             "Another timetable period with short name "
             f"'{short_name}' already exists in this school.",
         )
+
+    # ------------------------------------------------------------------
+    # Create a new period.
+    # ------------------------------------------------------------------
 
     if existing_period is None:
         period = await repository.create_period(
@@ -302,11 +396,17 @@ async def process_timetable_period_row(
             ),
         )
 
+        await db.flush()
+
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=period.id,
-            message=(f"Created timetable period '{name}' " f"({short_name})."),
+            message=(f"Created timetable period '{name}' ({short_name})."),
         )
+
+    # ------------------------------------------------------------------
+    # Existing period: update when explicitly permitted.
+    # ------------------------------------------------------------------
 
     existing_period.name = name
     existing_period.short_name = short_name
@@ -322,8 +422,10 @@ async def process_timetable_period_row(
         existing_period,
     )
 
+    await db.flush()
+
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,
         entity_id=existing_period.id,
-        message=(f"Updated timetable period '{name}' " f"({short_name})."),
+        message=(f"Updated timetable period '{name}' ({short_name})."),
     )

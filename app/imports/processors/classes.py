@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -50,7 +51,9 @@ def _optional_string(
     row: dict[str, Any],
     field_name: str,
 ) -> str | None:
-    """Return an optional, trimmed string value."""
+    """
+    Return an optional, trimmed string value.
+    """
 
     value = row.get(
         field_name,
@@ -64,6 +67,60 @@ def _optional_string(
     ).strip()
 
     return cleaned or None
+
+
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+
+    Persisted import options should contain real JSON booleans. Malformed
+    values are rejected rather than relying on Python truthiness.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether an existing class may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    therefore defaults to False when the option is absent.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
+    )
 
 
 async def _resolve_teacher_id(
@@ -94,8 +151,7 @@ async def _resolve_teacher_id(
 
     if teacher is None:
         raise ValueError(
-            f"No teacher with email '{normalised_email}' "
-            "exists in this school.",
+            f"No teacher with email '{normalised_email}' " "exists in this school.",
         )
 
     if not teacher.has_role(
@@ -113,18 +169,27 @@ async def process_class_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one class group from validated import data.
+    Create, update or skip one class group from validated import data.
 
-    Matching is performed using the class name within the current school.
+    Matching is performed using the class name within the authenticated
+    school.
 
     Behaviour:
 
     - create a class when no matching school-scoped name exists;
-    - update the optional teacher assignment when the class already exists;
+    - update the optional teacher assignment only when
+      ``update_existing_records`` is enabled;
+    - leave an existing class unchanged and return ``SKIPPED`` when updates
+      are disabled;
     - leave enrolments to the separate enrolment import workflow;
     - never commit or roll back the session.
+
+    Direct processor calls that omit ``import_options`` retain the historical
+    update-existing behaviour for backwards compatibility with existing
+    processor consumers and tests.
 
     Transaction ownership belongs to the generic import service or task.
     """
@@ -159,12 +224,6 @@ async def process_class_row(
         "teacher_email",
     )
 
-    teacher_id = await _resolve_teacher_id(
-        db,
-        teacher_email=teacher_email,
-        school_id=school_id,
-    )
-
     repository = ClassGroupRepository(
         db,
     )
@@ -175,7 +234,17 @@ async def process_class_row(
         include_relationships=False,
     )
 
+    # ------------------------------------------------------------------
+    # Create a new class.
+    # ------------------------------------------------------------------
+
     if existing_class is None:
+        teacher_id = await _resolve_teacher_id(
+            db,
+            teacher_email=teacher_email,
+            school_id=school_id,
+        )
+
         class_group = ClassGroup(
             name=name,
             school_id=school_id,
@@ -186,11 +255,39 @@ async def process_class_row(
             class_group,
         )
 
+        await db.flush()
+
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=class_group.id,
             message=f"Created class '{name}'.",
         )
+
+    # ------------------------------------------------------------------
+    # Existing class: leave untouched when updates are disabled.
+    # ------------------------------------------------------------------
+
+    if not _should_update_existing_records(
+        import_options,
+    ):
+        return RowProcessingResult(
+            action=RowProcessingAction.SKIPPED,
+            entity_id=existing_class.id,
+            message=(
+                f"Skipped existing class '{name}' because updating "
+                "existing records is disabled."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Existing class: update when explicitly permitted.
+    # ------------------------------------------------------------------
+
+    teacher_id = await _resolve_teacher_id(
+        db,
+        teacher_email=teacher_email,
+        school_id=school_id,
+    )
 
     existing_class.name = name
     existing_class.teacher_id = teacher_id
@@ -198,6 +295,8 @@ async def process_class_row(
     existing_class = await repository.save(
         existing_class,
     )
+
+    await db.flush()
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,

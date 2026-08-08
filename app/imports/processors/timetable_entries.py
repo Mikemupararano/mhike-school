@@ -5,18 +5,19 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
 from app.models.class_group import ClassGroup
 from app.models.course import Course
 from app.models.timetable_entry import TimetableDay
-from app.schemas.timetable import TimetableEntryCreate
 from app.models.user import User, UserRole
 from app.repositories.class_group import ClassGroupRepository
 from app.repositories.course import CourseRepository
 from app.repositories.timetable import TimetableRepository
 from app.repositories.user import UserRepository
+from app.schemas.timetable import TimetableEntryCreate
 
 
 def _required_string(
@@ -30,14 +31,18 @@ def _required_string(
     These checks protect direct processor calls and defensive code paths.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         raise ValueError(
             f"Timetable entry import field '{field_name}' is required.",
         )
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         raise ValueError(
@@ -57,12 +62,16 @@ def _optional_string(
     Return a trimmed optional string value.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         return None
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         return None
@@ -84,9 +93,21 @@ def _required_positive_integer(
     Return a required positive integer.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+    if (
+        not isinstance(
+            value,
+            int,
+        )
+        or isinstance(
+            value,
+            bool,
+        )
+        or value < 1
+    ):
         raise ValueError(
             f"Timetable entry import field '{field_name}' "
             "must be a positive integer.",
@@ -106,23 +127,84 @@ def _required_day(
     strings such as ``monday``. Direct processor calls may supply the enum.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
-    if isinstance(value, TimetableDay):
+    if isinstance(
+        value,
+        TimetableDay,
+    ):
         return value
 
-    if isinstance(value, str):
+    if isinstance(
+        value,
+        str,
+    ):
         cleaned = value.strip().lower()
 
         if cleaned:
             try:
-                return TimetableDay(cleaned)
+                return TimetableDay(
+                    cleaned,
+                )
             except ValueError:
                 pass
 
     raise ValueError(
         f"Timetable entry import field '{field_name}' "
         "must be a valid timetable day.",
+    )
+
+
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether an existing timetable entry may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    defaults to False when the option is absent.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
     )
 
 
@@ -148,7 +230,7 @@ async def _resolve_teacher(
 
     if teacher is None:
         raise ValueError(
-            f"No teacher with email '{teacher_email}' exists " "in this school.",
+            f"No teacher with email '{teacher_email}' exists in this school.",
         )
 
     if not teacher.has_role(
@@ -246,9 +328,10 @@ async def process_timetable_entry_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one timetable entry from validated import data.
+    Create, update or skip one timetable entry from validated import data.
 
     Human-readable import fields are resolved within the authenticated school:
 
@@ -270,11 +353,32 @@ async def process_timetable_entry_row(
 
     Room, title, and notes are treated as mutable entry details.
 
+    Existing entry behaviour is controlled by the batch-level
+    ``update_existing_records`` option.
+
+    When updates are disabled, an existing entry is left unchanged and the
+    row returns ``SKIPPED``.
+
+    When updates are enabled, room, title and notes may be updated.
+
+    Direct processor calls that omit ``import_options`` retain historical
+    update-existing behaviour for backwards compatibility.
+
     Transaction ownership belongs to the generic import service or task.
     This processor therefore never commits or rolls back the session.
     """
 
-    if not isinstance(school_id, int) or isinstance(school_id, bool) or school_id < 1:
+    if (
+        not isinstance(
+            school_id,
+            int,
+        )
+        or isinstance(
+            school_id,
+            bool,
+        )
+        or school_id < 1
+    ):
         raise ValueError(
             "school_id must be a positive integer.",
         )
@@ -421,6 +525,27 @@ async def process_timetable_entry_row(
         teacher_id=(teacher.id if teacher is not None else None),
     )
 
+    # ------------------------------------------------------------------
+    # Existing entry: leave untouched when updates are disabled.
+    # ------------------------------------------------------------------
+
+    if existing_entry is not None and not _should_update_existing_records(
+        import_options,
+    ):
+        return RowProcessingResult(
+            action=RowProcessingAction.SKIPPED,
+            entity_id=existing_entry.id,
+            message=(
+                f"Skipped existing timetable entry for "
+                f"{day_of_week.value}, period {period_number} because "
+                "updating existing records is disabled."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Create a new timetable entry.
+    # ------------------------------------------------------------------
+
     if existing_entry is None:
         entry = await timetable_repository.create_entry(
             TimetableEntryCreate(
@@ -437,6 +562,8 @@ async def process_timetable_entry_row(
             ),
         )
 
+        await db.flush()
+
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=entry.id,
@@ -446,6 +573,10 @@ async def process_timetable_entry_row(
             ),
         )
 
+    # ------------------------------------------------------------------
+    # Existing entry: update when explicitly permitted.
+    # ------------------------------------------------------------------
+
     existing_entry.room = room
     existing_entry.title = title
     existing_entry.notes = notes
@@ -453,6 +584,8 @@ async def process_timetable_entry_row(
     existing_entry = await timetable_repository.save_entry(
         existing_entry,
     )
+
+    await db.flush()
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,

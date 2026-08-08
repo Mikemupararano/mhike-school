@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -54,7 +55,9 @@ def _optional_string(
     row: dict[str, Any],
     field_name: str,
 ) -> str | None:
-    """Return an optional, trimmed string value."""
+    """
+    Return an optional, trimmed string value.
+    """
 
     value = row.get(
         field_name,
@@ -73,7 +76,9 @@ def _optional_string(
 def _normalise_role(
     role: object,
 ) -> str:
-    """Return a stable string value for a role enum or string."""
+    """
+    Return a stable string value for a role enum or string.
+    """
 
     value = getattr(
         role,
@@ -84,11 +89,70 @@ def _normalise_role(
     return str(value).strip().lower().replace("-", "_").replace(" ", "_")
 
 
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+
+    Persisted import options should contain real JSON booleans. Malformed
+    values are rejected rather than relying on Python truthiness.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether existing records may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    therefore defaults to False when the option is absent.
+
+    The generic import task reconciles UPDATE and UPSERT operations into this
+    option before calling processors.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
+    )
+
+
 def _has_role_assignment(
     user: User,
     role: UserRole,
 ) -> bool:
-    """Return whether the user has the specified persisted role assignment."""
+    """
+    Return whether the user has the specified persisted role assignment.
+    """
 
     assignments = getattr(
         user,
@@ -116,7 +180,9 @@ def _is_existing_role(
     Return whether an account is already recognised as the supplied role.
 
     Both the authoritative multi-role assignments and the legacy primary-role
-    field are considered so legacy accounts can be repaired safely.
+    field are considered so legacy accounts can be recognised safely.
+
+    This function performs recognition only. It never grants a role.
     """
 
     if _has_role_assignment(
@@ -151,6 +217,10 @@ async def _ensure_role_assignment(
 
     Returns True when a new assignment was created and False when it already
     existed.
+
+    This helper must only be called after the caller has established that the
+    account is legitimately recognised as the requested role. It must not be
+    used to convert unrelated accounts implicitly during import.
     """
 
     if _has_role_assignment(
@@ -176,8 +246,30 @@ async def _resolve_student(
     *,
     student_email: str,
     school_id: int,
-) -> User:
-    """Resolve a student by email within the current school."""
+    update_existing_records: bool,
+) -> tuple[User, bool]:
+    """
+    Resolve a student by email within the current school.
+
+    Existing accounts are accepted only when they are already recognised as
+    students through either:
+
+    - the authoritative ``user_roles`` assignment table; or
+    - the legacy primary ``User.role`` field.
+
+    When updates are enabled, a legitimate legacy student that is missing its
+    persisted ``UserRoleAssignment(STUDENT)`` is repaired.
+
+    When updates are disabled, student resolution remains read-only.
+
+    Returns:
+        A tuple containing:
+
+        - the resolved student;
+        - whether a missing persisted student-role assignment was restored.
+
+    Unrelated users are never converted into students automatically.
+    """
 
     student = await UserRepository(
         db,
@@ -200,13 +292,22 @@ async def _resolve_student(
             "registered as a student in this school.",
         )
 
-    await _ensure_role_assignment(
-        db,
-        user=student,
-        role=UserRole.STUDENT,
-    )
+    student_assignment_created = False
 
-    return student
+    if update_existing_records:
+        student_assignment_created = await _ensure_role_assignment(
+            db,
+            user=student,
+            role=UserRole.STUDENT,
+        )
+
+        if student_assignment_created:
+            await db.flush()
+
+    return (
+        student,
+        student_assignment_created,
+    )
 
 
 async def _create_or_update_parent(
@@ -216,13 +317,32 @@ async def _create_or_update_parent(
     first_name: str,
     last_name: str,
     school_id: int,
-) -> tuple[User, RowProcessingAction, bool]:
+    update_existing_records: bool,
+) -> tuple[
+    User,
+    RowProcessingAction,
+    bool,
+]:
     """
-    Create or update one parent account.
+    Create, update or reuse one parent account.
 
-    Existing non-parent users are rejected rather than being granted the parent
-    role automatically. Legacy parent accounts missing their persisted role
-    assignment are repaired.
+    Existing non-parent users are rejected rather than being granted the
+    parent role automatically.
+
+    When ``update_existing_records`` is False, an existing recognised parent
+    is returned unchanged. No profile fields or role assignments are repaired.
+
+    When updates are allowed, existing parent details are updated and legacy
+    parent accounts missing their persisted role assignment are repaired.
+
+    The returned action describes what happened to the parent account itself.
+
+    Returns:
+        A tuple containing:
+
+        - the resolved or created parent;
+        - the parent-account processing action;
+        - whether the parent role assignment was restored.
     """
 
     repository = UserRepository(
@@ -234,7 +354,7 @@ async def _create_or_update_parent(
         school_id=school_id,
     )
 
-    full_name = f"{first_name} {last_name}".strip()
+    full_name = (f"{first_name} {last_name}").strip()
 
     if existing_user is None:
         parent = User(
@@ -257,6 +377,8 @@ async def _create_or_update_parent(
             role=UserRole.PARENT,
         )
 
+        await db.flush()
+
         return (
             parent,
             RowProcessingAction.CREATED,
@@ -269,6 +391,13 @@ async def _create_or_update_parent(
     ):
         raise ValueError(
             f"A non-parent user with email '{email}' " "already exists in this school.",
+        )
+
+    if not update_existing_records:
+        return (
+            existing_user,
+            RowProcessingAction.SKIPPED,
+            False,
         )
 
     existing_user.email = email
@@ -286,6 +415,8 @@ async def _create_or_update_parent(
         role=UserRole.PARENT,
     )
 
+    await db.flush()
+
     return (
         existing_user,
         RowProcessingAction.UPDATED,
@@ -293,33 +424,191 @@ async def _create_or_update_parent(
     )
 
 
+def _existing_link_message(
+    *,
+    parent: User,
+    parent_email: str,
+    student_email: str,
+    parent_action: RowProcessingAction,
+    parent_assignment_created: bool,
+    student_assignment_created: bool,
+) -> str:
+    """
+    Build an audit message for an already-existing parent/student link.
+    """
+
+    parent_name = parent.full_name or parent_email
+
+    if parent_action == RowProcessingAction.UPDATED:
+        repairs: list[str] = []
+
+        if parent_assignment_created:
+            repairs.append(
+                "restored the parent role assignment",
+            )
+
+        if student_assignment_created:
+            repairs.append(
+                "restored the linked student's role assignment",
+            )
+
+        if repairs:
+            repair_text = " and ".join(
+                repairs,
+            )
+
+            return (
+                f"Updated parent '{parent_name}', {repair_text}, "
+                f"but the parent is already linked to student "
+                f"'{student_email}'."
+            )
+
+        return (
+            f"Updated parent '{parent_name}', but the parent is "
+            f"already linked to student '{student_email}'."
+        )
+
+    if parent_action == RowProcessingAction.SKIPPED:
+        return (
+            f"Parent '{parent_email}' was left unchanged because updating "
+            "existing records is disabled and is already linked "
+            f"to student '{student_email}'."
+        )
+
+    # Defensive fallback. A newly created parent should not already have
+    # an existing relationship, but deterministic behaviour is preferable
+    # if repository state ever makes that possible.
+    return (
+        f"Parent '{parent_email}' is already linked " f"to student '{student_email}'."
+    )
+
+
+def _new_link_message(
+    *,
+    parent: User,
+    parent_email: str,
+    student_email: str,
+    parent_action: RowProcessingAction,
+    parent_assignment_created: bool,
+    student_assignment_created: bool,
+) -> tuple[str, RowProcessingAction]:
+    """
+    Build the audit result for a newly-created parent/student link.
+    """
+
+    parent_name = parent.full_name or parent_email
+
+    if parent_action == RowProcessingAction.CREATED:
+        message = (
+            f"Created parent '{parent_name}' and linked "
+            f"the parent to student '{student_email}'."
+        )
+
+        if student_assignment_created:
+            message = (
+                f"Created parent '{parent_name}', restored the linked "
+                "student's role assignment and linked the parent to "
+                f"student '{student_email}'."
+            )
+
+        return (
+            message,
+            RowProcessingAction.CREATED,
+        )
+
+    if parent_action == RowProcessingAction.UPDATED:
+        repairs: list[str] = []
+
+        if parent_assignment_created:
+            repairs.append(
+                "restored the parent role assignment",
+            )
+
+        if student_assignment_created:
+            repairs.append(
+                "restored the linked student's role assignment",
+            )
+
+        if repairs:
+            repair_text = " and ".join(
+                repairs,
+            )
+
+            message = (
+                f"Updated parent '{parent_name}', {repair_text} and linked "
+                f"the parent to student '{student_email}'."
+            )
+        else:
+            message = (
+                f"Updated parent '{parent_name}' and linked "
+                f"the parent to student '{student_email}'."
+            )
+
+        return (
+            message,
+            RowProcessingAction.UPDATED,
+        )
+
+    message = (
+        f"Left existing parent '{parent_name}' unchanged because updating "
+        "existing records is disabled and linked the parent to student "
+        f"'{student_email}'."
+    )
+
+    # The relationship itself is new, so the row performed a successful
+    # create operation even though the existing parent account was not
+    # modified.
+    return (
+        message,
+        RowProcessingAction.CREATED,
+    )
+
+
 async def process_parent_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one parent and link the parent to one student.
+    Create, update or reuse one parent and link the parent to one student.
 
     Stable import identifiers are used:
 
-    - email identifies the parent within the current school;
-    - student_email identifies the linked student.
+    - ``email`` identifies the parent within the current school;
+    - ``student_email`` identifies the linked student.
 
-    Behaviour:
+    Existing-record behaviour is controlled by the batch-level
+    ``update_existing_records`` option.
 
-    - create a new parent when no matching account exists;
-    - update an existing parent account;
-    - repair legacy parent and student role assignments when missing;
-    - reject an existing account that is not already recognised as a parent;
-    - create the parent-student relationship;
-    - return SKIPPED when that relationship already exists.
+    When updates are disabled:
+
+    - a new parent may still be created;
+    - an existing recognised parent is not modified;
+    - a linked existing student is not modified or role-repaired;
+    - an existing parent may still be linked to another student;
+    - an existing parent-student relationship remains idempotent and returns
+      ``SKIPPED``.
+
+    When updates are enabled:
+
+    - existing parent profile information may be updated;
+    - missing parent role assignments may be repaired;
+    - a legitimate legacy student missing its persisted student-role
+      assignment may be repaired;
+    - the required parent-student relationship is created when absent.
+
+    Direct processor calls that omit ``import_options`` retain the historical
+    update-existing behaviour for backwards compatibility.
+
+    Existing accounts that are not already recognised as parents or students
+    are rejected rather than being converted automatically.
 
     The optional phone field is validated but is not persisted because the
     current User model does not expose a confirmed phone field.
 
-    Transaction ownership belongs to the generic import service or task. This
-    processor therefore flushes changes but never commits or rolls back.
+    Transaction ownership belongs to the generic import service or task.
+    This processor therefore flushes changes but never commits or rolls back.
     """
 
     if (
@@ -367,18 +656,28 @@ async def process_parent_row(
             "Parent import field 'phone' cannot exceed 50 characters.",
         )
 
-    student = await _resolve_student(
+    update_existing_records = _should_update_existing_records(
+        import_options,
+    )
+
+    student, student_assignment_created = await _resolve_student(
         db,
         student_email=student_email,
         school_id=school_id,
+        update_existing_records=update_existing_records,
     )
 
-    parent, parent_action, assignment_created = await _create_or_update_parent(
+    (
+        parent,
+        parent_action,
+        parent_assignment_created,
+    ) = await _create_or_update_parent(
         db,
         email=email,
         first_name=first_name,
         last_name=last_name,
         school_id=school_id,
+        update_existing_records=update_existing_records,
     )
 
     link_repository = ParentStudentRepository(
@@ -392,13 +691,22 @@ async def process_parent_row(
         include_relationships=False,
     )
 
-    if existing_link is not None:
-        message = (
-            f"Parent '{email}' is already linked " f"to student '{student_email}'."
-        )
+    # ------------------------------------------------------------------
+    # Existing relationship: idempotent relationship no-op.
+    #
+    # Account repairs may already have occurred when updates are enabled.
+    # The relationship itself remains SKIPPED because it already exists.
+    # ------------------------------------------------------------------
 
-        if assignment_created:
-            message += " The parent role assignment was restored."
+    if existing_link is not None:
+        message = _existing_link_message(
+            parent=parent,
+            parent_email=email,
+            student_email=student_email,
+            parent_action=parent_action,
+            parent_assignment_created=parent_assignment_created,
+            student_assignment_created=student_assignment_created,
+        )
 
         return RowProcessingResult(
             action=RowProcessingAction.SKIPPED,
@@ -406,29 +714,28 @@ async def process_parent_row(
             message=message,
         )
 
+    # ------------------------------------------------------------------
+    # Relationship does not yet exist: create it.
+    # ------------------------------------------------------------------
+
     link = await link_repository.create_link(
         parent_id=parent.id,
         student_id=student.id,
     )
 
-    if parent_action == RowProcessingAction.CREATED:
-        message = (
-            f"Created parent '{parent.full_name}' and linked "
-            f"the parent to student '{student_email}'."
-        )
-    elif assignment_created:
-        message = (
-            f"Updated parent '{parent.full_name}', restored the parent role "
-            f"assignment and linked the parent to student '{student_email}'."
-        )
-    else:
-        message = (
-            f"Updated parent '{parent.full_name}' and linked "
-            f"the parent to student '{student_email}'."
-        )
+    await db.flush()
+
+    message, result_action = _new_link_message(
+        parent=parent,
+        parent_email=email,
+        student_email=student_email,
+        parent_action=parent_action,
+        parent_assignment_created=parent_assignment_created,
+        student_assignment_created=student_assignment_created,
+    )
 
     return RowProcessingResult(
-        action=parent_action,
+        action=result_action,
         entity_id=link.id,
         message=message,
     )

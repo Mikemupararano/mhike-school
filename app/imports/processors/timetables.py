@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -196,13 +197,68 @@ def _validate_school_id(
         )
 
 
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+
+    Persisted import options should contain real JSON booleans. Malformed
+    values are rejected rather than relying on Python truthiness.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether an existing timetable may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    therefore defaults to False when the option is absent.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
+    )
+
+
 async def process_timetable_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one master timetable from validated import data.
+    Create, update or skip one master timetable from validated import data.
 
     Existing timetables are matched using the school-scoped natural key:
 
@@ -213,12 +269,24 @@ async def process_timetable_row(
     The authenticated import context supplies ``school_id``. Any school
     identifier included in the uploaded row is ignored.
 
+    Existing timetable behaviour is controlled by the batch-level
+    ``update_existing_records`` option.
+
+    When updates are disabled, an existing timetable is left unchanged and
+    the row returns ``SKIPPED``.
+
+    When updates are enabled, imported timetable fields may be applied to the
+    existing record.
+
+    Direct processor calls that omit ``import_options`` retain historical
+    update-existing behaviour for backwards compatibility.
+
     New records are passed to the repository as ``TimetableCreate`` schemas,
     matching the repository contract. Existing records are updated as ORM
     entities through ``save_timetable``.
 
-    Transaction ownership belongs to the generic import service or
-    background task. This processor never commits or rolls back the session.
+    Transaction ownership belongs to the generic import service or background
+    task. This processor never commits or rolls back the session.
     """
 
     _validate_school_id(
@@ -242,7 +310,7 @@ async def process_timetable_row(
 
     if len(academic_year) > 20:
         raise ValueError(
-            "Timetable import field 'academic_year' " "cannot exceed 20 characters.",
+            "Timetable import field 'academic_year' cannot exceed 20 characters.",
         )
 
     effective_from = _required_date(
@@ -277,6 +345,10 @@ async def process_timetable_row(
         academic_year=academic_year,
     )
 
+    # ------------------------------------------------------------------
+    # Create a new timetable.
+    # ------------------------------------------------------------------
+
     if existing_timetable is None:
         timetable = await repository.create_timetable(
             TimetableCreate(
@@ -289,6 +361,8 @@ async def process_timetable_row(
             ),
         )
 
+        await db.flush()
+
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=timetable.id,
@@ -296,6 +370,27 @@ async def process_timetable_row(
                 f"Created timetable '{name}' " f"for academic year '{academic_year}'."
             ),
         )
+
+    # ------------------------------------------------------------------
+    # Existing timetable: leave untouched when updates are disabled.
+    # ------------------------------------------------------------------
+
+    if not _should_update_existing_records(
+        import_options,
+    ):
+        return RowProcessingResult(
+            action=RowProcessingAction.SKIPPED,
+            entity_id=existing_timetable.id,
+            message=(
+                f"Skipped existing timetable '{name}' for academic year "
+                f"'{academic_year}' because updating existing records "
+                "is disabled."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Existing timetable: update when explicitly permitted.
+    # ------------------------------------------------------------------
 
     existing_timetable.name = name
     existing_timetable.academic_year = academic_year
@@ -306,6 +401,8 @@ async def process_timetable_row(
     existing_timetable = await repository.save_timetable(
         existing_timetable,
     )
+
+    await db.flush()
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,

@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -32,14 +33,18 @@ def _required_string(
     Return a required, trimmed string value.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         raise ValueError(
             f"Attendance import field '{field_name}' is required.",
         )
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         raise ValueError(
@@ -67,12 +72,16 @@ def _optional_string(
     Blank values are normalised to None.
     """
 
-    value = row.get(field_name)
+    value = row.get(
+        field_name,
+    )
 
     if value is None:
         return None
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     if not cleaned:
         return None
@@ -92,6 +101,10 @@ def _required_date(
 ) -> date:
     """
     Return a required ISO date value.
+
+    Validated staged rows are JSON-backed and therefore normally contain
+    ISO-formatted date strings. Direct processor calls may supply either
+    ``date`` or ``datetime`` instances.
     """
 
     value = row.get(
@@ -110,17 +123,22 @@ def _required_date(
     ):
         return value
 
-    if isinstance(value, str):
+    if isinstance(
+        value,
+        str,
+    ):
         cleaned = value.strip()
 
         if cleaned:
             try:
-                return date.fromisoformat(cleaned)
+                return date.fromisoformat(
+                    cleaned,
+                )
             except ValueError:
                 pass
 
     raise ValueError(
-        f"Attendance import field '{field_name}' " "must be a valid ISO date.",
+        f"Attendance import field '{field_name}' must be a valid ISO date.",
     )
 
 
@@ -131,16 +149,26 @@ def _required_session_type(
     Return a validated attendance session type.
     """
 
-    value = row.get("session_type")
+    value = row.get(
+        "session_type",
+    )
 
-    if isinstance(value, AttendanceSessionType):
+    if isinstance(
+        value,
+        AttendanceSessionType,
+    ):
         return value
 
-    if isinstance(value, str):
+    if isinstance(
+        value,
+        str,
+    ):
         cleaned = value.strip().lower()
 
         try:
-            return AttendanceSessionType(cleaned)
+            return AttendanceSessionType(
+                cleaned,
+            )
         except ValueError:
             pass
 
@@ -156,16 +184,26 @@ def _required_status(
     Return a validated attendance status.
     """
 
-    value = row.get("status")
+    value = row.get(
+        "status",
+    )
 
-    if isinstance(value, AttendanceStatus):
+    if isinstance(
+        value,
+        AttendanceStatus,
+    ):
         return value
 
-    if isinstance(value, str):
+    if isinstance(
+        value,
+        str,
+    ):
         cleaned = value.strip().lower()
 
         try:
-            return AttendanceStatus(cleaned)
+            return AttendanceStatus(
+                cleaned,
+            )
         except ValueError:
             pass
 
@@ -201,6 +239,63 @@ def _validate_school_id(
         )
 
 
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+
+    Persisted import options should contain real JSON booleans. Malformed
+    values are rejected rather than relying on Python truthiness.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether an existing attendance record may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    therefore defaults to False when the option is absent.
+
+    The generic import task reconciles UPDATE and UPSERT operations into this
+    option before calling processors.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
+    )
+
+
 def _normalise_email(
     value: str,
     field_name: str,
@@ -227,7 +322,9 @@ def _is_authorised_marker(
     """
 
     return any(
-        user.has_role(role)
+        user.has_role(
+            role,
+        )
         for role in {
             UserRole.TEACHER,
             UserRole.SCHOOL_ADMIN,
@@ -286,10 +383,12 @@ async def _resolve_student(
 
     if student is None:
         raise ValueError(
-            f"No student with email '{normalised_email}' exists " "in this school.",
+            f"No student with email '{normalised_email}' " "exists in this school.",
         )
 
-    if not student.has_role(UserRole.STUDENT):
+    if not student.has_role(
+        UserRole.STUDENT,
+    ):
         raise ValueError(
             f"The user with email '{normalised_email}' is not "
             "registered as a student in this school.",
@@ -306,6 +405,11 @@ async def _resolve_marker(
 ) -> User | None:
     """
     Resolve and permission-check the optional attendance marker.
+
+    A missing marker value is valid and returns ``None``.
+
+    When an email is supplied, the user must exist within the current school
+    and hold a role authorised to mark attendance.
     """
 
     if marked_by_email is None:
@@ -329,7 +433,9 @@ async def _resolve_marker(
             "in this school.",
         )
 
-    if not _is_authorised_marker(marker):
+    if not _is_authorised_marker(
+        marker,
+    ):
         raise ValueError(
             f"The user with email '{normalised_email}' is not authorised "
             "to mark attendance.",
@@ -342,9 +448,10 @@ async def process_attendance_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one attendance record from validated import data.
+    Create, update or skip one attendance record from validated import data.
 
     Sessions are resolved using the school-scoped natural key:
 
@@ -357,6 +464,29 @@ async def process_attendance_row(
 
     - ``attendance_session_id``;
     - ``student_id``.
+
+    Existing attendance record behaviour is controlled by the batch-level
+    ``update_existing_records`` option.
+
+    When updates are disabled, an existing attendance record is left
+    completely unchanged and the row returns ``SKIPPED``.
+
+    When updates are enabled, status, marker and notes may be updated.
+
+    Direct processor calls that omit ``import_options`` retain historical
+    update-existing behaviour for backwards compatibility.
+
+    Validation precedence deliberately distinguishes two paths:
+
+    - if the referenced attendance session does not exist, a supplied marker
+      is still resolved and permission-checked before the missing-session
+      error is reported;
+    - if the session exists and an existing attendance record will be skipped
+      because updates are disabled, replacement marker data is not resolved
+      because it will never be applied.
+
+    This preserves historical direct-processor validation behaviour without
+    breaking idempotent skip semantics.
 
     The repository contract intentionally uses ``AttendanceRecordCreate``
     for creation and ``AttendanceRecordUpdate`` for updates.
@@ -418,12 +548,6 @@ async def process_attendance_row(
         school_id=school_id,
     )
 
-    marker = await _resolve_marker(
-        db,
-        marked_by_email=marked_by_email,
-        school_id=school_id,
-    )
-
     repository = AttendanceRepository(
         db,
     )
@@ -435,7 +559,24 @@ async def process_attendance_row(
         session_type=session_type,
     )
 
+    # ------------------------------------------------------------------
+    # Missing session.
+    #
+    # Preserve historical validation precedence: if replacement marker data
+    # was supplied, validate that marker before reporting the missing session.
+    #
+    # This validation is intentionally limited to the no-session path. When
+    # a session exists we must first determine whether an existing attendance
+    # record will be skipped because updates are disabled.
+    # ------------------------------------------------------------------
+
     if session is None:
+        await _resolve_marker(
+            db,
+            marked_by_email=marked_by_email,
+            school_id=school_id,
+        )
+
         raise ValueError(
             f"No {session_type.value.upper()} attendance session exists "
             f"for class '{class_name}' on {session_date.isoformat()}.",
@@ -445,6 +586,43 @@ async def process_attendance_row(
         attendance_session_id=session.id,
         student_id=student.id,
     )
+
+    # ------------------------------------------------------------------
+    # Existing attendance record: leave untouched when updates are disabled.
+    #
+    # Marker resolution deliberately happens after this branch. Replacement
+    # marker data must not cause a row failure when the existing record will
+    # not be modified.
+    # ------------------------------------------------------------------
+
+    if existing_record is not None and not _should_update_existing_records(
+        import_options,
+    ):
+        return RowProcessingResult(
+            action=RowProcessingAction.SKIPPED,
+            entity_id=existing_record.id,
+            message=(
+                f"Skipped existing {session_type.value.upper()} attendance "
+                f"record for '{student.email}' on "
+                f"{session_date.isoformat()} because updating existing "
+                "records is disabled."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Resolve the marker only when a record will actually be created or
+    # updated.
+    # ------------------------------------------------------------------
+
+    marker = await _resolve_marker(
+        db,
+        marked_by_email=marked_by_email,
+        school_id=school_id,
+    )
+
+    # ------------------------------------------------------------------
+    # Create a new attendance record.
+    # ------------------------------------------------------------------
 
     if existing_record is None:
         record = await repository.create_record(
@@ -457,6 +635,8 @@ async def process_attendance_row(
             ),
         )
 
+        await db.flush()
+
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=record.id,
@@ -466,6 +646,10 @@ async def process_attendance_row(
             ),
         )
 
+    # ------------------------------------------------------------------
+    # Existing attendance record: update when explicitly permitted.
+    # ------------------------------------------------------------------
+
     record = await repository.update_record(
         existing_record,
         AttendanceRecordUpdate(
@@ -474,6 +658,8 @@ async def process_attendance_row(
             notes=notes,
         ),
     )
+
+    await db.flush()
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,

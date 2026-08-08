@@ -32,11 +32,12 @@ class RowProcessingResult:
             Whether the row created, updated or skipped an entity.
 
         entity_id:
-            Identifier of the created or updated database record, when
-            available.
+            Identifier of the created, updated or matched database record,
+            when available.
 
         message:
-            Optional human-readable processing detail for audit history.
+            Optional human-readable processing detail retained in import
+            history and audit output.
     """
 
     action: RowProcessingAction
@@ -44,13 +45,24 @@ class RowProcessingResult:
     message: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Import handler callable contracts
+# ---------------------------------------------------------------------------
+
+ImportOptions = Mapping[str, Any]
+
 RowValidator = Callable[
     [dict[str, Any]],
     RowValidationResult | Awaitable[RowValidationResult],
 ]
 
 RowProcessor = Callable[
-    [AsyncSession, dict[str, Any], int],
+    [
+        AsyncSession,
+        dict[str, Any],
+        int,
+        ImportOptions,
+    ],
     Awaitable[RowProcessingResult],
 ]
 
@@ -85,6 +97,15 @@ class ImportHandler:
             Async callable responsible for applying one validated row to the
             database.
 
+            Processors receive:
+                • database session
+                • validated row data
+                • authenticated school ID
+                • batch-level import options
+
+            Individual processors may use only the options relevant to their
+            own create/update/skip behaviour.
+
         schema:
             Pydantic model describing the accepted import-row structure.
 
@@ -112,7 +133,9 @@ class ImportHandler:
 _registry: dict[str, ImportHandler] = {}
 
 
-def _normalise_import_type(import_type: str) -> str:
+def _normalise_import_type(
+    import_type: str,
+) -> str:
     """
     Convert an import type into its canonical registry key.
 
@@ -124,13 +147,24 @@ def _normalise_import_type(import_type: str) -> str:
             If the normalised import type is blank.
     """
 
-    if not isinstance(import_type, str):
-        raise TypeError("Import type must be a string.")
+    if not isinstance(
+        import_type,
+        str,
+    ):
+        raise TypeError(
+            "Import type must be a string.",
+        )
 
-    key = import_type.strip().lower()
+    key = (
+        import_type
+        .strip()
+        .lower()
+    )
 
     if not key:
-        raise ValueError("Import type cannot be blank.")
+        raise ValueError(
+            "Import type cannot be blank.",
+        )
 
     return key
 
@@ -144,13 +178,20 @@ def _normalise_required_text(
     Strip and validate required human-readable registration metadata.
     """
 
-    if not isinstance(value, str):
-        raise TypeError(f"{field_name} must be a string.")
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise TypeError(
+            f"{field_name} must be a string.",
+        )
 
     cleaned = value.strip()
 
     if not cleaned:
-        raise ValueError(f"{field_name} cannot be blank.")
+        raise ValueError(
+            f"{field_name} cannot be blank.",
+        )
 
     return cleaned
 
@@ -162,7 +203,16 @@ def _validate_schema(
     Validate that a registered schema is a Pydantic BaseModel subclass.
     """
 
-    if not isinstance(schema, type) or not issubclass(schema, BaseModel):
+    if (
+        not isinstance(
+            schema,
+            type,
+        )
+        or not issubclass(
+            schema,
+            BaseModel,
+        )
+    ):
         raise TypeError(
             "Import handler schema must be a Pydantic BaseModel subclass.",
         )
@@ -188,30 +238,63 @@ def _normalise_sample_row(
     if sample_row is None:
         return MappingProxyType({})
 
-    if not isinstance(sample_row, Mapping):
-        raise TypeError("sample_row must be a mapping or None.")
+    if not isinstance(
+        sample_row,
+        Mapping,
+    ):
+        raise TypeError(
+            "sample_row must be a mapping or None.",
+        )
 
     model_fields = schema.model_fields
 
-    accepted_keys: set[str] = set(model_fields)
+    accepted_keys: set[str] = set(
+        model_fields,
+    )
 
     for field_name, field_info in model_fields.items():
         alias = field_info.alias
 
-        if isinstance(alias, str) and alias:
-            accepted_keys.add(alias)
+        if (
+            isinstance(
+                alias,
+                str,
+            )
+            and alias
+        ):
+            accepted_keys.add(
+                alias,
+            )
 
-        validation_alias = field_info.validation_alias
+        validation_alias = (
+            field_info.validation_alias
+        )
 
-        if isinstance(validation_alias, str) and validation_alias:
-            accepted_keys.add(validation_alias)
+        if (
+            isinstance(
+                validation_alias,
+                str,
+            )
+            and validation_alias
+        ):
+            accepted_keys.add(
+                validation_alias,
+            )
 
-        accepted_keys.add(field_name)
+        accepted_keys.add(
+            field_name,
+        )
 
     invalid_keys = sorted(
         str(key)
         for key in sample_row
-        if not isinstance(key, str) or key not in accepted_keys
+        if (
+            not isinstance(
+                key,
+                str,
+            )
+            or key not in accepted_keys
+        )
     )
 
     if invalid_keys:
@@ -223,17 +306,26 @@ def _normalise_sample_row(
     normalised: dict[str, Any] = {}
 
     for raw_key, value in sample_row.items():
-        if not isinstance(raw_key, str):
-            raise TypeError("Sample-row field names must be strings.")
+        if not isinstance(
+            raw_key,
+            str,
+        ):
+            raise TypeError(
+                "Sample-row field names must be strings.",
+            )
 
         key = raw_key.strip()
 
         if not key:
-            raise ValueError("Sample-row field names cannot be blank.")
+            raise ValueError(
+                "Sample-row field names cannot be blank.",
+            )
 
         normalised[key] = value
 
-    return MappingProxyType(normalised)
+    return MappingProxyType(
+        normalised,
+    )
 
 
 def register_import_handler(
@@ -263,34 +355,52 @@ def register_import_handler(
             fields or a handler is already registered for the import type.
     """
 
-    key = _normalise_import_type(import_type)
+    key = _normalise_import_type(
+        import_type,
+    )
 
     if key in _registry:
         raise ValueError(
             f"Import handler '{key}' is already registered.",
         )
 
-    if not callable(validator):
-        raise TypeError("Import handler validator must be callable.")
+    if not callable(
+        validator,
+    ):
+        raise TypeError(
+            "Import handler validator must be callable.",
+        )
 
-    if not callable(processor):
-        raise TypeError("Import handler processor must be callable.")
+    if not callable(
+        processor,
+    ):
+        raise TypeError(
+            "Import handler processor must be callable.",
+        )
 
-    validated_schema = _validate_schema(schema)
-
-    cleaned_display_name = _normalise_required_text(
-        display_name,
-        field_name="Display name",
+    validated_schema = _validate_schema(
+        schema,
     )
 
-    cleaned_description = _normalise_required_text(
-        description,
-        field_name="Description",
+    cleaned_display_name = (
+        _normalise_required_text(
+            display_name,
+            field_name="Display name",
+        )
     )
 
-    validated_sample_row = _normalise_sample_row(
-        sample_row,
-        schema=validated_schema,
+    cleaned_description = (
+        _normalise_required_text(
+            description,
+            field_name="Description",
+        )
+    )
+
+    validated_sample_row = (
+        _normalise_sample_row(
+            sample_row,
+            schema=validated_schema,
+        )
     )
 
     _registry[key] = ImportHandler(
@@ -304,7 +414,9 @@ def register_import_handler(
     )
 
 
-def get_import_handler(import_type: str) -> ImportHandler:
+def get_import_handler(
+    import_type: str,
+) -> ImportHandler:
     """
     Return the registered handler for an import type.
 
@@ -319,7 +431,9 @@ def get_import_handler(import_type: str) -> ImportHandler:
             If no handler has been registered for the import type.
     """
 
-    key = _normalise_import_type(import_type)
+    key = _normalise_import_type(
+        import_type,
+    )
 
     try:
         return _registry[key]
@@ -334,7 +448,9 @@ def registered_import_types() -> list[str]:
     Return all registered import types in deterministic order.
     """
 
-    return sorted(_registry)
+    return sorted(
+        _registry,
+    )
 
 
 def registered_import_handlers() -> list[ImportHandler]:
@@ -345,10 +461,16 @@ def registered_import_handlers() -> list[ImportHandler]:
     A new list is returned so callers cannot mutate the registry itself.
     """
 
-    return [_registry[import_type] for import_type in registered_import_types()]
+    return [
+        _registry[import_type]
+        for import_type
+        in registered_import_types()
+    ]
 
 
-def is_registered(import_type: str) -> bool:
+def is_registered(
+    import_type: str,
+) -> bool:
     """
     Return whether an import handler exists.
 
@@ -356,10 +478,17 @@ def is_registered(import_type: str) -> bool:
     an exception, making this helper safe for request-level capability checks.
     """
 
-    if not isinstance(import_type, str):
+    if not isinstance(
+        import_type,
+        str,
+    ):
         return False
 
-    key = import_type.strip().lower()
+    key = (
+        import_type
+        .strip()
+        .lower()
+    )
 
     if not key:
         return False

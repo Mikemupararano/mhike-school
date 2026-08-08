@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -28,16 +29,19 @@ def _normalise_string(
     Return a required, trimmed string value.
     """
 
-    if not isinstance(value, str):
+    if not isinstance(
+        value,
+        str,
+    ):
         raise ValueError(
-            f"Assignment submission import field " f"'{field_name}' is required.",
+            f"Assignment submission import field '{field_name}' is required.",
         )
 
     cleaned = value.strip()
 
     if not cleaned:
         raise ValueError(
-            f"Assignment submission import field " f"'{field_name}' cannot be blank.",
+            f"Assignment submission import field '{field_name}' cannot be blank.",
         )
 
     return cleaned
@@ -55,7 +59,9 @@ def _normalise_optional_string(
     if value is None:
         return None
 
-    cleaned = str(value).strip()
+    cleaned = str(
+        value,
+    ).strip()
 
     return cleaned or None
 
@@ -84,6 +90,60 @@ def _validate_school_id(
         raise ValueError(
             "school_id must be a positive integer.",
         )
+
+
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+
+    Persisted import options should contain real JSON booleans. Malformed
+    values are rejected rather than relying on Python truthiness.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether an existing assignment submission may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    defaults to False when the option is absent.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
+    )
 
 
 def _normalise_email(
@@ -120,10 +180,16 @@ def _parse_datetime(
     if value is None:
         return None
 
-    if isinstance(value, datetime):
+    if isinstance(
+        value,
+        datetime,
+    ):
         return value
 
-    if isinstance(value, str):
+    if isinstance(
+        value,
+        str,
+    ):
         cleaned = value.strip()
 
         if not cleaned:
@@ -179,7 +245,7 @@ async def _resolve_teacher(
 
     if teacher is None:
         raise ValueError(
-            f"No teacher with email '{normalised_email}' exists " "in this school.",
+            f"No teacher with email '{normalised_email}' " "exists in this school.",
         )
 
     if not teacher.has_role(
@@ -217,7 +283,7 @@ async def _resolve_student(
 
     if student is None:
         raise ValueError(
-            f"No student with email '{normalised_email}' exists " "in this school.",
+            f"No student with email '{normalised_email}' " "exists in this school.",
         )
 
     if not student.has_role(
@@ -320,13 +386,19 @@ async def _resolve_grader(
 
     if grader is None:
         raise ValueError(
-            f"No user with email '{graded_by_email}' exists " "in this school.",
+            f"No user with email '{graded_by_email}' exists in this school.",
         )
 
     if not (
-        grader.has_role(UserRole.TEACHER)
-        or grader.has_role(UserRole.SCHOOL_ADMIN)
-        or grader.has_role(UserRole.PLATFORM_ADMIN)
+        grader.has_role(
+            UserRole.TEACHER,
+        )
+        or grader.has_role(
+            UserRole.SCHOOL_ADMIN,
+        )
+        or grader.has_role(
+            UserRole.PLATFORM_ADMIN,
+        )
     ):
         raise ValueError(
             f"'{graded_by_email}' is not authorised to grade submissions.",
@@ -339,18 +411,33 @@ async def process_assignment_submission_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one assignment submission from validated import data.
+    Create, update or skip one assignment submission from validated import
+    data.
 
     The submission is resolved by the school-scoped natural key of
-    ``assignment_id`` and ``student_id`` after resolving the teacher,
-    course and assignment from stable import identities.
+    ``assignment_id`` and ``student_id`` after resolving the teacher, course
+    and assignment from stable import identities.
+
+    Existing submission behaviour is controlled by the batch-level
+    ``update_existing_records`` option.
+
+    When updates are disabled, an existing submission is left completely
+    unchanged and the row returns ``SKIPPED``.
+
+    When updates are enabled, imported submission, grading and status fields
+    may be applied to the existing record.
+
+    Direct processor calls that omit ``import_options`` retain historical
+    update-existing behaviour for backwards compatibility.
 
     ``AssignmentSubmissionRepository`` intentionally accepts ORM entities
-    for both ``create`` and ``save``. Transaction ownership belongs to the
-    generic import service or background task, so this processor never
-    commits or rolls back the session.
+    for both ``create`` and ``save``.
+
+    Transaction ownership belongs to the generic import service or background
+    task, so this processor never commits or rolls back the session.
     """
 
     _validate_school_id(
@@ -383,14 +470,6 @@ async def process_assignment_submission_row(
         school_id=school_id,
     )
 
-    grader = await _resolve_grader(
-        db,
-        graded_by_email=row.get(
-            "graded_by_email",
-        ),
-        school_id=school_id,
-    )
-
     repository = AssignmentSubmissionRepository(
         db,
     )
@@ -400,6 +479,35 @@ async def process_assignment_submission_row(
         student_id=student.id,
         school_id=school_id,
         include_relationships=False,
+    )
+
+    # ------------------------------------------------------------------
+    # Existing submission: leave untouched when updates are disabled.
+    # ------------------------------------------------------------------
+
+    if submission is not None and not _should_update_existing_records(
+        import_options,
+    ):
+        return RowProcessingResult(
+            action=RowProcessingAction.SKIPPED,
+            entity_id=submission.id,
+            message=(
+                "Skipped existing assignment submission because updating "
+                "existing records is disabled."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Mutable/imported values are resolved only when the submission will
+    # actually be created or updated.
+    # ------------------------------------------------------------------
+
+    grader = await _resolve_grader(
+        db,
+        graded_by_email=row.get(
+            "graded_by_email",
+        ),
+        school_id=school_id,
     )
 
     status = _normalise_string(
@@ -412,34 +520,58 @@ async def process_assignment_submission_row(
 
     submitted_at = (
         _parse_datetime(
-            row.get("submitted_at"),
+            row.get(
+                "submitted_at",
+            ),
             "submitted_at",
         )
         or _utc_now()
     )
 
     graded_at = _parse_datetime(
-        row.get("graded_at"),
+        row.get(
+            "graded_at",
+        ),
         "graded_at",
     )
+
+    submission_text = _normalise_optional_string(
+        row.get(
+            "submission_text",
+        ),
+    )
+
+    attachment_url = _normalise_optional_string(
+        row.get(
+            "attachment_url",
+        ),
+    )
+
+    feedback = _normalise_optional_string(
+        row.get(
+            "feedback",
+        ),
+    )
+
+    score = row.get(
+        "score",
+    )
+
+    # ------------------------------------------------------------------
+    # Create a new submission.
+    # ------------------------------------------------------------------
 
     if submission is None:
         submission = AssignmentSubmission(
             assignment_id=assignment.id,
             student_id=student.id,
             school_id=school_id,
-            submission_text=_normalise_optional_string(
-                row.get("submission_text"),
-            ),
-            attachment_url=_normalise_optional_string(
-                row.get("attachment_url"),
-            ),
+            submission_text=submission_text,
+            attachment_url=attachment_url,
             status=status,
             submitted_at=submitted_at,
-            score=row.get("score"),
-            feedback=_normalise_optional_string(
-                row.get("feedback"),
-            ),
+            score=score,
+            feedback=feedback,
             graded_by=(grader.id if grader is not None else None),
             graded_at=graded_at,
         )
@@ -448,30 +580,32 @@ async def process_assignment_submission_row(
             submission,
         )
 
+        await db.flush()
+
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=submission.id,
             message="Assignment submission created.",
         )
 
-    submission.submission_text = _normalise_optional_string(
-        row.get("submission_text"),
-    )
-    submission.attachment_url = _normalise_optional_string(
-        row.get("attachment_url"),
-    )
+    # ------------------------------------------------------------------
+    # Existing submission: update when explicitly permitted.
+    # ------------------------------------------------------------------
+
+    submission.submission_text = submission_text
+    submission.attachment_url = attachment_url
     submission.status = status
     submission.submitted_at = submitted_at
-    submission.score = row.get("score")
-    submission.feedback = _normalise_optional_string(
-        row.get("feedback"),
-    )
+    submission.score = score
+    submission.feedback = feedback
     submission.graded_by = grader.id if grader is not None else None
     submission.graded_at = graded_at
 
     submission = await repository.save(
         submission,
     )
+
+    await db.flush()
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,

@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -50,7 +51,9 @@ def _required_string(
 def _validate_school_id(
     school_id: int,
 ) -> None:
-    """Require a positive integer school identifier."""
+    """
+    Require a positive integer school identifier.
+    """
 
     if (
         not isinstance(
@@ -72,6 +75,7 @@ async def process_enrollment_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
     Create one student-to-class enrolment from validated import data.
@@ -84,6 +88,10 @@ async def process_enrollment_row(
     An existing identical enrolment is treated as a successful idempotent
     outcome and returns ``RowProcessingAction.SKIPPED``.
 
+    ``import_options`` is accepted for compatibility with the generic import
+    processor contract. Enrolments do not currently support update semantics
+    because an enrolment either exists or does not exist.
+
     Missing students, missing classes, incorrect user roles and cross-school
     references fail the row.
 
@@ -91,6 +99,8 @@ async def process_enrollment_row(
     This processor therefore flushes through repositories but never commits
     or rolls back the session.
     """
+
+    del import_options
 
     _validate_school_id(
         school_id,
@@ -108,7 +118,7 @@ async def process_enrollment_row(
 
     if len(class_name) > 255:
         raise ValueError(
-            "Enrollment import field 'class_name' " "cannot exceed 255 characters.",
+            "Enrollment import field 'class_name' cannot exceed 255 characters.",
         )
 
     student = await UserRepository(
@@ -120,7 +130,7 @@ async def process_enrollment_row(
 
     if student is None:
         raise ValueError(
-            f"No student with email '{student_email}' " "exists in this school.",
+            f"No student with email '{student_email}' exists in this school.",
         )
 
     if not student.has_role(
@@ -173,6 +183,8 @@ async def process_enrollment_row(
     enrollment = await repository.create(
         enrollment,
     )
+
+    await db.flush()
 
     return RowProcessingResult(
         action=RowProcessingAction.CREATED,

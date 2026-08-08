@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -231,6 +232,7 @@ async def process_timetable_assignment_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
     Create one timetable assignment from validated import data.
@@ -244,12 +246,18 @@ async def process_timetable_assignment_row(
     Existing matching assignments are skipped to keep repeated imports
     idempotent.
 
+    ``import_options`` is accepted for compatibility with the generic
+    processor contract. Timetable assignments do not currently support update
+    semantics because an assignment either exists or does not exist.
+
     New records are passed to the repository as
     ``TimetableAssignmentCreate`` schemas, matching the repository contract.
 
-    Transaction ownership belongs to the generic import service or
-    background task. This processor never commits or rolls back the session.
+    Transaction ownership belongs to the generic import service or background
+    task. This processor never commits or rolls back the session.
     """
+
+    del import_options
 
     _validate_school_id(
         school_id,
@@ -352,6 +360,7 @@ async def process_timetable_assignment_row(
         )
 
     user_id = user.id if user is not None else None
+
     class_group_id = class_group.id if class_group is not None else None
 
     existing_assignment = await repository.find_matching_assignment(
@@ -380,6 +389,8 @@ async def process_timetable_assignment_row(
             class_group_id=class_group_id,
         ),
     )
+
+    await db.flush()
 
     target = user.email if user is not None else class_group.name
 

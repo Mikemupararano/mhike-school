@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy.exc import OperationalError
 
 from app.db.session import TaskAsyncSessionLocal as AsyncSessionLocal
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
+    RowProcessor,
     get_import_handler,
 )
 from app.models.import_batch import (
+    ImportOperation,
     ImportRowStatus,
     ImportStatus,
 )
@@ -30,12 +34,14 @@ from app.tasks.celery_app import celery
 
 logger = logging.getLogger(__name__)
 
+
 PROCESSABLE_ROW_STATUSES = (
     ImportRowStatus.VALID,
     ImportRowStatus.WARNING,
     ImportRowStatus.QUEUED,
     ImportRowStatus.PROCESSING,
 )
+
 
 FINISHED_BATCH_STATUSES = {
     ImportStatus.COMPLETED,
@@ -48,7 +54,9 @@ class ImportBatchNotFoundError(LookupError):
     """Raised when a school-scoped import batch cannot be found."""
 
 
-def _normalise_import_type(value: Any) -> str:
+def _normalise_import_type(
+    value: Any,
+) -> str:
     """
     Convert an import-type enum or string into the registry key.
 
@@ -56,25 +64,192 @@ def _normalise_import_type(value: Any) -> str:
     string-backed Enum, so this helper safely supports both.
     """
 
-    enum_value = getattr(value, "value", value)
+    enum_value = getattr(
+        value,
+        "value",
+        value,
+    )
 
-    if not isinstance(enum_value, str):
+    if not isinstance(
+        enum_value,
+        str,
+    ):
         raise TypeError(
-            "Import batch import_type must be a string or string-backed enum."
+            "Import batch import_type must be a string or string-backed enum.",
         )
 
     normalised = enum_value.strip().lower()
 
     if not normalised:
-        raise ValueError("Import batch import_type cannot be blank.")
+        raise ValueError(
+            "Import batch import_type cannot be blank.",
+        )
 
     return normalised
+
+
+def _normalise_import_options(
+    value: Any,
+) -> dict[str, Any]:
+    """
+    Return a detached, validated copy of batch-level import options.
+
+    Import options are stored in a JSON column and should therefore be a
+    string-keyed mapping. Copying the mapping before the batch-loading session
+    closes ensures row processors never depend on SQLAlchemy-managed state.
+
+    Option values are intentionally preserved here. Individual consumers are
+    responsible for validating the expected value type for each option.
+    """
+
+    if value is None:
+        return {}
+
+    if not isinstance(
+        value,
+        Mapping,
+    ):
+        raise TypeError(
+            "Import batch import_options must be a mapping or null.",
+        )
+
+    normalised: dict[str, Any] = {}
+
+    for raw_key, option_value in value.items():
+        if not isinstance(
+            raw_key,
+            str,
+        ):
+            raise TypeError(
+                "Import batch import_options keys must be strings.",
+            )
+
+        key = raw_key.strip()
+
+        if not key:
+            raise ValueError(
+                "Import batch import_options keys cannot be blank.",
+            )
+
+        normalised[key] = option_value
+
+    return normalised
+
+
+def _normalise_import_operation(
+    value: Any,
+) -> ImportOperation:
+    """
+    Return a validated ImportOperation.
+
+    The ORM normally exposes ``ImportBatch.operation`` as an
+    ``ImportOperation`` instance. Supporting strings as well keeps this
+    helper robust for tests, manually constructed batches and compatible
+    persistence paths.
+    """
+
+    enum_value = getattr(
+        value,
+        "value",
+        value,
+    )
+
+    if not isinstance(
+        enum_value,
+        str,
+    ):
+        raise TypeError(
+            "Import batch operation must be a string or string-backed enum.",
+        )
+
+    normalised = enum_value.strip().lower()
+
+    if not normalised:
+        raise ValueError(
+            "Import batch operation cannot be blank.",
+        )
+
+    try:
+        return ImportOperation(
+            normalised,
+        )
+    except ValueError as exc:
+        supported_operations = ", ".join(
+            operation.value for operation in ImportOperation
+        )
+
+        raise ValueError(
+            f"Unsupported import batch operation '{normalised}'. "
+            f"Supported operations are: {supported_operations}.",
+        ) from exc
+
+
+def _resolve_processing_import_options(
+    *,
+    operation: ImportOperation | str,
+    import_options: Mapping[str, Any] | None,
+) -> ImportOptions:
+    """
+    Resolve the effective processor options for an import batch.
+
+    ``ImportBatch.operation`` defines the batch's fundamental data-mutation
+    intent. The JSON ``import_options`` dictionary contains additional
+    behavioural choices selected for the batch.
+
+    The operation therefore establishes the minimum mutation permissions:
+
+    CREATE
+        Does not implicitly permit updates. Existing-record behaviour remains
+        governed by the explicitly supplied import options.
+
+    UPDATE
+        Must permit processors to update existing records.
+
+    UPSERT
+        Must permit processors to update existing records while retaining the
+        processors' normal ability to create missing records.
+
+    This is especially important for older batches and test fixtures created
+    before ``update_existing_records`` became an explicit processor option.
+    An UPSERT batch must not silently become create-only merely because the
+    option key is absent.
+
+    The returned dictionary is detached from the SQLAlchemy-managed JSON
+    value. Runtime-derived options therefore do not mutate the permanent
+    audit record stored on the ImportBatch.
+
+    Notes:
+        The current generic processor contract exposes
+        ``update_existing_records`` but does not yet expose a generic
+        ``allow_create`` or ``create_missing_records`` option. Consequently,
+        UPDATE can reliably enable update behaviour here, but enforcing
+        update-only/no-create semantics would require a separate processor
+        contract extension and is deliberately not simulated in this layer.
+    """
+
+    options = _normalise_import_options(
+        import_options,
+    )
+
+    resolved_operation = _normalise_import_operation(
+        operation,
+    )
+
+    if resolved_operation in {
+        ImportOperation.UPDATE,
+        ImportOperation.UPSERT,
+    }:
+        options["update_existing_records"] = True
+
+    return options
 
 
 def _result_to_row_status(
     result: RowProcessingResult,
 ) -> ImportRowStatus:
-    """Map a processor result onto the permanent import-row status."""
+    """
+    Map a processor result onto the permanent import-row status.
+    """
 
     if result.action == RowProcessingAction.CREATED:
         return ImportRowStatus.IMPORTED
@@ -85,7 +260,9 @@ def _result_to_row_status(
     if result.action == RowProcessingAction.SKIPPED:
         return ImportRowStatus.SKIPPED
 
-    raise ValueError(f"Unsupported row processing action: {result.action!r}")
+    raise ValueError(
+        f"Unsupported row processing action: {result.action!r}",
+    )
 
 
 @celery.task(
@@ -114,6 +291,7 @@ def validate_import_batch_task(
                 school_id=school_id,
             )
         )
+
     except OperationalError as exc:
         logger.exception(
             "Transient database error while validating import batch. "
@@ -121,7 +299,10 @@ def validate_import_batch_task(
             batch_id,
             school_id,
         )
-        raise self.retry(exc=exc) from exc
+
+        raise self.retry(
+            exc=exc,
+        ) from exc
 
 
 async def _validate_import_batch_task(
@@ -151,15 +332,16 @@ async def _validate_import_batch_task(
 
         if batch is None:
             raise ImportBatchNotFoundError(
-                f"Import batch {batch_id} was not found for school {school_id}."
+                f"Import batch {batch_id} was not found for school " f"{school_id}.",
             )
 
         if batch.status == ImportStatus.CANCELLED:
             logger.info(
-                "Skipping cancelled import batch. batch_id=%s school_id=%s",
+                "Skipping cancelled import batch. " "batch_id=%s school_id=%s",
                 batch_id,
                 school_id,
             )
+
             return {
                 "batch_id": batch_id,
                 "school_id": school_id,
@@ -168,12 +350,19 @@ async def _validate_import_batch_task(
                 "reason": "Batch has been cancelled.",
             }
 
-        import_type = _normalise_import_type(batch.import_type)
+        import_type = _normalise_import_type(
+            batch.import_type,
+        )
 
         try:
-            handler = get_import_handler(import_type)
+            handler = get_import_handler(
+                import_type,
+            )
+
         except KeyError as exc:
-            error_message = str(exc)
+            error_message = str(
+                exc,
+            )
 
             await set_import_batch_status(
                 db,
@@ -258,6 +447,7 @@ def process_import_batch_task(
                 school_id=school_id,
             )
         )
+
     except OperationalError as exc:
         logger.exception(
             "Transient database error while processing import batch. "
@@ -265,7 +455,10 @@ def process_import_batch_task(
             batch_id,
             school_id,
         )
-        raise self.retry(exc=exc) from exc
+
+        raise self.retry(
+            exc=exc,
+        ) from exc
 
 
 async def _list_processable_row_ids(
@@ -300,7 +493,10 @@ async def _list_processable_row_ids(
                     break
 
                 row_ids.extend(row.id for row in rows)
-                offset += len(rows)
+
+                offset += len(
+                    rows,
+                )
 
                 if len(rows) < 500:
                     break
@@ -315,7 +511,9 @@ async def _mark_row_failed(
     school_id: int,
     error_message: str,
 ) -> None:
-    """Persist a row-level processing failure in a fresh transaction."""
+    """
+    Persist a row-level processing failure in a fresh transaction.
+    """
 
     async with AsyncSessionLocal() as db:
         row = await get_import_row(
@@ -334,6 +532,7 @@ async def _mark_row_failed(
                 batch_id,
                 school_id,
             )
+
             return
 
         await set_import_row_result(
@@ -352,13 +551,17 @@ async def _process_one_import_row(
     batch_id: int,
     school_id: int,
     import_type: str,
-    processor: Any,
+    processor: RowProcessor,
+    import_options: ImportOptions,
 ) -> ImportRowStatus | None:
     """
     Process one row in its own database transaction.
 
     A separate transaction per row prevents one invalid record from rolling
     back successful records already processed from the same batch.
+
+    Effective import options have already been detached from the ImportBatch
+    and reconciled with the batch operation before reaching this function.
     """
 
     try:
@@ -379,6 +582,7 @@ async def _process_one_import_row(
                     batch_id,
                     school_id,
                 )
+
                 return None
 
             if row.status not in PROCESSABLE_ROW_STATUSES:
@@ -389,6 +593,7 @@ async def _process_one_import_row(
                     batch_id,
                     row.status.value,
                 )
+
                 return row.status
 
             row.status = ImportRowStatus.PROCESSING
@@ -403,12 +608,20 @@ async def _process_one_import_row(
                 db,
                 import_data,
                 school_id,
+                import_options,
             )
 
-            if not isinstance(result, RowProcessingResult):
-                raise TypeError("Import processors must return RowProcessingResult.")
+            if not isinstance(
+                result,
+                RowProcessingResult,
+            ):
+                raise TypeError(
+                    "Import processors must return RowProcessingResult.",
+                )
 
-            final_status = _result_to_row_status(result)
+            final_status = _result_to_row_status(
+                result,
+            )
 
             await set_import_row_result(
                 db,
@@ -423,7 +636,8 @@ async def _process_one_import_row(
 
             logger.info(
                 "Import row processed. "
-                "row_id=%s batch_id=%s school_id=%s status=%s entity_id=%s",
+                "row_id=%s batch_id=%s school_id=%s "
+                "status=%s entity_id=%s",
                 row_id,
                 batch_id,
                 school_id,
@@ -462,7 +676,9 @@ async def _finalise_import_batch(
     school_id: int,
     import_type: str,
 ) -> dict[str, Any]:
-    """Recalculate counters and set the batch's terminal workflow status."""
+    """
+    Recalculate counters and set the batch's terminal workflow status.
+    """
 
     async with AsyncSessionLocal() as db:
         batch = await get_import_batch(
@@ -475,7 +691,7 @@ async def _finalise_import_batch(
 
         if batch is None:
             raise ImportBatchNotFoundError(
-                f"Import batch {batch_id} was not found for school {school_id}."
+                f"Import batch {batch_id} was not found for school " f"{school_id}.",
             )
 
         counts = await count_import_rows_by_status(
@@ -484,13 +700,33 @@ async def _finalise_import_batch(
             school_id=school_id,
         )
 
-        imported_rows = counts.get(ImportRowStatus.IMPORTED, 0)
-        updated_rows = counts.get(ImportRowStatus.UPDATED, 0)
-        skipped_rows = counts.get(ImportRowStatus.SKIPPED, 0)
-        processing_failed_rows = counts.get(ImportRowStatus.FAILED, 0)
-        invalid_rows = counts.get(ImportRowStatus.INVALID, 0)
+        imported_rows = counts.get(
+            ImportRowStatus.IMPORTED,
+            0,
+        )
+
+        updated_rows = counts.get(
+            ImportRowStatus.UPDATED,
+            0,
+        )
+
+        skipped_rows = counts.get(
+            ImportRowStatus.SKIPPED,
+            0,
+        )
+
+        processing_failed_rows = counts.get(
+            ImportRowStatus.FAILED,
+            0,
+        )
+
+        invalid_rows = counts.get(
+            ImportRowStatus.INVALID,
+            0,
+        )
 
         successful_rows = imported_rows + updated_rows
+
         failed_rows = invalid_rows + processing_failed_rows
 
         processed_rows = successful_rows + skipped_rows + failed_rows
@@ -560,6 +796,7 @@ async def _process_import_batch_task(
 
         load and lock batch
         resolve registered handler
+        resolve effective operation-aware import options
         mark batch as processing
         process each eligible row independently
         recalculate counters
@@ -577,15 +814,16 @@ async def _process_import_batch_task(
 
         if batch is None:
             raise ImportBatchNotFoundError(
-                f"Import batch {batch_id} was not found for school {school_id}."
+                f"Import batch {batch_id} was not found for school " f"{school_id}.",
             )
 
         if batch.status == ImportStatus.CANCELLED:
             logger.info(
-                "Skipping cancelled import batch. batch_id=%s school_id=%s",
+                "Skipping cancelled import batch. " "batch_id=%s school_id=%s",
                 batch_id,
                 school_id,
             )
+
             return {
                 "batch_id": batch_id,
                 "school_id": school_id,
@@ -601,6 +839,7 @@ async def _process_import_batch_task(
                 school_id,
                 batch.status.value,
             )
+
             return {
                 "batch_id": batch_id,
                 "school_id": school_id,
@@ -609,12 +848,19 @@ async def _process_import_batch_task(
                 "reason": "Batch has already finished.",
             }
 
-        import_type = _normalise_import_type(batch.import_type)
+        import_type = _normalise_import_type(
+            batch.import_type,
+        )
 
         try:
-            handler = get_import_handler(import_type)
+            handler = get_import_handler(
+                import_type,
+            )
+
         except KeyError as exc:
-            error_message = str(exc)
+            error_message = str(
+                exc,
+            )
 
             await set_import_batch_status(
                 db,
@@ -631,6 +877,37 @@ async def _process_import_batch_task(
                 batch_id,
                 school_id,
                 import_type,
+            )
+
+            raise
+
+        try:
+            import_options = _resolve_processing_import_options(
+                operation=batch.operation,
+                import_options=batch.import_options,
+            )
+
+        except (TypeError, ValueError) as exc:
+            error_message = str(
+                exc,
+            )
+
+            await set_import_batch_status(
+                db,
+                batch=batch,
+                status=ImportStatus.FAILED,
+                current_stage="import_options_invalid",
+                error_message=error_message,
+                commit=True,
+            )
+
+            logger.error(
+                "Invalid import operation or options for batch. "
+                "batch_id=%s school_id=%s import_type=%s error=%s",
+                batch_id,
+                school_id,
+                import_type,
+                error_message,
             )
 
             raise
@@ -667,6 +944,7 @@ async def _process_import_batch_task(
             school_id=school_id,
             import_type=import_type,
             processor=processor,
+            import_options=import_options,
         )
 
     summary = await _finalise_import_batch(

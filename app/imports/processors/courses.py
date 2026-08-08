@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.imports.registry import (
+    ImportOptions,
     RowProcessingAction,
     RowProcessingResult,
 )
@@ -73,7 +74,9 @@ def _optional_string(
 def _validate_school_id(
     school_id: int,
 ) -> None:
-    """Require a positive integer school identifier."""
+    """
+    Require a positive integer school identifier.
+    """
 
     if (
         not isinstance(
@@ -89,6 +92,60 @@ def _validate_school_id(
         raise ValueError(
             "school_id must be a positive integer.",
         )
+
+
+def _boolean_import_option(
+    import_options: ImportOptions,
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    """
+    Return one boolean import option using strict boolean semantics.
+
+    Persisted import options should contain real JSON booleans. Malformed
+    values are rejected rather than relying on Python truthiness.
+    """
+
+    value = import_options.get(
+        field_name,
+    )
+
+    if value is None:
+        return default
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+        raise ValueError(
+            f"Import option '{field_name}' must be a boolean.",
+        )
+
+    return value
+
+
+def _should_update_existing_records(
+    import_options: ImportOptions | None,
+) -> bool:
+    """
+    Return whether an existing course may be modified.
+
+    ``None`` preserves historical behaviour for direct processor calls made
+    outside the generic import-batch framework.
+
+    When batch options are supplied, updating existing records is opt-in and
+    therefore defaults to False when the option is absent.
+    """
+
+    if import_options is None:
+        return True
+
+    return _boolean_import_option(
+        import_options,
+        "update_existing_records",
+        default=False,
+    )
 
 
 async def _resolve_teacher_id(
@@ -133,9 +190,10 @@ async def process_course_row(
     db: AsyncSession,
     row: dict[str, Any],
     school_id: int,
+    import_options: ImportOptions | None = None,
 ) -> RowProcessingResult:
     """
-    Create or update one course from validated import data.
+    Create, update or skip one course from validated import data.
 
     Matching is performed using the school-scoped natural key:
 
@@ -143,9 +201,26 @@ async def process_course_row(
     - ``teacher_id``;
     - normalised ``title``.
 
-    Imported courses are created unpublished. Existing publication state is
-    preserved during updates because publishing and unpublishing are explicit
-    application workflows and must never happen implicitly during import.
+    Behaviour for existing courses is controlled by the batch-level
+    ``update_existing_records`` option.
+
+    When updates are disabled:
+
+    - existing courses are left unchanged;
+    - the row returns ``RowProcessingAction.SKIPPED``.
+
+    When updates are enabled:
+
+    - title, description and teacher ownership may be updated;
+    - publication state is preserved.
+
+    Imported courses are always created unpublished. Existing publication
+    state is preserved during updates because publishing and unpublishing are
+    explicit application workflows and must never happen implicitly during
+    import.
+
+    Direct processor calls that omit ``import_options`` retain historical
+    update-existing behaviour for backwards compatibility.
 
     Transaction ownership belongs to the generic import service or background
     task. This processor therefore flushes through repositories but never
@@ -178,7 +253,7 @@ async def process_course_row(
 
     if description is not None and len(description) > 2000:
         raise ValueError(
-            "Course import field 'description' " "cannot exceed 2000 characters.",
+            "Course import field 'description' cannot exceed 2000 characters.",
         )
 
     teacher_id = await _resolve_teacher_id(
@@ -198,6 +273,10 @@ async def process_course_row(
         include_relationships=False,
     )
 
+    # ------------------------------------------------------------------
+    # Create a new course.
+    # ------------------------------------------------------------------
+
     if existing_course is None:
         course = Course(
             title=title,
@@ -211,11 +290,33 @@ async def process_course_row(
             course,
         )
 
+        await db.flush()
+
         return RowProcessingResult(
             action=RowProcessingAction.CREATED,
             entity_id=course.id,
             message=f"Created course '{title}'.",
         )
+
+    # ------------------------------------------------------------------
+    # Existing course: leave untouched when updates are disabled.
+    # ------------------------------------------------------------------
+
+    if not _should_update_existing_records(
+        import_options,
+    ):
+        return RowProcessingResult(
+            action=RowProcessingAction.SKIPPED,
+            entity_id=existing_course.id,
+            message=(
+                f"Skipped existing course '{title}' because updating "
+                "existing records is disabled."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Existing course: update when explicitly permitted.
+    # ------------------------------------------------------------------
 
     existing_course.title = title
     existing_course.description = description
@@ -226,6 +327,8 @@ async def process_course_row(
     existing_course = await repository.save(
         existing_course,
     )
+
+    await db.flush()
 
     return RowProcessingResult(
         action=RowProcessingAction.UPDATED,
