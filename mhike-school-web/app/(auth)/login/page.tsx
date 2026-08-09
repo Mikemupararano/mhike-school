@@ -1,9 +1,16 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { apiPost, saveToken } from "@/lib/api";
-import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
+import {
+  getCurrentUser,
+  type CurrentUser,
+} from "@/lib/authApi";
 import { UserRole } from "@/types/user";
 
 
@@ -13,26 +20,65 @@ type LoginResponse = {
 };
 
 
-type LoginMode = "school_user" | "platform_admin";
+type LoginMode =
+  | "school_user"
+  | "platform_admin";
 
 
-function resolveRedirectPath(user: CurrentUser): string {
-  const roles = Array.from(
+type LoginContext = {
+  sessionExpired: boolean;
+  returnTo: string | null;
+};
+
+
+const SESSION_EXPIRED_REASON =
+  "session_expired";
+
+
+function getUserRoles(
+  user: CurrentUser,
+): UserRole[] {
+  return Array.from(
     new Set([
-      ...(Array.isArray(user.roles) ? user.roles : []),
-      ...(user.role ? [user.role] : []),
+      ...(Array.isArray(user.roles)
+        ? user.roles
+        : []),
+
+      ...(user.role
+        ? [user.role]
+        : []),
     ]),
   );
+}
 
-  if (roles.includes(UserRole.PLATFORM_ADMIN)) {
+
+function resolveRedirectPath(
+  user: CurrentUser,
+): string {
+  const roles =
+    getUserRoles(user);
+
+  if (
+    roles.includes(
+      UserRole.PLATFORM_ADMIN,
+    )
+  ) {
     return "/admin";
   }
 
-  if (roles.includes(UserRole.SCHOOL_ADMIN)) {
+  if (
+    roles.includes(
+      UserRole.SCHOOL_ADMIN,
+    )
+  ) {
     return "/school-admin";
   }
 
-  if (roles.includes(UserRole.TEACHER)) {
+  if (
+    roles.includes(
+      UserRole.TEACHER,
+    )
+  ) {
     return "/teacher";
   }
 
@@ -40,12 +86,183 @@ function resolveRedirectPath(user: CurrentUser): string {
 }
 
 
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
+function isSafeRelativePath(
+  value: string,
+): boolean {
+  if (
+    !value.startsWith("/")
+    || value.startsWith("//")
+    || value.includes("\\")
+  ) {
+    return false;
+  }
+
+  if (
+    typeof window === "undefined"
+  ) {
+    return false;
+  }
+
+  try {
+    const url =
+      new URL(
+        value,
+        window.location.origin,
+      );
+
+    return (
+      url.origin
+      === window.location.origin
+      && url.pathname !== "/login"
+      && !url.pathname.startsWith(
+        "/login/",
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+
+function userCanAccessReturnPath(
+  user: CurrentUser,
+  returnTo: string,
+): boolean {
+  if (
+    !isSafeRelativePath(
+      returnTo,
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    typeof window === "undefined"
+  ) {
+    return false;
+  }
+
+  const pathname =
+    new URL(
+      returnTo,
+      window.location.origin,
+    ).pathname;
+
+  const roles =
+    getUserRoles(user);
+
+  const permittedPrefixes:
+    string[] = [];
+
+  if (
+    roles.includes(
+      UserRole.PLATFORM_ADMIN,
+    )
+  ) {
+    permittedPrefixes.push(
+      "/admin",
+    );
+  }
+
+  if (
+    roles.includes(
+      UserRole.SCHOOL_ADMIN,
+    )
+  ) {
+    permittedPrefixes.push(
+      "/school-admin",
+    );
+  }
+
+  if (
+    roles.includes(
+      UserRole.TEACHER,
+    )
+  ) {
+    permittedPrefixes.push(
+      "/teacher",
+    );
+  }
+
+  if (
+    roles.includes(
+      UserRole.STUDENT,
+    )
+  ) {
+    permittedPrefixes.push(
+      "/student",
+    );
+  }
+
+  return permittedPrefixes.some(
+    (prefix) =>
+      pathname === prefix
+      || pathname.startsWith(
+        `${prefix}/`,
+      ),
+  );
+}
+
+
+function resolvePostLoginPath(
+  user: CurrentUser,
+  returnTo: string | null,
+): string {
+  if (
+    returnTo
+    && userCanAccessReturnPath(
+      user,
+      returnTo,
+    )
+  ) {
+    return returnTo;
+  }
+
+  return resolveRedirectPath(
+    user,
+  );
+}
+
+
+function readLoginContext():
+  LoginContext {
+  if (
+    typeof window === "undefined"
+  ) {
+    return {
+      sessionExpired: false,
+      returnTo: null,
+    };
+  }
+
+  const params =
+    new URLSearchParams(
+      window.location.search,
+    );
+
+  return {
+    sessionExpired:
+      params.get("reason")
+      === SESSION_EXPIRED_REASON,
+
+    returnTo:
+      params.get("returnTo"),
+  };
+}
+
+
+function getErrorMessage(
+  error: unknown,
+): string {
+  if (
+    error instanceof Error
+  ) {
     return error.message;
   }
 
-  if (typeof error === "string") {
+  if (
+    typeof error === "string"
+  ) {
     return error;
   }
 
@@ -53,21 +270,31 @@ function getErrorMessage(error: unknown): string {
     typeof error === "object"
     && error !== null
   ) {
-    const maybeError = error as {
-      detail?: unknown;
-      message?: unknown;
-      error?: unknown;
-    };
+    const maybeError =
+      error as {
+        detail?: unknown;
+        message?: unknown;
+        error?: unknown;
+      };
 
-    if (typeof maybeError.detail === "string") {
+    if (
+      typeof maybeError.detail
+      === "string"
+    ) {
       return maybeError.detail;
     }
 
-    if (typeof maybeError.message === "string") {
+    if (
+      typeof maybeError.message
+      === "string"
+    ) {
       return maybeError.message;
     }
 
-    if (typeof maybeError.error === "string") {
+    if (
+      typeof maybeError.error
+      === "string"
+    ) {
       return maybeError.error;
     }
 
@@ -87,82 +314,157 @@ function getErrorMessage(error: unknown): string {
 
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<LoginMode>("school_user");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [schoolId, setSchoolId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [
+    mode,
+    setMode,
+  ] = useState<LoginMode>(
+    "school_user",
+  );
 
-  const needsSchoolId = mode === "school_user";
+  const [
+    email,
+    setEmail,
+  ] = useState("");
+
+  const [
+    password,
+    setPassword,
+  ] = useState("");
+
+  const [
+    schoolId,
+    setSchoolId,
+  ] = useState("");
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(false);
+
+  const [
+    error,
+    setError,
+  ] = useState("");
+
+  const [
+    loginContext,
+    setLoginContext,
+  ] = useState<LoginContext>({
+    sessionExpired: false,
+    returnTo: null,
+  });
+
+  const needsSchoolId =
+    mode === "school_user";
 
 
-  function changeMode(nextMode: LoginMode) {
-    setMode(nextMode);
+  useEffect(
+    () => {
+      setLoginContext(
+        readLoginContext(),
+      );
+    },
+    [],
+  );
+
+
+  function changeMode(
+    nextMode: LoginMode,
+  ) {
+    setMode(
+      nextMode,
+    );
+
     setError("");
 
-    if (nextMode === "platform_admin") {
+    if (
+      nextMode
+      === "platform_admin"
+    ) {
       setSchoolId("");
     }
   }
 
 
   async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
+    event:
+      FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
+
     setError("");
 
-    const trimmedEmail = email
-      .trim()
-      .toLowerCase();
+    const trimmedEmail =
+      email
+        .trim()
+        .toLowerCase();
 
-    const trimmedSchoolId = schoolId.trim();
+    const trimmedSchoolId =
+      schoolId.trim();
 
-    if (!trimmedEmail || password.length === 0) {
+    if (
+      !trimmedEmail
+      || password.length === 0
+    ) {
       setError(
         "Please enter your email and password.",
       );
+
       return;
     }
 
-    if (needsSchoolId && !trimmedSchoolId) {
+    if (
+      needsSchoolId
+      && !trimmedSchoolId
+    ) {
       setError(
         "Please enter your school ID.",
       );
+
       return;
     }
 
-    const parsedSchoolId = Number(
-      trimmedSchoolId,
-    );
+    const parsedSchoolId =
+      Number(
+        trimmedSchoolId,
+      );
 
     if (
       needsSchoolId
       && (
-        !Number.isInteger(parsedSchoolId)
+        !Number.isInteger(
+          parsedSchoolId,
+        )
         || parsedSchoolId <= 0
       )
     ) {
       setError(
         "School ID must be a valid positive whole number.",
       );
+
       return;
     }
 
     try {
       setLoading(true);
 
-      const payload = needsSchoolId
-        ? {
-          email: trimmedEmail,
-          password,
-          school_id: parsedSchoolId,
-        }
-        : {
-          email: trimmedEmail,
-          password,
-        };
+      const payload =
+        needsSchoolId
+          ? {
+            email:
+              trimmedEmail,
+
+            password,
+
+            school_id:
+              parsedSchoolId,
+          }
+          : {
+            email:
+              trimmedEmail,
+
+            password,
+          };
 
       const response =
         await apiPost<LoginResponse>(
@@ -170,7 +472,9 @@ export default function LoginPage() {
           payload,
         );
 
-      if (!response.access_token) {
+      if (
+        !response.access_token
+      ) {
         throw new Error(
           "The server did not return an access token.",
         );
@@ -180,12 +484,19 @@ export default function LoginPage() {
         response.access_token,
       );
 
-      const user = await getCurrentUser(
-        response.access_token,
-      );
+      const user =
+        await getCurrentUser(
+          response.access_token,
+        );
+
+      const destination =
+        resolvePostLoginPath(
+          user,
+          loginContext.returnTo,
+        );
 
       window.location.replace(
-        resolveRedirectPath(user),
+        destination,
       );
     } catch (error) {
       console.error(
@@ -194,7 +505,9 @@ export default function LoginPage() {
       );
 
       setError(
-        getErrorMessage(error),
+        getErrorMessage(
+          error,
+        ),
       );
     } finally {
       setLoading(false);
@@ -304,6 +617,31 @@ export default function LoginPage() {
             sm:p-5
           "
         >
+          {loginContext.sessionExpired ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="
+                mb-4
+                rounded-lg
+                border
+                border-amber-300
+                bg-amber-50
+                px-4
+                py-3
+                text-sm
+                font-bold
+                leading-snug
+                text-amber-900
+                sm:text-base
+              "
+            >
+              Your session expired.
+              Sign in again to continue
+              where you left off.
+            </div>
+          ) : null}
+
           <div
             role="group"
             aria-label="Account type"
@@ -325,11 +663,16 @@ export default function LoginPage() {
               data-custom-button="true"
               data-auth-button="tab"
               aria-pressed={
-                mode === "school_user"
+                mode
+                === "school_user"
               }
-              disabled={loading}
+              disabled={
+                loading
+              }
               onClick={() =>
-                changeMode("school_user")
+                changeMode(
+                  "school_user",
+                )
               }
               className={`
                 flex
@@ -349,7 +692,8 @@ export default function LoginPage() {
                 focus-visible:ring-[#2563EB]/30
                 disabled:cursor-not-allowed
                 disabled:opacity-70
-                ${mode === "school_user"
+                ${mode
+                  === "school_user"
                   ? activeTabClass
                   : inactiveTabClass
                 }
@@ -382,11 +726,16 @@ export default function LoginPage() {
               data-custom-button="true"
               data-auth-button="tab"
               aria-pressed={
-                mode === "platform_admin"
+                mode
+                === "platform_admin"
               }
-              disabled={loading}
+              disabled={
+                loading
+              }
               onClick={() =>
-                changeMode("platform_admin")
+                changeMode(
+                  "platform_admin",
+                )
               }
               className={`
                 flex
@@ -406,7 +755,8 @@ export default function LoginPage() {
                 focus-visible:ring-[#2563EB]/30
                 disabled:cursor-not-allowed
                 disabled:opacity-70
-                ${mode === "platform_admin"
+                ${mode
+                  === "platform_admin"
                   ? activeTabClass
                   : inactiveTabClass
                 }
@@ -436,7 +786,9 @@ export default function LoginPage() {
           </div>
 
           <form
-            onSubmit={handleSubmit}
+            onSubmit={
+              handleSubmit
+            }
             className="space-y-3"
             noValidate
           >
@@ -452,7 +804,9 @@ export default function LoginPage() {
                 id="email"
                 name="email"
                 type="email"
-                value={email}
+                value={
+                  email
+                }
                 onChange={(event) =>
                   setEmail(
                     event.target.value,
@@ -462,9 +816,13 @@ export default function LoginPage() {
                 autoComplete="email"
                 autoCapitalize="none"
                 spellCheck={false}
-                disabled={loading}
+                disabled={
+                  loading
+                }
                 required
-                className={inputClass}
+                className={
+                  inputClass
+                }
               />
             </div>
 
@@ -480,7 +838,9 @@ export default function LoginPage() {
                 id="password"
                 name="password"
                 type="password"
-                value={password}
+                value={
+                  password
+                }
                 onChange={(event) =>
                   setPassword(
                     event.target.value,
@@ -488,9 +848,13 @@ export default function LoginPage() {
                 }
                 placeholder="Password"
                 autoComplete="current-password"
-                disabled={loading}
+                disabled={
+                  loading
+                }
                 required
-                className={inputClass}
+                className={
+                  inputClass
+                }
               />
             </div>
 
@@ -507,7 +871,9 @@ export default function LoginPage() {
                   id="school-id"
                   name="schoolId"
                   type="number"
-                  value={schoolId}
+                  value={
+                    schoolId
+                  }
                   onChange={(event) =>
                     setSchoolId(
                       event.target.value,
@@ -518,9 +884,13 @@ export default function LoginPage() {
                   autoComplete="off"
                   min={1}
                   step={1}
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   required
-                  className={inputClass}
+                  className={
+                    inputClass
+                  }
                 />
               </div>
             ) : null}
@@ -552,7 +922,9 @@ export default function LoginPage() {
                   id="remember-me"
                   name="rememberMe"
                   type="checkbox"
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                   className="
                     h-5
                     w-5
@@ -575,7 +947,9 @@ export default function LoginPage() {
                 type="button"
                 data-custom-button="true"
                 data-auth-button="link"
-                disabled={loading}
+                disabled={
+                  loading
+                }
                 className="
                   rounded-md
                   bg-transparent
@@ -602,7 +976,7 @@ export default function LoginPage() {
             {error ? (
               <div
                 role="alert"
-                aria-live="polite"
+                aria-live="assertive"
                 className="
                   rounded-lg
                   border
@@ -625,8 +999,12 @@ export default function LoginPage() {
               type="submit"
               data-custom-button="true"
               data-auth-button="submit"
-              disabled={loading}
-              aria-busy={loading}
+              disabled={
+                loading
+              }
+              aria-busy={
+                loading
+              }
               className="
                 flex
                 h-12

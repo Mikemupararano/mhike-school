@@ -1,16 +1,20 @@
 export const API_BASE_URL =
     process.env.NEXT_PUBLIC_API_URL?.replace(
-        /\/$/,
+        /\/+$/,
         "",
-    ) ||
-    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(
-        /\/$/,
+    )
+    || process.env.NEXT_PUBLIC_API_BASE_URL?.replace(
+        /\/+$/,
         "",
-    ) ||
-    "http://localhost:8000/api/v1";
+    )
+    || "http://localhost:8000/api/v1";
 
-const TOKEN_KEY =
-    "mhike_token";
+
+const TOKEN_KEY = "mhike_token";
+
+const SESSION_EXPIRED_REASON =
+    "session_expired";
+
 
 type ApiErrorEnvelope = {
     detail?: unknown;
@@ -23,11 +27,67 @@ type ApiErrorEnvelope = {
     };
 };
 
-export function getToken(): string | null {
-    if (
-        typeof window ===
-        "undefined"
+
+type ApiRequestOptions = {
+    method:
+    | "GET"
+    | "POST"
+    | "PUT"
+    | "PATCH"
+    | "DELETE";
+
+    token?: string;
+    body?: unknown;
+    formData?: FormData;
+};
+
+
+type BuildHeaderOptions = {
+    hasJsonBody: boolean;
+};
+
+
+type ThrowApiErrorOptions = {
+    response: Response;
+    path: string;
+    authToken: string | null;
+};
+
+
+type AuthenticationFailureOptions = {
+    response: Response;
+    path: string;
+    authToken: string | null;
+};
+
+
+export class ApiError extends Error {
+    readonly status: number;
+    readonly path: string;
+
+    constructor(
+        message: string,
+        options: {
+            status: number;
+            path: string;
+        },
     ) {
+        super(message);
+
+        this.name = "ApiError";
+        this.status = options.status;
+        this.path = options.path;
+
+        Object.setPrototypeOf(
+            this,
+            ApiError.prototype,
+        );
+    }
+}
+
+
+export function getToken(): string | null {
+    if (typeof window === "undefined") {
         return null;
     }
 
@@ -36,27 +96,31 @@ export function getToken(): string | null {
     );
 }
 
+
 export function saveToken(
     token: string,
 ): void {
-    if (
-        typeof window ===
-        "undefined"
-    ) {
+    if (typeof window === "undefined") {
+        return;
+    }
+
+    const cleanedToken =
+        token.trim();
+
+    if (!cleanedToken) {
+        clearToken();
         return;
     }
 
     window.sessionStorage.setItem(
         TOKEN_KEY,
-        token,
+        cleanedToken,
     );
 }
 
+
 export function clearToken(): void {
-    if (
-        typeof window ===
-        "undefined"
-    ) {
+    if (typeof window === "undefined") {
         return;
     }
 
@@ -64,6 +128,7 @@ export function clearToken(): void {
         TOKEN_KEY,
     );
 }
+
 
 function buildUrl(
     path: string,
@@ -82,17 +147,31 @@ function buildUrl(
     return `${base}${normalisedPath}`;
 }
 
-function buildHeaders(
-    token?: string,
-    hasBody = false,
-): HeadersInit {
-    const authToken =
-        token ?? getToken();
 
+function resolveAuthToken(
+    token?: string,
+): string | null {
+    if (typeof token === "string") {
+        const cleanedToken =
+            token.trim();
+
+        if (cleanedToken) {
+            return cleanedToken;
+        }
+    }
+
+    return getToken();
+}
+
+
+function buildHeaders(
+    authToken: string | null,
+    options: BuildHeaderOptions,
+): HeadersInit {
     return {
         Accept: "application/json",
 
-        ...(hasBody
+        ...(options.hasJsonBody
             ? {
                 "Content-Type":
                     "application/json",
@@ -108,12 +187,16 @@ function buildHeaders(
     };
 }
 
-function buildFormHeaders(
-    token?: string,
-): HeadersInit {
-    const authToken =
-        token ?? getToken();
 
+function buildFormHeaders(
+    authToken: string | null,
+): HeadersInit {
+    /*
+     * Do not set Content-Type for FormData.
+     *
+     * The browser must generate the multipart/form-data
+     * boundary automatically.
+     */
     return {
         Accept: "application/json",
 
@@ -126,14 +209,14 @@ function buildFormHeaders(
     };
 }
 
+
 function extractApiErrorMessage(
     data: unknown,
     fallback: string,
 ): string {
     if (
-        typeof data !==
-        "object" ||
-        data === null
+        typeof data !== "object"
+        || data === null
     ) {
         return fallback;
     }
@@ -164,10 +247,10 @@ function extractApiErrorMessage(
 
     if (
         typeof envelope.error ===
-        "object" &&
-        envelope.error !== null &&
-        "message" in envelope.error &&
-        typeof envelope.error.message ===
+        "object"
+        && envelope.error !== null
+        && "message" in envelope.error
+        && typeof envelope.error.message ===
         "string"
     ) {
         return envelope.error.message;
@@ -181,6 +264,7 @@ function extractApiErrorMessage(
         return fallback;
     }
 }
+
 
 async function getErrorMessage(
     response: Response,
@@ -212,46 +296,194 @@ async function getErrorMessage(
             await response.text();
 
         return (
-            responseText.trim() ||
-            fallback
+            responseText.trim()
+            || fallback
         );
     } catch {
         return fallback;
     }
 }
 
-function handleAuthenticationFailure(
-    response: Response,
-): void {
-    if (
-        response.status === 401 ||
-        response.status === 403
-    ) {
-        clearToken();
-    }
+
+function normaliseApiPath(
+    path: string,
+): string {
+    const queryIndex =
+        path.indexOf("?");
+
+    const cleanPath =
+        queryIndex >= 0
+            ? path.slice(
+                0,
+                queryIndex,
+            )
+            : path;
+
+    return cleanPath.startsWith("/")
+        ? cleanPath
+        : `/${cleanPath}`;
 }
 
-async function handle<T>(
-    response: Response,
-): Promise<T> {
-    if (!response.ok) {
-        const message =
-            await getErrorMessage(
-                response,
-            );
 
-        handleAuthenticationFailure(
+function isLoginRequest(
+    path: string,
+): boolean {
+    return (
+        normaliseApiPath(path)
+        === "/auth/login"
+    );
+}
+
+
+function isLoginPage(): boolean {
+    if (typeof window === "undefined") {
+        return false;
+    }
+
+    return (
+        window.location.pathname
+        === "/login"
+    );
+}
+
+
+function buildReturnTo(): string | null {
+    if (typeof window === "undefined") {
+        return null;
+    }
+
+    const {
+        pathname,
+        search,
+        hash,
+    } = window.location;
+
+    if (
+        !pathname
+        || pathname === "/login"
+        || !pathname.startsWith("/")
+    ) {
+        return null;
+    }
+
+    return `${pathname}${search}${hash}`;
+}
+
+
+function redirectToLogin(): void {
+    if (
+        typeof window === "undefined"
+        || isLoginPage()
+    ) {
+        return;
+    }
+
+    const params =
+        new URLSearchParams();
+
+    params.set(
+        "reason",
+        SESSION_EXPIRED_REASON,
+    );
+
+    const returnTo =
+        buildReturnTo();
+
+    if (returnTo) {
+        params.set(
+            "returnTo",
+            returnTo,
+        );
+    }
+
+    window.location.replace(
+        `/login?${params.toString()}`,
+    );
+}
+
+
+function handleAuthenticationFailure(
+    options: AuthenticationFailureOptions,
+): void {
+    const {
+        response,
+        path,
+        authToken,
+    } = options;
+
+    /*
+     * A 401 means that authentication credentials are
+     * absent, expired or otherwise invalid.
+     *
+     * A 403 is deliberately NOT handled here. A forbidden
+     * response normally means authentication succeeded but
+     * the user does not have permission for that action.
+     */
+    if (response.status !== 401) {
+        return;
+    }
+
+    /*
+     * Incorrect login credentials must remain a normal login
+     * error rather than being interpreted as session expiry.
+     */
+    if (isLoginRequest(path)) {
+        return;
+    }
+
+    /*
+     * If no token was sent, there is no authenticated session
+     * to clear or resume.
+     */
+    if (!authToken) {
+        return;
+    }
+
+    clearToken();
+
+    redirectToLogin();
+}
+
+
+async function throwApiError(
+    options: ThrowApiErrorOptions,
+): Promise<never> {
+    const {
+        response,
+        path,
+        authToken,
+    } = options;
+
+    const message =
+        await getErrorMessage(
             response,
         );
 
-        throw new Error(
-            message,
-        );
-    }
+    handleAuthenticationFailure({
+        response,
+        path,
+        authToken,
+    });
 
-    if (
-        response.status === 204
-    ) {
+    throw new ApiError(
+        message,
+        {
+            status:
+                response.status,
+
+            path:
+                normaliseApiPath(
+                    path,
+                ),
+        },
+    );
+}
+
+
+async function parseJsonResponse<T>(
+    response: Response,
+): Promise<T> {
+    if (response.status === 204) {
         return undefined as T;
     }
 
@@ -271,207 +503,212 @@ async function handle<T>(
     return response.json() as Promise<T>;
 }
 
-export async function apiGet<T>(
+
+async function request<T>(
     path: string,
-    token?: string,
+    options: ApiRequestOptions,
 ): Promise<T> {
+    const authToken =
+        resolveAuthToken(
+            options.token,
+        );
+
+    const hasFormData =
+        options.formData !==
+        undefined;
+
+    const hasJsonBody =
+        !hasFormData
+        && options.body !==
+        undefined;
+
+    let requestBody:
+        BodyInit | null | undefined;
+
+    if (hasFormData) {
+        requestBody =
+            options.formData;
+    } else if (hasJsonBody) {
+        requestBody =
+            JSON.stringify(
+                options.body,
+            );
+    } else {
+        requestBody =
+            undefined;
+    }
+
     const response =
         await fetch(
             buildUrl(path),
             {
-                method: "GET",
+                method:
+                    options.method,
+
                 headers:
-                    buildHeaders(
-                        token,
-                    ),
-                cache: "no-store",
+                    hasFormData
+                        ? buildFormHeaders(
+                            authToken,
+                        )
+                        : buildHeaders(
+                            authToken,
+                            {
+                                hasJsonBody,
+                            },
+                        ),
+
+                body:
+                    requestBody,
+
+                cache:
+                    "no-store",
             },
         );
 
-    return handle<T>(
+    if (!response.ok) {
+        return throwApiError({
+            response,
+            path,
+            authToken,
+        });
+    }
+
+    return parseJsonResponse<T>(
         response,
     );
 }
+
+
+export async function apiGet<T>(
+    path: string,
+    token?: string,
+): Promise<T> {
+    return request<T>(
+        path,
+        {
+            method: "GET",
+            token,
+        },
+    );
+}
+
 
 export async function apiGetBlob(
     path: string,
     token?: string,
 ): Promise<Blob> {
+    const authToken =
+        resolveAuthToken(
+            token,
+        );
+
     const response =
         await fetch(
             buildUrl(path),
             {
                 method: "GET",
+
                 headers:
                     buildHeaders(
-                        token,
+                        authToken,
+                        {
+                            hasJsonBody:
+                                false,
+                        },
                     ),
-                cache: "no-store",
+
+                cache:
+                    "no-store",
             },
         );
 
     if (!response.ok) {
-        const message =
-            await getErrorMessage(
-                response,
-            );
-
-        handleAuthenticationFailure(
+        return throwApiError({
             response,
-        );
-
-        throw new Error(
-            message,
-        );
+            path,
+            authToken,
+        });
     }
 
     return response.blob();
 }
+
 
 export async function apiPost<T>(
     path: string,
     body?: unknown,
     token?: string,
 ): Promise<T> {
-    const response =
-        await fetch(
-            buildUrl(path),
-            {
-                method: "POST",
-                headers:
-                    buildHeaders(
-                        token,
-                        body !==
-                        undefined,
-                    ),
-                body:
-                    body !==
-                        undefined
-                        ? JSON.stringify(
-                            body,
-                        )
-                        : undefined,
-                cache: "no-store",
-            },
-        );
-
-    return handle<T>(
-        response,
+    return request<T>(
+        path,
+        {
+            method: "POST",
+            token,
+            body,
+        },
     );
 }
+
 
 export async function apiPostForm<T>(
     path: string,
     formData: FormData,
     token?: string,
 ): Promise<T> {
-    const response =
-        await fetch(
-            buildUrl(path),
-            {
-                method: "POST",
-                headers:
-                    buildFormHeaders(
-                        token,
-                    ),
-                body: formData,
-                cache: "no-store",
-            },
-        );
-
-    return handle<T>(
-        response,
+    return request<T>(
+        path,
+        {
+            method: "POST",
+            token,
+            formData,
+        },
     );
 }
+
 
 export async function apiPut<T>(
     path: string,
     body: unknown,
     token?: string,
 ): Promise<T> {
-    const response =
-        await fetch(
-            buildUrl(path),
-            {
-                method: "PUT",
-                headers:
-                    buildHeaders(
-                        token,
-                        true,
-                    ),
-                body:
-                    JSON.stringify(
-                        body,
-                    ),
-                cache: "no-store",
-            },
-        );
-
-    return handle<T>(
-        response,
+    return request<T>(
+        path,
+        {
+            method: "PUT",
+            token,
+            body,
+        },
     );
 }
+
 
 export async function apiPatch<T>(
     path: string,
     body?: unknown,
     token?: string,
 ): Promise<T> {
-    const response =
-        await fetch(
-            buildUrl(path),
-            {
-                method: "PATCH",
-                headers:
-                    buildHeaders(
-                        token,
-                        body !==
-                        undefined,
-                    ),
-                body:
-                    body !==
-                        undefined
-                        ? JSON.stringify(
-                            body,
-                        )
-                        : undefined,
-                cache: "no-store",
-            },
-        );
-
-    return handle<T>(
-        response,
+    return request<T>(
+        path,
+        {
+            method: "PATCH",
+            token,
+            body,
+        },
     );
 }
+
 
 export async function apiDelete<T>(
     path: string,
     body?: unknown,
     token?: string,
 ): Promise<T> {
-    const response =
-        await fetch(
-            buildUrl(path),
-            {
-                method: "DELETE",
-                headers:
-                    buildHeaders(
-                        token,
-                        body !==
-                        undefined,
-                    ),
-                body:
-                    body !==
-                        undefined
-                        ? JSON.stringify(
-                            body,
-                        )
-                        : undefined,
-                cache: "no-store",
-            },
-        );
-
-    return handle<T>(
-        response,
+    return request<T>(
+        path,
+        {
+            method: "DELETE",
+            token,
+            body,
+        },
     );
 }
