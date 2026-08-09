@@ -6,12 +6,15 @@ import { apiPost, saveToken } from "@/lib/api";
 import { getCurrentUser, type CurrentUser } from "@/lib/authApi";
 import { UserRole } from "@/types/user";
 
+
 type LoginResponse = {
   access_token: string;
   token_type?: string;
 };
 
+
 type LoginMode = "school_user" | "platform_admin";
+
 
 function resolveRedirectPath(user: CurrentUser): string {
   const roles = Array.from(
@@ -21,19 +24,36 @@ function resolveRedirectPath(user: CurrentUser): string {
     ]),
   );
 
-  if (roles.includes(UserRole.PLATFORM_ADMIN)) return "/admin";
-  if (roles.includes(UserRole.SCHOOL_ADMIN)) return "/school-admin";
-  if (roles.includes(UserRole.TEACHER)) return "/teacher";
+  if (roles.includes(UserRole.PLATFORM_ADMIN)) {
+    return "/admin";
+  }
+
+  if (roles.includes(UserRole.SCHOOL_ADMIN)) {
+    return "/school-admin";
+  }
+
+  if (roles.includes(UserRole.TEACHER)) {
+    return "/teacher";
+  }
 
   return "/student";
 }
 
-function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === "string") return err;
 
-  if (typeof err === "object" && err !== null) {
-    const maybeError = err as {
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (
+    typeof error === "object"
+    && error !== null
+  ) {
+    const maybeError = error as {
       detail?: unknown;
       message?: unknown;
       error?: unknown;
@@ -52,7 +72,11 @@ function getErrorMessage(err: unknown): string {
     }
 
     try {
-      return JSON.stringify(maybeError, null, 2);
+      return JSON.stringify(
+        maybeError,
+        null,
+        2,
+      );
     } catch {
       return "Login failed.";
     }
@@ -60,6 +84,7 @@ function getErrorMessage(err: unknown): string {
 
   return "Login failed.";
 }
+
 
 export default function LoginPage() {
   const [mode, setMode] = useState<LoginMode>("school_user");
@@ -71,6 +96,7 @@ export default function LoginPage() {
 
   const needsSchoolId = mode === "school_user";
 
+
   function changeMode(nextMode: LoginMode) {
     setMode(nextMode);
     setError("");
@@ -80,30 +106,47 @@ export default function LoginPage() {
     }
   }
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+
+  async function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
     setError("");
 
-    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedEmail = email
+      .trim()
+      .toLowerCase();
+
     const trimmedSchoolId = schoolId.trim();
 
     if (!trimmedEmail || password.length === 0) {
-      setError("Please enter your email and password.");
+      setError(
+        "Please enter your email and password.",
+      );
       return;
     }
 
     if (needsSchoolId && !trimmedSchoolId) {
-      setError("Please enter your school ID.");
+      setError(
+        "Please enter your school ID.",
+      );
       return;
     }
 
-    const parsedSchoolId = Number(trimmedSchoolId);
+    const parsedSchoolId = Number(
+      trimmedSchoolId,
+    );
 
     if (
-      needsSchoolId &&
-      (!Number.isInteger(parsedSchoolId) || parsedSchoolId <= 0)
+      needsSchoolId
+      && (
+        !Number.isInteger(parsedSchoolId)
+        || parsedSchoolId <= 0
+      )
     ) {
-      setError("School ID must be a valid positive whole number.");
+      setError(
+        "School ID must be a valid positive whole number.",
+      );
       return;
     }
 
@@ -121,60 +164,215 @@ export default function LoginPage() {
           password,
         };
 
-      const response = await apiPost<LoginResponse>("/auth/login", payload);
+      const response =
+        await apiPost<LoginResponse>(
+          "/auth/login",
+          payload,
+        );
 
       if (!response.access_token) {
-        throw new Error("The server did not return an access token.");
+        throw new Error(
+          "The server did not return an access token.",
+        );
       }
 
-      saveToken(response.access_token);
+      saveToken(
+        response.access_token,
+      );
 
-      const user = await getCurrentUser(response.access_token);
+      const user = await getCurrentUser(
+        response.access_token,
+      );
 
-      window.location.replace(resolveRedirectPath(user));
-    } catch (err) {
-      console.error("Login error:", err);
-      setError(getErrorMessage(err));
+      window.location.replace(
+        resolveRedirectPath(user),
+      );
+    } catch (error) {
+      console.error(
+        "Login error:",
+        error,
+      );
+
+      setError(
+        getErrorMessage(error),
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  const inputClass =
-    "h-14 w-full rounded-2xl border border-[#D7E0EA] bg-white px-6 text-xl font-bold text-[#0F172A] outline-none transition placeholder:text-xl placeholder:font-semibold placeholder:text-[#64748B] hover:border-[#94A3B8] focus:border-[#2563EB] focus:ring-4 focus:ring-[#2563EB]/15 disabled:cursor-not-allowed disabled:bg-slate-100 xl:h-16 xl:text-2xl xl:placeholder:text-2xl";
 
-  const activeTabClass =
-    "border-[#163A5F] bg-[#163A5F] text-white shadow-lg shadow-[#163A5F]/20";
+  const inputClass = [
+    "h-12",
+    "w-full",
+    "rounded-xl",
+    "border",
+    "border-[#D7E0EA]",
+    "bg-white",
+    "px-5",
+    "text-base",
+    "font-semibold",
+    "text-[#0F172A]",
+    "outline-none",
+    "transition",
+    "placeholder:text-base",
+    "placeholder:font-medium",
+    "placeholder:text-[#64748B]",
+    "hover:border-[#94A3B8]",
+    "focus:border-[#2563EB]",
+    "focus:ring-4",
+    "focus:ring-[#2563EB]/15",
+    "disabled:cursor-not-allowed",
+    "disabled:bg-slate-100",
+    "disabled:text-slate-500",
+    "sm:text-lg",
+    "sm:placeholder:text-lg",
+  ].join(" ");
 
-  const inactiveTabClass =
-    "border-[#D7E0EA] bg-white text-[#163A5F] hover:border-[#2563EB] hover:bg-[#F4F7FB]";
+
+  const activeTabClass = [
+    "border-[#163A5F]",
+    "bg-[#163A5F]",
+    "text-white",
+    "shadow-md",
+    "shadow-[#163A5F]/20",
+  ].join(" ");
+
+
+  const inactiveTabClass = [
+    "border-[#D7E0EA]",
+    "bg-white",
+    "text-[#163A5F]",
+    "hover:border-[#2563EB]",
+    "hover:bg-[#F8FAFC]",
+  ].join(" ");
+
 
   return (
     <main
       data-auth-page="true"
-      className="overflow-x-hidden bg-[#F4F7FB] text-[#0F172A]"
+      className="
+        min-h-[calc(100dvh-5rem)]
+        overflow-x-hidden
+        bg-[#F4F7FB]
+        text-[#0F172A]
+      "
     >
-      <div className="flex h-[calc(100dvh-5rem)] flex-col items-center justify-center overflow-y-auto px-4 py-3 sm:h-[calc(100dvh-6rem)] sm:px-6 xl:px-12">
-        <h1 className="mb-3 text-center text-4xl font-black leading-none tracking-tight text-[#071126] md:text-5xl xl:text-[3.4rem]">
+      <div
+        className="
+          mx-auto
+          flex
+          min-h-[calc(100dvh-5rem)]
+          w-full
+          max-w-4xl
+          flex-col
+          items-center
+          px-4
+          pb-6
+          pt-5
+          sm:px-6
+          sm:pt-6
+          lg:px-8
+        "
+      >
+        <h1
+          className="
+            mb-4
+            text-center
+            text-3xl
+            font-black
+            leading-tight
+            tracking-tight
+            text-[#071126]
+            sm:text-4xl
+          "
+        >
           Welcome to MHike School
         </h1>
 
-        <section className="w-full max-w-[1280px] rounded-[32px] border border-[#DCE4EC] bg-white px-6 py-5 shadow-[0_20px_50px_rgba(15,23,42,0.12)] sm:w-[90vw] md:px-14 md:py-6 xl:px-20 xl:py-7">
-          <div className="mb-5 grid grid-cols-1 gap-4 rounded-[26px] border border-[#DCE4EC] bg-[#F4F7FB] p-4 md:grid-cols-2 xl:gap-6">
+        <section
+          aria-label="Sign in to MHike School"
+          className="
+            w-full
+            max-w-2xl
+            rounded-2xl
+            border
+            border-[#DCE4EC]
+            bg-white
+            p-4
+            shadow-[0_16px_38px_rgba(15,23,42,0.10)]
+            sm:p-5
+          "
+        >
+          <div
+            role="group"
+            aria-label="Account type"
+            className="
+              mb-4
+              grid
+              grid-cols-1
+              gap-2
+              rounded-xl
+              border
+              border-[#DCE4EC]
+              bg-[#F4F7FB]
+              p-2
+              sm:grid-cols-2
+            "
+          >
             <button
               type="button"
               data-custom-button="true"
               data-auth-button="tab"
-              aria-pressed={mode === "school_user"}
-              onClick={() => changeMode("school_user")}
-              className={`min-h-[92px] rounded-[20px] border px-6 py-4 text-center text-3xl font-black leading-none transition duration-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/30 xl:min-h-[100px] xl:text-4xl ${mode === "school_user"
-                ? activeTabClass
-                : inactiveTabClass
-                }`}
+              aria-pressed={
+                mode === "school_user"
+              }
+              disabled={loading}
+              onClick={() =>
+                changeMode("school_user")
+              }
+              className={`
+                flex
+                min-h-[78px]
+                flex-col
+                items-center
+                justify-center
+                rounded-lg
+                border
+                px-4
+                py-2.5
+                text-center
+                transition
+                duration-200
+                focus-visible:outline-none
+                focus-visible:ring-4
+                focus-visible:ring-[#2563EB]/30
+                disabled:cursor-not-allowed
+                disabled:opacity-70
+                ${mode === "school_user"
+                  ? activeTabClass
+                  : inactiveTabClass
+                }
+              `}
             >
-              School User
+              <span
+                className="
+                  text-xl
+                  font-black
+                  leading-tight
+                "
+              >
+                School User
+              </span>
 
-              <span className="mt-2 block text-xl font-bold leading-tight xl:text-2xl">
+              <span
+                className="
+                  mt-1
+                  text-sm
+                  font-bold
+                  leading-snug
+                "
+              >
                 Students • Teachers • Admins
               </span>
             </button>
@@ -183,24 +381,70 @@ export default function LoginPage() {
               type="button"
               data-custom-button="true"
               data-auth-button="tab"
-              aria-pressed={mode === "platform_admin"}
-              onClick={() => changeMode("platform_admin")}
-              className={`min-h-[92px] rounded-[20px] border px-6 py-4 text-center text-3xl font-black leading-none transition duration-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/30 xl:min-h-[100px] xl:text-4xl ${mode === "platform_admin"
-                ? activeTabClass
-                : inactiveTabClass
-                }`}
+              aria-pressed={
+                mode === "platform_admin"
+              }
+              disabled={loading}
+              onClick={() =>
+                changeMode("platform_admin")
+              }
+              className={`
+                flex
+                min-h-[78px]
+                flex-col
+                items-center
+                justify-center
+                rounded-lg
+                border
+                px-4
+                py-2.5
+                text-center
+                transition
+                duration-200
+                focus-visible:outline-none
+                focus-visible:ring-4
+                focus-visible:ring-[#2563EB]/30
+                disabled:cursor-not-allowed
+                disabled:opacity-70
+                ${mode === "platform_admin"
+                  ? activeTabClass
+                  : inactiveTabClass
+                }
+              `}
             >
-              Platform Admin
+              <span
+                className="
+                  text-xl
+                  font-black
+                  leading-tight
+                "
+              >
+                Platform Admin
+              </span>
 
-              <span className="mt-2 block text-xl font-bold leading-tight xl:text-2xl">
+              <span
+                className="
+                  mt-1
+                  text-sm
+                  font-bold
+                  leading-snug
+                "
+              >
                 Global administration
               </span>
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-3"
+            noValidate
+          >
             <div>
-              <label htmlFor="email" className="sr-only">
+              <label
+                htmlFor="email"
+                className="sr-only"
+              >
                 Email address
               </label>
 
@@ -209,9 +453,15 @@ export default function LoginPage() {
                 name="email"
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(event) =>
+                  setEmail(
+                    event.target.value,
+                  )
+                }
                 placeholder="Email address"
                 autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 disabled={loading}
                 required
                 className={inputClass}
@@ -219,7 +469,10 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="sr-only">
+              <label
+                htmlFor="password"
+                className="sr-only"
+              >
                 Password
               </label>
 
@@ -228,7 +481,11 @@ export default function LoginPage() {
                 name="password"
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) =>
+                  setPassword(
+                    event.target.value,
+                  )
+                }
                 placeholder="Password"
                 autoComplete="current-password"
                 disabled={loading}
@@ -239,7 +496,10 @@ export default function LoginPage() {
 
             {needsSchoolId ? (
               <div>
-                <label htmlFor="school-id" className="sr-only">
+                <label
+                  htmlFor="school-id"
+                  className="sr-only"
+                >
                   School ID
                 </label>
 
@@ -248,7 +508,11 @@ export default function LoginPage() {
                   name="schoolId"
                   type="number"
                   value={schoolId}
-                  onChange={(e) => setSchoolId(e.target.value)}
+                  onChange={(event) =>
+                    setSchoolId(
+                      event.target.value,
+                    )
+                  }
                   placeholder="School ID"
                   inputMode="numeric"
                   autoComplete="off"
@@ -261,20 +525,50 @@ export default function LoginPage() {
               </div>
             ) : null}
 
-            <div className="flex flex-col gap-3 text-xl font-black text-[#0F172A] md:flex-row md:items-center md:justify-between xl:text-2xl">
+            <div
+              className="
+                flex
+                flex-col
+                gap-2
+                text-sm
+                font-bold
+                text-[#0F172A]
+                sm:flex-row
+                sm:items-center
+                sm:justify-between
+                sm:text-base
+              "
+            >
               <label
                 htmlFor="remember-me"
-                className="flex cursor-pointer items-center gap-4"
+                className="
+                  flex
+                  cursor-pointer
+                  items-center
+                  gap-2.5
+                "
               >
                 <input
                   id="remember-me"
                   name="rememberMe"
                   type="checkbox"
                   disabled={loading}
-                  className="h-7 w-7 cursor-pointer rounded-md border-[#94A3B8] accent-[#2563EB] focus:ring-4 focus:ring-[#2563EB]/20 disabled:cursor-not-allowed xl:h-8 xl:w-8"
+                  className="
+                    h-5
+                    w-5
+                    cursor-pointer
+                    rounded
+                    border-[#94A3B8]
+                    accent-[#2563EB]
+                    focus:ring-4
+                    focus:ring-[#2563EB]/20
+                    disabled:cursor-not-allowed
+                  "
                 />
 
-                <span>Remember me</span>
+                <span>
+                  Remember me
+                </span>
               </label>
 
               <button
@@ -282,7 +576,24 @@ export default function LoginPage() {
                 data-custom-button="true"
                 data-auth-button="link"
                 disabled={loading}
-                className="rounded-md bg-transparent text-left font-black text-[#175CD3] underline decoration-2 underline-offset-4 transition hover:text-[#0B4AA2] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/20 disabled:cursor-not-allowed disabled:opacity-60 md:text-right"
+                className="
+                  rounded-md
+                  bg-transparent
+                  text-left
+                  font-bold
+                  text-[#175CD3]
+                  underline
+                  decoration-2
+                  underline-offset-4
+                  transition
+                  hover:text-[#0B4AA2]
+                  focus-visible:outline-none
+                  focus-visible:ring-4
+                  focus-visible:ring-[#2563EB]/20
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+                  sm:text-right
+                "
               >
                 Forgotten password?
               </button>
@@ -292,7 +603,19 @@ export default function LoginPage() {
               <div
                 role="alert"
                 aria-live="polite"
-                className="rounded-[18px] border border-red-300 bg-red-50 px-6 py-4 text-xl font-bold leading-tight text-red-800 xl:text-2xl"
+                className="
+                  rounded-lg
+                  border
+                  border-red-300
+                  bg-red-50
+                  px-4
+                  py-2.5
+                  text-sm
+                  font-bold
+                  leading-snug
+                  text-red-800
+                  sm:text-base
+                "
               >
                 {error}
               </div>
@@ -303,9 +626,39 @@ export default function LoginPage() {
               data-custom-button="true"
               data-auth-button="submit"
               disabled={loading}
-              className="flex h-20 w-full items-center justify-center rounded-[22px] bg-[#163A5F] px-10 text-4xl font-black text-white shadow-lg shadow-[#163A5F]/20 transition duration-200 hover:bg-[#1D4D78] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#2563EB]/35 disabled:cursor-not-allowed disabled:opacity-70 sm:text-5xl xl:h-[5.5rem] xl:text-[3.5rem]"
+              aria-busy={loading}
+              className="
+                flex
+                h-12
+                w-full
+                items-center
+                justify-center
+                rounded-xl
+                border
+                border-[#163A5F]
+                bg-[#163A5F]
+                px-6
+                text-lg
+                font-black
+                leading-none
+                text-white
+                shadow-md
+                shadow-[#163A5F]/20
+                transition
+                duration-200
+                hover:border-[#1D4D78]
+                hover:bg-[#1D4D78]
+                focus-visible:outline-none
+                focus-visible:ring-4
+                focus-visible:ring-[#2563EB]/35
+                disabled:cursor-not-allowed
+                disabled:opacity-70
+                sm:text-xl
+              "
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {loading
+                ? "Signing in..."
+                : "Sign in"}
             </button>
           </form>
         </section>
