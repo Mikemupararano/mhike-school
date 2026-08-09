@@ -17,6 +17,10 @@ from app.db.base import Base
 
 
 def utc_now() -> datetime:
+    """
+    Return the current timezone-aware UTC datetime.
+    """
+
     return datetime.now(UTC)
 
 
@@ -87,13 +91,13 @@ class AttendanceRecord(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         onupdate=utc_now,
         nullable=False,

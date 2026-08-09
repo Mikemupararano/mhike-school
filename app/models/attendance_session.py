@@ -18,6 +18,10 @@ from app.db.base import Base
 
 
 def utc_now() -> datetime:
+    """
+    Return the current timezone-aware UTC datetime.
+    """
+
     return datetime.now(UTC)
 
 
@@ -46,25 +50,37 @@ class AttendanceSession(Base):
     )
 
     school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey(
+            "schools.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     class_group_id: Mapped[int] = mapped_column(
-        ForeignKey("class_groups.id", ondelete="CASCADE"),
+        ForeignKey(
+            "class_groups.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     timetable_entry_id: Mapped[int | None] = mapped_column(
-        ForeignKey("timetable_entries.id", ondelete="SET NULL"),
+        ForeignKey(
+            "timetable_entries.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
 
     timetable_period_id: Mapped[int | None] = mapped_column(
-        ForeignKey("timetable_periods.id", ondelete="SET NULL"),
+        ForeignKey(
+            "timetable_periods.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
@@ -92,30 +108,36 @@ class AttendanceSession(Base):
     )
 
     submitted_at: Mapped[datetime | None] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=True,
     )
 
     submitted_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
 
     created_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         onupdate=utc_now,
         nullable=False,

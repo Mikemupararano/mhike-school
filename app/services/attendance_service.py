@@ -17,13 +17,30 @@ from app.schemas.attendance import (
 
 
 class AttendanceService:
-    def __init__(self, db: AsyncSession):
+    """
+    Application service for attendance-domain workflows.
+
+    Repository methods deliberately flush database changes without committing.
+    Transaction ownership for API-facing attendance operations belongs here so
+    multi-step workflows can remain atomic while successful writes are
+    persisted before the request-scoped database session closes.
+    """
+
+    def __init__(
+        self,
+        db: AsyncSession,
+    ):
+        self.db = db
         self.repo = AttendanceRepository(db)
 
     async def create_session(
         self,
         data: AttendanceSessionCreate,
     ) -> AttendanceSession:
+        """
+        Return an existing matching session or create and persist a new one.
+        """
+
         existing_session = await self.repo.get_existing_session(
             school_id=data.school_id,
             class_group_id=data.class_group_id,
@@ -34,13 +51,25 @@ class AttendanceService:
         if existing_session is not None:
             return existing_session
 
-        return await self.repo.create_session(data)
+        session = await self.repo.create_session(
+            data,
+        )
+
+        await self.db.commit()
+
+        return session
 
     async def get_session_or_404(
         self,
         session_id: int,
     ) -> AttendanceSession:
-        session = await self.repo.get_session_by_id(session_id)
+        """
+        Return one attendance session or raise HTTP 404.
+        """
+
+        session = await self.repo.get_session_by_id(
+            session_id,
+        )
 
         if session is None:
             raise HTTPException(
@@ -54,12 +83,25 @@ class AttendanceService:
         self,
         filters: AttendanceFilter,
     ) -> list[AttendanceSession]:
-        return await self.repo.list_sessions(filters)
+        """
+        List attendance sessions matching the supplied filters.
+        """
+
+        return await self.repo.list_sessions(
+            filters,
+        )
 
     async def create_record(
         self,
         data: AttendanceRecordCreate,
     ) -> AttendanceRecord:
+        """
+        Create and persist one attendance record.
+
+        Records cannot be added after their attendance register has been
+        submitted.
+        """
+
         session = await self.get_session_or_404(
             data.attendance_session_id,
         )
@@ -76,12 +118,29 @@ class AttendanceService:
                 detail="Attendance register has already been submitted.",
             )
 
-        return await self.repo.create_record(data)
+        record = await self.repo.create_record(
+            data,
+        )
+
+        await self.db.commit()
+
+        return record
 
     async def create_records_bulk(
         self,
         records: list[AttendanceRecordCreate],
     ) -> list[AttendanceRecord]:
+        """
+        Create or update attendance records for one session atomically.
+
+        Existing student records are updated instead of duplicated. When a
+        marker is supplied, the register is submitted after all records have
+        been processed.
+
+        The entire bulk operation is committed once at the end so callers
+        never observe a partially persisted attendance register.
+        """
+
         upserted_records: list[AttendanceRecord] = []
 
         if not records:
@@ -125,14 +184,18 @@ class AttendanceService:
                 if record_data.marked_by_id is not None:
                     updated_record.marked_by_id = record_data.marked_by_id
 
-                upserted_records.append(updated_record)
+                upserted_records.append(
+                    updated_record,
+                )
                 continue
 
             created_record = await self.repo.create_record(
                 record_data,
             )
 
-            upserted_records.append(created_record)
+            upserted_records.append(
+                created_record,
+            )
 
         if submitted_by_id is not None:
             await self.repo.mark_session_submitted(
@@ -140,13 +203,21 @@ class AttendanceService:
                 submitted_by_id=submitted_by_id,
             )
 
+        await self.db.commit()
+
         return upserted_records
 
     async def get_record_or_404(
         self,
         record_id: int,
     ) -> AttendanceRecord:
-        record = await self.repo.get_record_by_id(record_id)
+        """
+        Return one attendance record or raise HTTP 404.
+        """
+
+        record = await self.repo.get_record_by_id(
+            record_id,
+        )
 
         if record is None:
             raise HTTPException(
@@ -160,14 +231,28 @@ class AttendanceService:
         self,
         filters: AttendanceFilter,
     ) -> list[AttendanceRecord]:
-        return await self.repo.list_records(filters)
+        """
+        List attendance records matching the supplied filters.
+        """
+
+        return await self.repo.list_records(
+            filters,
+        )
 
     async def update_record(
         self,
         record_id: int,
         data: AttendanceRecordUpdate,
     ) -> AttendanceRecord:
-        record = await self.get_record_or_404(record_id)
+        """
+        Update and persist one attendance record.
+
+        Submitted registers are immutable until explicitly reopened.
+        """
+
+        record = await self.get_record_or_404(
+            record_id,
+        )
 
         session = await self.get_session_or_404(
             record.attendance_session_id,
@@ -179,13 +264,26 @@ class AttendanceService:
                 detail="Attendance register has already been submitted.",
             )
 
-        return await self.repo.update_record(record, data)
+        record = await self.repo.update_record(
+            record,
+            data,
+        )
+
+        await self.db.commit()
+
+        return record
 
     async def reopen_register(
         self,
         session_id: int,
     ) -> AttendanceSession:
-        session = await self.get_session_or_404(session_id)
+        """
+        Reopen a previously submitted attendance register.
+        """
+
+        session = await self.get_session_or_404(
+            session_id,
+        )
 
         if not session.is_submitted:
             raise HTTPException(
@@ -197,8 +295,10 @@ class AttendanceService:
         session.submitted_at = None
         session.submitted_by_id = None
 
-        await self.repo.db.commit()
-        await self.repo.db.refresh(session)
+        await self.db.commit()
+        await self.db.refresh(
+            session,
+        )
 
         return session
 
@@ -206,4 +306,10 @@ class AttendanceService:
         self,
         filters: AbsenceRequestFilter,
     ) -> list[AbsenceRequest]:
-        return await self.repo.list_absence_requests(filters)
+        """
+        List absence requests matching the supplied filters.
+        """
+
+        return await self.repo.list_absence_requests(
+            filters,
+        )

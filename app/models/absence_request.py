@@ -3,13 +3,25 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from enum import StrEnum
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 
 def utc_now() -> datetime:
+    """
+    Return the current timezone-aware UTC datetime.
+    """
+
     return datetime.now(UTC)
 
 
@@ -27,28 +39,44 @@ class AbsenceRequestStatus(StrEnum):
 class AbsenceRequest(Base):
     __tablename__ = "absence_requests"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
     school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey(
+            "schools.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     student_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     submitted_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
 
     reviewed_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
@@ -97,20 +125,20 @@ class AbsenceRequest(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
 
     reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=True,
     )
 
