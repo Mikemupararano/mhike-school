@@ -1,3 +1,20 @@
+from app.models.assessment import Assessment, AssessmentStatus
+from app.models.assessment_candidate import (
+    AssessmentCandidate,
+    AssessmentCandidateStatus,
+    AssessmentScript,
+    AssessmentScriptStatus,
+)
+from app.models.assessment_question import (
+    AssessmentQuestion,
+    AssessmentSection,
+)
+from app.models.assessment_response import (
+    AssessmentResponse,
+    AssessmentResponseStatus,
+    MarkingDecision,
+    MarkingDecisionStatus,
+)
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
 from app.models.audit_log import AuditLog
@@ -12,6 +29,12 @@ from app.models.import_batch import (
     ImportStatus,
 )
 from app.models.lesson import Lesson
+from app.models.mark_scheme import (
+    MarkScheme,
+    MarkSchemeItem,
+    MarkSchemeItemType,
+)
+from app.models.mark_scheme_award import MarkSchemeItemAward
 from app.models.message_attachment import MessageAttachment
 from app.models.module import Module
 from app.models.notification import Notification
@@ -22,10 +45,21 @@ from app.models.report_group_content import ReportGroupContent
 from app.models.report_session import ReportSession
 from app.models.school import School
 from app.models.student_report import StudentReport
+from app.models.subject import Subject
 from app.models.user import User, UserRole, UserStatus
 from app.models.user_role import UserRoleAssignment
 
 __all__ = [
+    "Assessment",
+    "AssessmentCandidate",
+    "AssessmentCandidateStatus",
+    "AssessmentQuestion",
+    "AssessmentResponse",
+    "AssessmentResponseStatus",
+    "AssessmentScript",
+    "AssessmentScriptStatus",
+    "AssessmentSection",
+    "AssessmentStatus",
     "Assignment",
     "AssignmentSubmission",
     "AuditLog",
@@ -38,6 +72,12 @@ __all__ = [
     "ImportRowStatus",
     "ImportStatus",
     "Lesson",
+    "MarkingDecision",
+    "MarkingDecisionStatus",
+    "MarkScheme",
+    "MarkSchemeItem",
+    "MarkSchemeItemAward",
+    "MarkSchemeItemType",
     "MessageAttachment",
     "Module",
     "Notification",
@@ -49,6 +89,7 @@ __all__ = [
     "ReportSession",
     "School",
     "StudentReport",
+    "Subject",
     "User",
     "UserRole",
     "UserRoleAssignment",
