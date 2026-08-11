@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    assessment_candidates,
     assessments,
     assignment_submissions,
     assignments,
@@ -116,6 +117,13 @@ api_router.include_router(
     assessments.router,
     prefix="/assessments",
     tags=["assessments"],
+)
+
+
+api_router.include_router(
+    assessment_candidates.router,
+    prefix="/assessment-candidates",
+    tags=["assessment-candidates"],
 )
 
 
