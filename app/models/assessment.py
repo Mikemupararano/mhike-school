@@ -23,6 +23,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.assessment_candidate import AssessmentCandidate
+    from app.models.assessment_grading import AssessmentGradingScheme
     from app.models.assessment_question import (
         AssessmentQuestion,
         AssessmentSection,
@@ -81,8 +82,13 @@ class Assessment(Base):
     independent from student participation and supports absent, withdrawn,
     started and submitted candidate states.
 
-    Total available marks are not stored directly on this table. They will
-    ultimately be derived from the assessment's markable questions.
+    Total available marks are not stored directly on this table. They are
+    derived from the assessment's markable questions.
+
+    An assessment may optionally define one ``AssessmentGradingScheme``.
+    The grading scheme controls how derived marks or percentages are mapped
+    to grade labels without persisting duplicate candidate-grade values on
+    the assessment itself.
     """
 
     __tablename__ = "assessments"
@@ -262,6 +268,15 @@ class Assessment(Base):
         back_populates="assessment",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+
+    grading_scheme: Mapped["AssessmentGradingScheme | None"] = relationship(
+        "AssessmentGradingScheme",
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+        single_parent=True,
     )
 
     # ------------------------------------------------------------------

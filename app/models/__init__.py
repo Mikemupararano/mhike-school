@@ -5,6 +5,11 @@ from app.models.assessment_candidate import (
     AssessmentScript,
     AssessmentScriptStatus,
 )
+from app.models.assessment_grading import (
+    AssessmentGradeBoundary,
+    AssessmentGradingBasis,
+    AssessmentGradingScheme,
+)
 from app.models.assessment_question import (
     AssessmentQuestion,
     AssessmentSection,
@@ -53,6 +58,9 @@ __all__ = [
     "Assessment",
     "AssessmentCandidate",
     "AssessmentCandidateStatus",
+    "AssessmentGradeBoundary",
+    "AssessmentGradingBasis",
+    "AssessmentGradingScheme",
     "AssessmentQuestion",
     "AssessmentResponse",
     "AssessmentResponseStatus",
