@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     assessment_candidates,
     assessment_marking,
+    assessment_results,
     assessments,
     assignment_submissions,
     assignments,
@@ -132,6 +133,13 @@ api_router.include_router(
     assessment_marking.router,
     prefix="/assessment-marking",
     tags=["assessment-marking"],
+)
+
+
+api_router.include_router(
+    assessment_results.router,
+    prefix="/assessment-results",
+    tags=["assessment-results"],
 )
 
 
