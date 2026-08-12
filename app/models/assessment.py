@@ -28,6 +28,9 @@ if TYPE_CHECKING:
         AssessmentQuestion,
         AssessmentSection,
     )
+    from app.models.assessment_result_publication import (
+        AssessmentResultPublication,
+    )
     from app.models.course import Course
     from app.models.school import School
     from app.models.user import User
@@ -89,6 +92,17 @@ class Assessment(Base):
     The grading scheme controls how derived marks or percentages are mapped
     to grade labels without persisting duplicate candidate-grade values on
     the assessment itself.
+
+    An assessment may also optionally define one
+    ``AssessmentResultPublication`` record. Result publication is deliberately
+    separate from ``Assessment.status`` because publishing an assessment for
+    candidate participation is not the same as releasing its marked results
+    to students or parents.
+
+    Ordinary classroom assessments may therefore be published by the course
+    teacher without requiring SMT approval, while controlled assessments may
+    opt into a separate approval requirement through their result-publication
+    configuration.
     """
 
     __tablename__ = "assessments"
@@ -272,6 +286,15 @@ class Assessment(Base):
 
     grading_scheme: Mapped["AssessmentGradingScheme | None"] = relationship(
         "AssessmentGradingScheme",
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+        single_parent=True,
+    )
+
+    result_publication: Mapped["AssessmentResultPublication | None"] = relationship(
+        "AssessmentResultPublication",
         back_populates="assessment",
         cascade="all, delete-orphan",
         uselist=False,

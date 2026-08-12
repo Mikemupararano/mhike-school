@@ -20,6 +20,10 @@ from app.models.assessment_response import (
     MarkingDecision,
     MarkingDecisionStatus,
 )
+from app.models.assessment_result_publication import (
+    AssessmentResultPublication,
+    AssessmentResultPublicationStatus,
+)
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
 from app.models.audit_log import AuditLog
@@ -64,6 +68,8 @@ __all__ = [
     "AssessmentQuestion",
     "AssessmentResponse",
     "AssessmentResponseStatus",
+    "AssessmentResultPublication",
+    "AssessmentResultPublicationStatus",
     "AssessmentScript",
     "AssessmentScriptStatus",
     "AssessmentSection",
