@@ -30,6 +30,7 @@ from app.api.v1.endpoints import (
     parent_attendance,
     parent_students,
     platform_admin,
+    published_assessment_results,
     report_group_contents,
     report_quality,
     report_sessions,
@@ -156,6 +157,13 @@ api_router.include_router(
     assessment_result_publication.router,
     prefix="/assessment-result-publication",
     tags=["assessment-result-publication"],
+)
+
+
+api_router.include_router(
+    published_assessment_results.router,
+    prefix="/published-assessment-results",
+    tags=["published-assessment-results"],
 )
 
 
