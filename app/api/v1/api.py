@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
     assessment_analytics,
     assessment_candidates,
     assessment_cohort_performance,
+    assessment_feedback,
     assessment_grading,
     assessment_marking,
     assessment_result_publication,
@@ -189,6 +190,13 @@ api_router.include_router(
     assessment_cohort_performance.router,
     prefix="/assessment-cohort-performance",
     tags=["assessment-cohort-performance"],
+)
+
+
+api_router.include_router(
+    assessment_feedback.router,
+    prefix="/assessment-feedback",
+    tags=["assessment-feedback"],
 )
 
 
