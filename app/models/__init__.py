@@ -24,6 +24,7 @@ from app.models.assessment_result_publication import (
     AssessmentResultPublication,
     AssessmentResultPublicationStatus,
 )
+from app.models.assessment_target import AssessmentTarget
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
 from app.models.audit_log import AuditLog
@@ -74,6 +75,7 @@ __all__ = [
     "AssessmentScriptStatus",
     "AssessmentSection",
     "AssessmentStatus",
+    "AssessmentTarget",
     "Assignment",
     "AssignmentSubmission",
     "AuditLog",
