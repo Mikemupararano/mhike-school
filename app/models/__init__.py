@@ -25,6 +25,11 @@ from app.models.assessment_response import (
     MarkingDecision,
     MarkingDecisionStatus,
 )
+from app.models.assessment_result_outcome import (
+    AssessmentResultChangeType,
+    AssessmentResultOutcome,
+    AssessmentResultOutcomeStatus,
+)
 from app.models.assessment_result_publication import (
     AssessmentResultPublication,
     AssessmentResultPublicationStatus,
@@ -77,6 +82,9 @@ __all__ = [
     "AssessmentQuestionFeedback",
     "AssessmentResponse",
     "AssessmentResponseStatus",
+    "AssessmentResultChangeType",
+    "AssessmentResultOutcome",
+    "AssessmentResultOutcomeStatus",
     "AssessmentResultPublication",
     "AssessmentResultPublicationStatus",
     "AssessmentScript",

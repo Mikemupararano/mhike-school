@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     assessment_feedback,
     assessment_grading,
     assessment_marking,
+    assessment_result_outcomes,
     assessment_result_publication,
     assessment_results,
     assessment_targets,
@@ -155,6 +156,13 @@ api_router.include_router(
     assessment_grading.router,
     prefix="/assessment-grading",
     tags=["assessment-grading"],
+)
+
+
+api_router.include_router(
+    assessment_result_outcomes.router,
+    prefix="/assessment-result-outcomes",
+    tags=["assessment-result-outcomes"],
 )
 
 
