@@ -27,6 +27,91 @@ class AssessmentCandidateAllocate(BaseModel):
     access_arrangements: str | None = None
 
 
+class AssessmentCandidateBulkAllocate(BaseModel):
+    """
+    Payload for allocating multiple students to an assessment.
+    """
+
+    student_ids: list[int] = Field(
+        min_length=1,
+    )
+
+
+class AssessmentCandidateBulkItemOut(BaseModel):
+    """
+    Result for one unique student in a bulk allocation.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    student_id: int
+    outcome: str
+    candidate_id: int | None = None
+    detail: str | None = None
+
+
+class AssessmentCandidateBulkOut(BaseModel):
+    """
+    Summary of one bulk candidate-allocation operation.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    assessment_id: int
+    source: str
+    class_id: int | None = None
+
+    requested_count: int
+    unique_requested_count: int
+
+    created_count: int
+    already_allocated_count: int
+    ineligible_count: int
+
+    items: list[AssessmentCandidateBulkItemOut] = Field(
+        default_factory=list,
+    )
+
+
+class AssessmentCandidateClassPreviewOut(BaseModel):
+    """
+    Read-only preview of class-to-assessment allocation.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    assessment_id: int
+    class_id: int
+    class_name: str
+
+    allocation_allowed: bool
+
+    enrolled_count: int
+    student_count: int
+
+    eligible_count: int
+    already_allocated_count: int
+    ineligible_count: int
+
+    eligible_student_ids: list[int] = Field(
+        default_factory=list,
+    )
+
+    already_allocated_student_ids: list[int] = Field(
+        default_factory=list,
+    )
+
+    ineligible_student_ids: list[int] = Field(
+        default_factory=list,
+    )
+
+
 class AssessmentCandidateUpdate(BaseModel):
     """
     Payload for updating candidate metadata.

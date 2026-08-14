@@ -19,12 +19,20 @@ from app.models.assessment_candidate import (
 from app.models.user import User
 from app.schemas.assessment_candidate import (
     AssessmentCandidateAllocate,
+    AssessmentCandidateBulkAllocate,
+    AssessmentCandidateBulkOut,
+    AssessmentCandidateClassPreviewOut,
     AssessmentCandidateOut,
     AssessmentCandidateStatusUpdate,
     AssessmentCandidateUpdate,
     AssessmentScriptCreate,
     AssessmentScriptOut,
     AssessmentScriptStatusUpdate,
+)
+from app.services.assessment_candidate_bulk_service import (
+    allocate_class_candidates,
+    bulk_allocate_candidates,
+    preview_class_candidate_allocation,
 )
 from app.services.assessment_candidate_service import (
     allocate_candidate,
@@ -163,6 +171,132 @@ async def get_assessment_candidates(
         )
         for candidate in candidates
     ]
+
+
+# ---------------------------------------------------------------------------
+# Bulk and class candidate allocation
+#
+# These static assessment-scoped routes intentionally appear before the
+# generic /{candidate_id} routes.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/assessment/{assessment_id}/bulk",
+    response_model=AssessmentCandidateBulkOut,
+)
+async def bulk_allocate_assessment_candidates(
+    assessment_id: int,
+    payload: AssessmentCandidateBulkAllocate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentCandidateBulkOut:
+    """
+    Allocate multiple explicitly selected students to an assessment.
+
+    Duplicate student IDs in the request are collapsed by the service.
+    Existing candidate allocations are preserved and reported as already
+    allocated rather than causing the whole operation to fail.
+
+    All requested students are validated before any new candidate records are
+    committed.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    result = await bulk_allocate_candidates(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        student_ids=payload.student_ids,
+    )
+
+    return AssessmentCandidateBulkOut.model_validate(
+        result,
+    )
+
+
+@router.post(
+    "/assessment/{assessment_id}/class/{class_id}",
+    response_model=AssessmentCandidateBulkOut,
+)
+async def allocate_assessment_candidates_from_class(
+    assessment_id: int,
+    class_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentCandidateBulkOut:
+    """
+    Allocate the current eligible membership of a class to an assessment.
+
+    Class membership is resolved from current enrolment records at the time of
+    allocation.
+
+    Candidate records remain individual assessment allocations. The source
+    class is not copied onto AssessmentCandidate, so later class membership
+    changes do not rewrite assessment history.
+
+    Existing candidate allocations are preserved and reported rather than
+    duplicated.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    result = await allocate_class_candidates(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        class_id=class_id,
+    )
+
+    return AssessmentCandidateBulkOut.model_validate(
+        result,
+    )
+
+
+@router.get(
+    "/assessment/{assessment_id}/class/{class_id}/preview",
+    response_model=AssessmentCandidateClassPreviewOut,
+)
+async def preview_assessment_candidate_class_allocation(
+    assessment_id: int,
+    class_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentCandidateClassPreviewOut:
+    """
+    Preview class-to-assessment candidate allocation.
+
+    This endpoint is read-only and reports:
+
+    - current enrolment population;
+    - students eligible for a new candidate allocation;
+    - students already allocated;
+    - ineligible enrolment records;
+    - whether the assessment currently allows new allocations.
+
+    Closed or archived assessments may still be previewed, but
+    ``allocation_allowed`` will be false.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    preview = await preview_class_candidate_allocation(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        class_id=class_id,
+    )
+
+    return AssessmentCandidateClassPreviewOut.model_validate(
+        preview,
+    )
 
 
 # ---------------------------------------------------------------------------
