@@ -8,11 +8,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.assessment_candidate import AssessmentCandidate
+from app.models.assessment_result_outcome import AssessmentResultOutcome
 from app.models.user import User
-from app.repositories.assessment_results import AssessmentResultsRepository
-from app.services.assessment_grading_service import (
-    grade_candidate_latest_result,
+from app.repositories.assessment_result_outcome import (
+    AssessmentResultOutcomeRepository,
 )
+from app.repositories.assessment_results import AssessmentResultsRepository
 from app.services.assessment_results_service import (
     get_assessment_question_analysis,
     get_assessment_results_summary,
@@ -35,9 +36,8 @@ def _to_decimal(
     """
     Convert a supported numeric value to Decimal.
 
-    Unlike the lower-level assessment-results helper, ``None`` remains
-    ``None`` here because absence of a formal result must not silently become
-    a zero mark in analytics.
+    ``None`` remains ``None`` because absence of a formal result must not
+    silently become a zero mark in analytics.
     """
 
     if value is None:
@@ -50,7 +50,9 @@ def _to_decimal(
         return value
 
     return Decimal(
-        str(value),
+        str(
+            value,
+        ),
     )
 
 
@@ -79,11 +81,15 @@ def _percentage(
     """
 
     numerator_value = Decimal(
-        str(numerator),
+        str(
+            numerator,
+        ),
     )
 
     denominator_value = Decimal(
-        str(denominator),
+        str(
+            denominator,
+        ),
     )
 
     if denominator_value <= _ZERO:
@@ -110,7 +116,9 @@ def _mean(
             _ZERO,
         )
         / Decimal(
-            len(values),
+            len(
+                values,
+            ),
         ),
     )
 
@@ -141,7 +149,10 @@ def _median(
         )
 
     return _quantize(
-        (ordered[midpoint - 1] + ordered[midpoint]) / Decimal("2"),
+        (ordered[midpoint - 1] + ordered[midpoint])
+        / Decimal(
+            "2",
+        ),
     )
 
 
@@ -154,14 +165,21 @@ def _latest_script_sort_key(
     script,
 ) -> tuple[int, int]:
     """
-    Return the deterministic ordering used throughout assessment results.
+    Return the deterministic ordering used for current script state.
 
     Script version is primary and database ID is the tiebreaker.
+
+    This helper remains useful for operational marking-state metrics. It is
+    deliberately not used to decide a candidate's official result.
     """
 
     return (
-        int(script.version),
-        int(script.id),
+        int(
+            script.version,
+        ),
+        int(
+            script.id,
+        ),
     )
 
 
@@ -170,6 +188,9 @@ def _latest_candidate_script(
 ):
     """
     Return a candidate's latest script version, or None.
+
+    Latest-script selection describes current marking activity only. Formal
+    analytics are sourced from AssessmentResultOutcome.
     """
 
     scripts = list(
@@ -194,7 +215,7 @@ def _apply_competition_ranks(
     rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
-    Apply standard competition ranking.
+    Apply standard competition ranking to authoritative results.
 
     Example:
 
@@ -225,7 +246,6 @@ def _apply_competition_ranks(
         start=1,
     ):
         percentage = row["percentage"]
-
         mark_awarded = row["mark_awarded"]
 
         if (
@@ -254,9 +274,12 @@ def _build_grade_distribution(
     """
     Build a deterministic grade distribution.
 
-    Grade labels are kept in first-resolved boundary order where possible.
-    Unknown/unresolved grades are excluded from this distribution and counted
-    separately by the assessment analytics service.
+    Grade data is supplied from immutable authoritative result snapshots.
+
+    ``minimum_value`` remains optional because AssessmentResultOutcome
+    snapshots the resolved grade and boundary identity but does not currently
+    snapshot the historic boundary minimum. Analytics must therefore never
+    reconstruct that value from today's grading configuration.
     """
 
     grade_counts: Counter[str] = Counter()
@@ -317,7 +340,7 @@ def _build_grade_distribution(
                     count,
                     graded_count,
                 ),
-            }
+            },
         )
 
     return output
@@ -342,10 +365,10 @@ async def _get_assessment_candidates(
     ``get_assessment_results_summary`` is deliberately called first because
     it is the existing authority for:
 
-        - staff-role validation;
-        - teacher course ownership;
-        - school isolation;
-        - platform-administrator scope.
+    - staff-role validation;
+    - teacher course ownership;
+    - school isolation;
+    - platform-administrator scope.
 
     Analytics therefore does not implement a second access-control policy.
     """
@@ -383,6 +406,173 @@ async def _get_assessment_candidates(
 
 
 # ---------------------------------------------------------------------------
+# Authoritative-outcome helpers
+# ---------------------------------------------------------------------------
+
+
+def _authoritative_outcome_map(
+    outcomes: list[AssessmentResultOutcome],
+    *,
+    assessment_id: int,
+) -> dict[int, AssessmentResultOutcome]:
+    """
+    Build a candidate-ID lookup for authoritative assessment outcomes.
+
+    The database already enforces at most one authoritative outcome per
+    candidate. These defensive checks also protect analytics from inconsistent
+    repository data or cross-assessment records.
+    """
+
+    output: dict[int, AssessmentResultOutcome] = {}
+
+    for outcome in outcomes:
+        if int(
+            outcome.assessment_id,
+        ) != int(
+            assessment_id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Authoritative assessment result history is "
+                    "inconsistent with the requested assessment."
+                ),
+            )
+
+        if not bool(
+            outcome.is_authoritative,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A non-authoritative result was returned while "
+                    "building authoritative assessment analytics."
+                ),
+            )
+
+        candidate_id = int(
+            outcome.candidate_id,
+        )
+
+        if candidate_id in output:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "More than one authoritative result was returned "
+                    "for an assessment candidate."
+                ),
+            )
+
+        output[candidate_id] = outcome
+
+    return output
+
+
+def _build_authoritative_grade_result(
+    outcome: AssessmentResultOutcome,
+) -> dict[str, Any]:
+    """
+    Build the grade-distribution representation from an outcome snapshot.
+
+    Historical grades are never recalculated from the currently active
+    grading scheme.
+    """
+
+    grade_points = _to_decimal(
+        outcome.grade_points_snapshot,
+    )
+
+    return {
+        "grade": outcome.grade_label_snapshot,
+        "minimum_value": None,
+        "grade_points": (
+            _quantize(
+                grade_points,
+            )
+            if grade_points is not None
+            else None
+        ),
+        "is_pass": outcome.is_pass_snapshot,
+    }
+
+
+def _authoritative_candidate_row(
+    *,
+    candidate: AssessmentCandidate,
+    outcome: AssessmentResultOutcome,
+) -> dict[str, Any]:
+    """
+    Build one formal candidate analytics row from an immutable outcome.
+    """
+
+    if int(
+        outcome.candidate_id,
+    ) != int(
+        candidate.id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Authoritative result outcome and assessment candidate "
+                "are inconsistent."
+            ),
+        )
+
+    mark_awarded = _to_decimal(
+        outcome.mark_awarded_snapshot,
+    )
+
+    maximum_mark = _to_decimal(
+        outcome.maximum_mark_snapshot,
+    )
+
+    percentage = _to_decimal(
+        outcome.percentage_snapshot,
+    )
+
+    if mark_awarded is None or maximum_mark is None or percentage is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "An authoritative assessment result outcome does not "
+                "contain a complete formal mark snapshot."
+            ),
+        )
+
+    grade_points = _to_decimal(
+        outcome.grade_points_snapshot,
+    )
+
+    return {
+        "candidate_id": candidate.id,
+        "student_id": candidate.student_id,
+        "candidate_number": candidate.candidate_number,
+        "candidate_status": candidate.status,
+        "script_id": outcome.script_id,
+        "script_version": outcome.script_version_snapshot,
+        "mark_awarded": _quantize(
+            mark_awarded,
+        ),
+        "maximum_mark": _quantize(
+            maximum_mark,
+        ),
+        "percentage": _quantize(
+            percentage,
+        ),
+        "grade": outcome.grade_label_snapshot,
+        "grade_points": (
+            _quantize(
+                grade_points,
+            )
+            if grade_points is not None
+            else None
+        ),
+        "is_pass": outcome.is_pass_snapshot,
+        "rank": None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Candidate analytics
 # ---------------------------------------------------------------------------
 
@@ -391,23 +581,36 @@ async def _build_candidate_analytics(
     db: AsyncSession,
     current_user: User,
     candidates: list[AssessmentCandidate],
+    *,
+    assessment_id: int,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
     dict[str, int],
 ]:
     """
-    Build formal candidate-level analytics from latest script versions.
+    Build formal candidate analytics from authoritative result outcomes.
 
-    Only candidates whose latest script is fully finalised contribute to
-    formal mark statistics, rankings and grade distributions.
+    Latest-script data remains useful for operational marking metrics:
 
-    This prevents provisional or partially marked work from distorting
-    assessment outcomes.
+    - candidates with or without scripts;
+    - fully marked candidates;
+    - fully finalised candidates;
+    - candidates whose latest work is incomplete.
+
+    Formal statistics are different. Marks, percentages, grades, rankings,
+    pass/fail classifications and official script identity come exclusively
+    from the current authoritative AssessmentResultOutcome.
+
+    Consequently:
+
+    - a newer retake does not alter formal analytics until authorised;
+    - a pending remark does not alter formal analytics;
+    - a grading-scheme change does not rewrite historic formal grades;
+    - one candidate contributes at most one official result.
     """
 
     candidate_rows: list[dict[str, Any]] = []
-
     grade_results: list[dict[str, Any]] = []
 
     counts = {
@@ -417,26 +620,111 @@ async def _build_candidate_analytics(
         "fully_finalised": 0,
         "included_in_statistics": 0,
         "excluded_incomplete": 0,
+        "without_authoritative_result": 0,
         "graded": 0,
         "ungraded": 0,
     }
 
+    authoritative_outcomes = await AssessmentResultOutcomeRepository(
+        db,
+    ).list_for_assessment(
+        assessment_id,
+        authoritative_only=True,
+    )
+
+    outcome_by_candidate_id = _authoritative_outcome_map(
+        authoritative_outcomes,
+        assessment_id=assessment_id,
+    )
+
+    candidate_ids = {
+        int(
+            candidate.id,
+        )
+        for candidate in candidates
+    }
+
+    orphaned_outcome_candidate_ids = (
+        set(
+            outcome_by_candidate_id,
+        )
+        - candidate_ids
+    )
+
+    if orphaned_outcome_candidate_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Authoritative result history contains a candidate "
+                "outside the requested assessment candidate set."
+            ),
+        )
+
     for candidate in candidates:
+        candidate_id = int(
+            candidate.id,
+        )
+
         latest_script = _latest_candidate_script(
             candidate,
         )
 
+        outcome = outcome_by_candidate_id.get(
+            candidate_id,
+        )
+
         if latest_script is None:
             counts["without_script"] += 1
-            continue
+
+            if outcome is None:
+                counts["without_authoritative_result"] += 1
+                continue
+
+            # An authoritative result should always reference a retained
+            # assessment script. Reaching this state indicates inconsistent
+            # loaded assessment relationships.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "An authoritative assessment result exists for a "
+                    "candidate with no assessment script."
+                ),
+            )
 
         counts["with_script"] += 1
 
         candidate_result = await get_candidate_result(
             db=db,
             current_user=current_user,
-            candidate_id=candidate.id,
+            candidate_id=candidate_id,
         )
+
+        if (
+            int(
+                candidate_result["candidate_id"],
+            )
+            != candidate_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Assessment candidate analytics resolved an "
+                    "inconsistent candidate result."
+                ),
+            )
+
+        if int(
+            candidate_result["assessment_id"],
+        ) != int(
+            assessment_id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Assessment candidate analytics resolved a result "
+                    "for a different assessment."
+                ),
+            )
 
         latest = candidate_result.get(
             "latest_script_result",
@@ -445,18 +733,29 @@ async def _build_candidate_analytics(
         if latest is None:
             counts["without_script"] += 1
             counts["with_script"] -= 1
-            continue
+
+            if outcome is None:
+                counts["without_authoritative_result"] += 1
+                continue
+
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "An authoritative assessment result exists but the "
+                    "candidate result contains no assessment script."
+                ),
+            )
 
         is_fully_marked = bool(
             latest.get(
                 "is_fully_marked",
-            )
+            ),
         )
 
         is_fully_finalised = bool(
             latest.get(
                 "is_fully_finalised",
-            )
+            ),
         )
 
         if is_fully_marked:
@@ -465,123 +764,70 @@ async def _build_candidate_analytics(
         if is_fully_finalised:
             counts["fully_finalised"] += 1
 
-        finalised_mark = _to_decimal(
+        latest_finalised_mark = _to_decimal(
             latest.get(
                 "finalised_mark_awarded",
-            )
+            ),
         )
 
-        finalised_percentage = _to_decimal(
+        latest_finalised_percentage = _to_decimal(
             latest.get(
                 "finalised_percentage",
-            )
+            ),
         )
 
-        if (
-            not is_fully_finalised
-            or finalised_mark is None
-            or finalised_percentage is None
-        ):
+        latest_is_complete = (
+            is_fully_finalised
+            and latest_finalised_mark is not None
+            and latest_finalised_percentage is not None
+        )
+
+        if not latest_is_complete:
             counts["excluded_incomplete"] += 1
+
+        if outcome is None:
+            counts["without_authoritative_result"] += 1
             continue
+
+        if int(
+            outcome.assessment_id,
+        ) != int(
+            assessment_id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Authoritative assessment result and assessment "
+                    "analytics scope are inconsistent."
+                ),
+            )
+
+        candidate_rows.append(
+            _authoritative_candidate_row(
+                candidate=candidate,
+                outcome=outcome,
+            ),
+        )
 
         counts["included_in_statistics"] += 1
 
-        grade_result: (
-            dict[
-                str,
-                Any,
-            ]
-            | None
-        ) = None
-
-        try:
-            grade_result = await grade_candidate_latest_result(
-                db=db,
-                current_user=current_user,
-                candidate_id=candidate.id,
-                result_stage="finalised",
-            )
-
-        except HTTPException as exc:
-            # No active grading scheme means marks remain perfectly valid
-            # analytics even though no grade distribution can be produced.
-            if exc.status_code not in {
-                status.HTTP_404_NOT_FOUND,
-                status.HTTP_409_CONFLICT,
-            }:
-                raise
-
-        grade = (
-            grade_result.get(
-                "grade",
-            )
-            if grade_result is not None
-            else None
+        grade_result = _build_authoritative_grade_result(
+            outcome,
         )
 
-        grade_points = (
-            grade_result.get(
-                "grade_points",
-            )
-            if grade_result is not None
-            else None
-        )
-
-        is_pass = (
-            grade_result.get(
-                "is_pass",
-            )
-            if grade_result is not None
-            else None
+        grade = grade_result.get(
+            "grade",
         )
 
         if grade is None:
             counts["ungraded"] += 1
+
         else:
             counts["graded"] += 1
 
-            grade_results.append(grade_result)
-
-        candidate_rows.append(
-            {
-                "candidate_id": candidate.id,
-                "student_id": candidate.student_id,
-                "candidate_number": candidate.candidate_number,
-                "candidate_status": candidate.status,
-                "script_id": latest.get(
-                    "script_id",
-                ),
-                "script_version": latest.get(
-                    "script_version",
-                ),
-                "mark_awarded": _quantize(
-                    finalised_mark,
-                ),
-                "maximum_mark": _quantize(
-                    _to_decimal(
-                        latest.get(
-                            "maximum_mark",
-                        )
-                    )
-                ),
-                "percentage": _quantize(
-                    finalised_percentage,
-                ),
-                "grade": grade,
-                "grade_points": (
-                    _quantize(
-                        _to_decimal(
-                            grade_points,
-                        )
-                    )
-                    if grade_points is not None
-                    else None
-                ),
-                "is_pass": is_pass,
-                "rank": None,
-            }
-        )
+            grade_results.append(
+                grade_result,
+            )
 
     return (
         candidate_rows,
@@ -603,14 +849,14 @@ async def get_assessment_analytics(
     """
     Return formal analytics for one assessment.
 
-    Candidate-level statistics use each candidate's latest script version and
-    finalised marks only.
+    Candidate-level formal statistics use each candidate's current
+    authoritative AssessmentResultOutcome.
 
-    Earlier script versions remain available through the assessment-results
-    service but do not simultaneously contribute to formal cohort statistics.
+    Latest scripts remain relevant to operational marking-completion metrics,
+    but they do not automatically replace an official result.
 
-    This establishes one candidate = one formal analytics result and avoids
-    double counting resubmissions or replacement script versions.
+    This preserves one candidate = one formal analytics result while allowing
+    retakes, remarks and corrections to exist safely before authorisation.
     """
 
     (
@@ -630,6 +876,7 @@ async def get_assessment_analytics(
         db,
         current_user,
         candidates,
+        assessment_id=assessment_id,
     )
 
     ranked_candidates = _apply_competition_ranks(
@@ -654,6 +901,13 @@ async def get_assessment_analytics(
         is not None
     ]
 
+    # Question-level analytics currently describe live/current marking data.
+    #
+    # AssessmentResultOutcome snapshots aggregate official outcomes rather
+    # than immutable question-level decisions. Formal candidate statistics
+    # therefore use authoritative outcome snapshots while this question
+    # section retains its existing operational meaning until question-level
+    # marking history is introduced.
     question_analysis = await get_assessment_question_analysis(
         db=db,
         current_user=current_user,
@@ -685,7 +939,9 @@ async def get_assessment_analytics(
 
     classified_pass_fail_count = pass_count + fail_count
 
-    candidate_count = int(results_summary["candidate_count"])
+    candidate_count = int(
+        results_summary["candidate_count"],
+    )
 
     included_count = counts["included_in_statistics"]
 
@@ -693,9 +949,13 @@ async def get_assessment_analytics(
         "assessment_id": results_summary["assessment_id"],
         "title": results_summary["title"],
         "status": results_summary["status"],
-        "result_stage": "finalised",
-        "script_selection": "latest",
-        "maximum_mark": _quantize(_to_decimal(results_summary["maximum_mark"])),
+        "result_stage": "authoritative",
+        "script_selection": "authoritative",
+        "maximum_mark": _quantize(
+            _to_decimal(
+                results_summary["maximum_mark"],
+            ),
+        ),
         "markable_question_count": results_summary["markable_question_count"],
         "candidate_count": candidate_count,
         "script_count": results_summary["script_count"],
@@ -705,6 +965,9 @@ async def get_assessment_analytics(
         "fully_finalised_candidate_count": counts["fully_finalised"],
         "included_candidate_count": included_count,
         "excluded_incomplete_candidate_count": counts["excluded_incomplete"],
+        "candidates_without_authoritative_result": counts[
+            "without_authoritative_result"
+        ],
         "candidate_inclusion_percentage": _percentage(
             included_count,
             candidate_count,
@@ -721,8 +984,24 @@ async def get_assessment_analytics(
         "median_mark": _median(
             marks,
         ),
-        "lowest_mark": (_quantize(min(marks)) if marks else None),
-        "highest_mark": (_quantize(max(marks)) if marks else None),
+        "lowest_mark": (
+            _quantize(
+                min(
+                    marks,
+                ),
+            )
+            if marks
+            else None
+        ),
+        "highest_mark": (
+            _quantize(
+                max(
+                    marks,
+                ),
+            )
+            if marks
+            else None
+        ),
         "mean_percentage": _mean(
             percentages,
         ),
@@ -733,7 +1012,7 @@ async def get_assessment_analytics(
             _quantize(
                 min(
                     percentages,
-                )
+                ),
             )
             if percentages
             else None
@@ -742,7 +1021,7 @@ async def get_assessment_analytics(
             _quantize(
                 max(
                     percentages,
-                )
+                ),
             )
             if percentages
             else None
@@ -772,7 +1051,7 @@ async def get_assessment_analytics_summary(
     assessment_id: int,
 ) -> dict[str, Any]:
     """
-    Return the assessment analytics without ranking or question rows.
+    Return formal assessment analytics without ranking or question rows.
 
     This is intended for dashboards and list views where the full analytics
     payload would be unnecessarily large.
@@ -806,7 +1085,7 @@ async def get_assessment_candidate_ranking(
     assessment_id: int,
 ) -> list[dict[str, Any]]:
     """
-    Return candidate ranking based on latest fully-finalised script results.
+    Return candidate ranking based on authoritative result outcomes.
 
     Ties use standard competition ranking.
     """
@@ -817,7 +1096,9 @@ async def get_assessment_candidate_ranking(
         assessment_id=assessment_id,
     )
 
-    return list(analytics["ranking"])
+    return list(
+        analytics["ranking"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -831,10 +1112,11 @@ async def get_assessment_grade_distribution(
     assessment_id: int,
 ) -> dict[str, Any]:
     """
-    Return the formal grade distribution for the assessment.
+    Return the formal authoritative grade distribution for an assessment.
 
-    If the assessment has no active grading scheme, mark analytics remain
-    valid and the distribution is empty.
+    Grades come from historical outcome snapshots rather than the currently
+    active grading scheme. Authoritative outcomes without a resolved grade
+    remain valid mark results and are counted as ungraded.
     """
 
     analytics = await get_assessment_analytics(

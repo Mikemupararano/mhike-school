@@ -30,6 +30,14 @@ class PublishedAssessmentQuestionResultOut(BaseModel):
     """
     Public question-level result representation.
 
+    Question-level values currently reflect the authorised script's current
+    marking breakdown where that breakdown still matches the authoritative
+    aggregate result.
+
+    Immutable historical question-level result snapshots are not yet stored in
+    AssessmentResultOutcome, so question breakdowns are deliberately treated
+    differently from the authoritative aggregate result.
+
     The assessment-results layer may expose richer question structures over
     time, so this schema deliberately permits additional result fields while
     retaining the common identifiers and mark values where available.
@@ -54,11 +62,20 @@ class PublishedAssessmentResultOut(BaseModel):
     """
     Published assessment result visible to a student or linked parent.
 
+    Public formal result values are sourced from the candidate's current
+    authoritative AssessmentResultOutcome snapshot.
+
+    Marks, percentages, grades, grade points, pass/fail classification and
+    official script identity therefore reflect the immutable authoritative
+    result rather than being recalculated from the current marking or grading
+    configuration.
+
     Values hidden by publication configuration remain ``None`` rather than
     being silently substituted with staff-only values.
 
-    Grades remain derived from the active assessment grading scheme and are
-    never persisted here.
+    Question-level breakdown data remains conditional because immutable
+    historical question-level snapshots are not yet part of the authoritative
+    result model.
     """
 
     model_config = ConfigDict(
@@ -82,7 +99,14 @@ class PublishedAssessmentResultOut(BaseModel):
     is_pass: bool | None = None
 
     question_breakdown: (
-        list[PublishedAssessmentQuestionResultOut | dict[str, Any]] | None
+        list[
+            PublishedAssessmentQuestionResultOut
+            | dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
     ) = None
 
     release_message: str | None = Field(

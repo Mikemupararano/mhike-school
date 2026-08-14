@@ -17,8 +17,11 @@ class AssessmentQuestionAnalyticsOut(BaseModel):
     """
     Question-level assessment performance analytics.
 
-    This mirrors the existing assessment-results question-analysis service
-    rather than introducing a second question-statistics contract.
+    These values currently describe the live/current marking dataset.
+
+    Candidate-level formal analytics are sourced from authoritative result
+    outcomes, while immutable question-level historical snapshots are not yet
+    part of AssessmentResultOutcome.
     """
 
     model_config = ConfigDict(
@@ -50,7 +53,13 @@ class AssessmentQuestionAnalyticsOut(BaseModel):
 
 class AssessmentGradeDistributionItemOut(BaseModel):
     """
-    One grade bucket in an assessment grade distribution.
+    One authoritative grade bucket in an assessment grade distribution.
+
+    Grade labels, points and pass/fail values come from immutable
+    AssessmentResultOutcome snapshots.
+
+    ``minimum_value`` remains optional because the historical boundary minimum
+    is not currently snapshotted in AssessmentResultOutcome.
     """
 
     grade: str
@@ -65,7 +74,7 @@ class AssessmentGradeDistributionItemOut(BaseModel):
 
 class AssessmentGradeDistributionOut(BaseModel):
     """
-    Compact grade-distribution view for one assessment.
+    Compact authoritative grade-distribution view for one assessment.
     """
 
     assessment_id: int
@@ -88,10 +97,13 @@ class AssessmentGradeDistributionOut(BaseModel):
 
 class AssessmentCandidateRankingOut(BaseModel):
     """
-    One candidate's formal analytics row.
+    One candidate's formal authoritative analytics row.
 
-    The analytics service uses the candidate's latest script version and
-    includes the row only when that latest script is fully finalised.
+    Marks, percentages, grades and official script identity come from the
+    candidate's current authoritative AssessmentResultOutcome.
+
+    A newer script, retake, remark or correction does not alter this row until
+    its corresponding result outcome becomes authoritative.
     """
 
     candidate_id: int
@@ -121,7 +133,13 @@ class AssessmentCandidateRankingOut(BaseModel):
 
 class AssessmentAnalyticsSummaryOut(BaseModel):
     """
-    Compact cohort analytics suitable for dashboards and list views.
+    Compact authoritative cohort analytics suitable for dashboards and lists.
+
+    Formal result statistics use authoritative AssessmentResultOutcome
+    snapshots.
+
+    Current marking-completion counters remain operational metrics and may
+    therefore describe a newer script than the official authoritative result.
     """
 
     assessment_id: int
@@ -145,6 +163,8 @@ class AssessmentAnalyticsSummaryOut(BaseModel):
 
     included_candidate_count: int
     excluded_incomplete_candidate_count: int
+
+    candidates_without_authoritative_result: int
 
     candidate_inclusion_percentage: Decimal | None = None
 
@@ -183,9 +203,11 @@ class AssessmentAnalyticsOut(
     """
     Full assessment analytics payload.
 
-    The cohort statistics use latest fully-finalised candidate scripts only.
-    Earlier script versions remain available through the assessment-results
-    subsystem but do not contribute simultaneously to formal analytics.
+    Candidate-level formal statistics use authoritative result outcomes.
+
+    Latest scripts continue to inform operational completion metrics, while
+    question-level analytics currently describe the live/current marking
+    dataset until immutable question-level result history is introduced.
     """
 
     ranking: list[AssessmentCandidateRankingOut]

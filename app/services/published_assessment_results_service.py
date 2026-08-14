@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
-from app.services.assessment_grading_service import (
-    grade_candidate_latest_result,
+from app.services.assessment_result_outcome_service import (
+    get_authoritative_assessment_result_outcome,
 )
 from app.services.assessment_result_publication_service import (
     get_published_result_visibility,
 )
 from app.services.assessment_results_service import (
     get_candidate_result,
+    get_script_result,
 )
+
 
 # ---------------------------------------------------------------------------
 # Parent/student relationship helpers
@@ -75,8 +78,11 @@ def _extract_parent_student_ids(
 
             try:
                 student_ids.add(
-                    int(student_id),
+                    int(
+                        student_id,
+                    ),
                 )
+
             except (TypeError, ValueError):
                 continue
 
@@ -84,7 +90,65 @@ def _extract_parent_student_ids(
 
 
 # ---------------------------------------------------------------------------
-# Visibility helpers
+# Numeric helpers
+# ---------------------------------------------------------------------------
+
+
+def _to_decimal(
+    value: Decimal | int | float | str | None,
+) -> Decimal | None:
+    if value is None:
+        return None
+
+    if isinstance(
+        value,
+        Decimal,
+    ):
+        return value
+
+    return Decimal(
+        str(
+            value,
+        ),
+    )
+
+
+def _decimal_values_equal(
+    first: Decimal | int | float | str | None,
+    second: Decimal | int | float | str | None,
+) -> bool:
+    """
+    Compare optional numeric result values deterministically.
+    """
+
+    return _to_decimal(
+        first,
+    ) == _to_decimal(
+        second,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public hiding helpers
+# ---------------------------------------------------------------------------
+
+
+def _published_result_not_found() -> HTTPException:
+    """
+    Return the deliberately generic public 404 response.
+
+    Student and parent consumers must not receive internal publication,
+    grading, result-history or candidate lifecycle information.
+    """
+
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Published assessment result not found.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Publication visibility helpers
 # ---------------------------------------------------------------------------
 
 
@@ -108,10 +172,7 @@ async def _get_publication_or_hidden(
     )
 
     if publication is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Published assessment result not found.",
-        )
+        raise _published_result_not_found()
 
     if audience == "student":
         visible = publication.visible_to_students
@@ -125,74 +186,218 @@ async def _get_publication_or_hidden(
         )
 
     if not visible:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Published assessment result not found.",
-        )
+        raise _published_result_not_found()
 
     return publication
 
 
-def _apply_publication_visibility(
+# ---------------------------------------------------------------------------
+# Authoritative-result helpers
+# ---------------------------------------------------------------------------
+
+
+async def _get_authoritative_outcome_or_hidden(
+    db: AsyncSession,
+    current_user: User,
+    *,
+    candidate_id: int,
+) -> dict[str, Any]:
+    """
+    Return the candidate's current authoritative result outcome.
+
+    Published results must never fall back to the candidate's latest script.
+    If no authoritative outcome exists, there is no official result available
+    to the public audience.
+    """
+
+    try:
+        return await get_authoritative_assessment_result_outcome(
+            db,
+            current_user,
+            candidate_id=candidate_id,
+        )
+
+    except HTTPException as exc:
+        if exc.status_code in {
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_409_CONFLICT,
+        }:
+            raise _published_result_not_found() from exc
+
+        raise
+
+
+async def _get_authoritative_question_breakdown(
+    db: AsyncSession,
+    current_user: User,
+    *,
+    authoritative_outcome: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """
+    Return question results from the authoritative outcome's script.
+
+    Question-level marks are not currently snapshotted in
+    AssessmentResultOutcome. A remark or correction may therefore alter the
+    same script while the previously authoritative aggregate result remains
+    official.
+
+    To avoid leaking pending, non-authoritative question changes, the live
+    script breakdown is exposed only when its finalised aggregate result still
+    agrees with the authoritative snapshot.
+    """
+
+    script_id = int(
+        authoritative_outcome["script_id"],
+    )
+
+    try:
+        script_result = await get_script_result(
+            db=db,
+            current_user=current_user,
+            script_id=script_id,
+        )
+
+    except HTTPException as exc:
+        if exc.status_code in {
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_409_CONFLICT,
+        }:
+            return None
+
+        raise
+
+    if int(
+        script_result["candidate_id"],
+    ) != int(
+        authoritative_outcome["candidate_id"],
+    ):
+        return None
+
+    if int(
+        script_result["assessment_id"],
+    ) != int(
+        authoritative_outcome["assessment_id"],
+    ):
+        return None
+
+    if int(
+        script_result["script_version"],
+    ) != int(
+        authoritative_outcome["script_version_snapshot"],
+    ):
+        return None
+
+    if not _decimal_values_equal(
+        script_result.get(
+            "finalised_mark_awarded",
+        ),
+        authoritative_outcome.get(
+            "mark_awarded_snapshot",
+        ),
+    ):
+        return None
+
+    if not _decimal_values_equal(
+        script_result.get(
+            "finalised_percentage",
+        ),
+        authoritative_outcome.get(
+            "percentage_snapshot",
+        ),
+    ):
+        return None
+
+    question_breakdown = script_result.get(
+        "questions",
+    )
+
+    if question_breakdown is None:
+        question_breakdown = script_result.get(
+            "question_results",
+        )
+
+    if question_breakdown is None:
+        return None
+
+    return list(
+        question_breakdown,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public representation
+# ---------------------------------------------------------------------------
+
+
+async def _apply_publication_visibility(
+    db: AsyncSession,
+    current_user: User,
     *,
     publication,
     candidate_result: dict[str, Any],
-    grade_result: dict[str, Any] | None,
+    authoritative_outcome: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Build the public result representation using publication flags.
+    Build the public result from the authoritative historical snapshot.
 
-    Hidden values are returned as ``None`` rather than omitted entirely so
-    API clients can render a stable result structure while respecting
-    school-configured visibility.
+    Publication settings determine which official values are exposed.
+
+    Crucially, no result value is taken from ``latest_script_result``.
     """
 
-    latest_script_result = candidate_result.get(
-        "latest_script_result",
-    )
+    if int(
+        authoritative_outcome["candidate_id"],
+    ) != int(
+        candidate_result["candidate_id"],
+    ):
+        raise _published_result_not_found()
+
+    if int(
+        authoritative_outcome["assessment_id"],
+    ) != int(
+        candidate_result["assessment_id"],
+    ):
+        raise _published_result_not_found()
 
     mark_awarded = None
+
+    if publication.include_mark:
+        mark_awarded = authoritative_outcome.get(
+            "mark_awarded_snapshot",
+        )
+
     percentage = None
 
-    if latest_script_result is not None:
-        if publication.include_mark:
-            mark_awarded = latest_script_result.get(
-                "finalised_mark_awarded",
-            )
-
-        if publication.include_percentage:
-            percentage = latest_script_result.get(
-                "finalised_percentage",
-            )
+    if publication.include_percentage:
+        percentage = authoritative_outcome.get(
+            "percentage_snapshot",
+        )
 
     grade = None
     grade_points = None
     is_pass = None
 
-    if publication.include_grade and grade_result is not None:
-        grade = grade_result.get(
-            "grade",
+    if publication.include_grade:
+        grade = authoritative_outcome.get(
+            "grade_label_snapshot",
         )
 
-        grade_points = grade_result.get(
-            "grade_points",
+        grade_points = authoritative_outcome.get(
+            "grade_points_snapshot",
         )
 
-        is_pass = grade_result.get(
-            "is_pass",
+        is_pass = authoritative_outcome.get(
+            "is_pass_snapshot",
         )
 
     question_breakdown = None
 
-    if publication.include_question_breakdown and latest_script_result is not None:
-        question_breakdown = latest_script_result.get(
-            "questions",
+    if publication.include_question_breakdown:
+        question_breakdown = await _get_authoritative_question_breakdown(
+            db,
+            current_user,
+            authoritative_outcome=authoritative_outcome,
         )
-
-        if question_breakdown is None:
-            question_breakdown = latest_script_result.get(
-                "question_results",
-            )
 
     return {
         "assessment_id": candidate_result.get(
@@ -207,19 +412,11 @@ def _apply_publication_visibility(
         "candidate_number": candidate_result.get(
             "candidate_number",
         ),
-        "script_id": (
-            latest_script_result.get(
-                "script_id",
-            )
-            if latest_script_result is not None
-            else None
+        "script_id": authoritative_outcome.get(
+            "script_id",
         ),
-        "script_version": (
-            latest_script_result.get(
-                "script_version",
-            )
-            if latest_script_result is not None
-            else None
+        "script_version": authoritative_outcome.get(
+            "script_version_snapshot",
         ),
         "mark_awarded": mark_awarded,
         "percentage": percentage,
@@ -233,7 +430,9 @@ def _apply_publication_visibility(
             "include_mark": publication.include_mark,
             "include_percentage": publication.include_percentage,
             "include_grade": publication.include_grade,
-            "include_question_breakdown": (publication.include_question_breakdown),
+            "include_question_breakdown": (
+                publication.include_question_breakdown
+            ),
         },
     }
 
@@ -250,10 +449,13 @@ async def get_student_published_assessment_result(
     candidate_id: int,
 ) -> dict[str, Any]:
     """
-    Return one published assessment result for the logged-in student.
+    Return one published authoritative result for the logged-in student.
 
     A student may see only their own candidate record and only when the
     assessment's active publication explicitly allows student visibility.
+
+    The result itself comes exclusively from the candidate's current
+    authoritative AssessmentResultOutcome.
     """
 
     candidate_result = await get_candidate_result(
@@ -267,10 +469,7 @@ async def get_student_published_assessment_result(
     )
 
     if student_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Published assessment result not found.",
-        )
+        raise _published_result_not_found()
 
     assessment_id = int(
         candidate_result["assessment_id"],
@@ -282,27 +481,18 @@ async def get_student_published_assessment_result(
         audience="student",
     )
 
-    grade_result: dict[str, Any] | None = None
+    authoritative_outcome = await _get_authoritative_outcome_or_hidden(
+        db,
+        current_user,
+        candidate_id=candidate_id,
+    )
 
-    if publication.include_grade:
-        try:
-            grade_result = await grade_candidate_latest_result(
-                db=db,
-                current_user=current_user,
-                candidate_id=candidate_id,
-                result_stage="finalised",
-            )
-        except HTTPException as exc:
-            if exc.status_code not in {
-                status.HTTP_404_NOT_FOUND,
-                status.HTTP_409_CONFLICT,
-            }:
-                raise
-
-    return _apply_publication_visibility(
+    return await _apply_publication_visibility(
+        db,
+        current_user,
         publication=publication,
         candidate_result=candidate_result,
-        grade_result=grade_result,
+        authoritative_outcome=authoritative_outcome,
     )
 
 
@@ -318,10 +508,12 @@ async def get_parent_published_assessment_result(
     candidate_id: int,
 ) -> dict[str, Any]:
     """
-    Return one published assessment result for a linked child.
+    Return one published authoritative result for a linked child.
 
-    Parent-child authorization is checked before any publication data is
-    returned.
+    Parent-child authorisation is checked before publication data is returned.
+
+    The result itself comes exclusively from the candidate's current
+    authoritative AssessmentResultOutcome.
     """
 
     candidate_result = await get_candidate_result(
@@ -339,10 +531,7 @@ async def get_parent_published_assessment_result(
     )
 
     if student_id not in linked_student_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Published assessment result not found.",
-        )
+        raise _published_result_not_found()
 
     assessment_id = int(
         candidate_result["assessment_id"],
@@ -354,25 +543,16 @@ async def get_parent_published_assessment_result(
         audience="parent",
     )
 
-    grade_result: dict[str, Any] | None = None
+    authoritative_outcome = await _get_authoritative_outcome_or_hidden(
+        db,
+        current_user,
+        candidate_id=candidate_id,
+    )
 
-    if publication.include_grade:
-        try:
-            grade_result = await grade_candidate_latest_result(
-                db=db,
-                current_user=current_user,
-                candidate_id=candidate_id,
-                result_stage="finalised",
-            )
-        except HTTPException as exc:
-            if exc.status_code not in {
-                status.HTTP_404_NOT_FOUND,
-                status.HTTP_409_CONFLICT,
-            }:
-                raise
-
-    return _apply_publication_visibility(
+    return await _apply_publication_visibility(
+        db,
+        current_user,
         publication=publication,
         candidate_result=candidate_result,
-        grade_result=grade_result,
+        authoritative_outcome=authoritative_outcome,
     )

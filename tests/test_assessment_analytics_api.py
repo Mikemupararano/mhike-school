@@ -10,9 +10,9 @@ from app.api.v1.endpoints import assessment_analytics as endpoint
 
 FULL_URL = "/api/v1/assessment-analytics/assessments/{assessment_id}"
 
-SUMMARY_URL = "/api/v1/assessment-analytics/assessments/{assessment_id}/summary"
+SUMMARY_URL = "/api/v1/assessment-analytics/assessments/" "{assessment_id}/summary"
 
-RANKING_URL = "/api/v1/assessment-analytics/assessments/{assessment_id}/ranking"
+RANKING_URL = "/api/v1/assessment-analytics/assessments/" "{assessment_id}/ranking"
 
 GRADE_DISTRIBUTION_URL = (
     "/api/v1/assessment-analytics/assessments/" "{assessment_id}/grade-distribution"
@@ -25,10 +25,19 @@ GRADE_DISTRIBUTION_URL = (
 
 
 def _grade_distribution():
+    """
+    Return authoritative grade-distribution fixture data.
+
+    Historical boundary minimum values are intentionally None because
+    AssessmentResultOutcome does not currently snapshot the original minimum
+    boundary value. API tests must therefore not imply that formal analytics
+    reconstruct historical boundaries from the active grading scheme.
+    """
+
     return [
         {
             "grade": "8",
-            "minimum_value": Decimal("75.00"),
+            "minimum_value": None,
             "grade_points": Decimal("8.00"),
             "is_pass": True,
             "count": 2,
@@ -36,7 +45,7 @@ def _grade_distribution():
         },
         {
             "grade": "6",
-            "minimum_value": Decimal("55.00"),
+            "minimum_value": None,
             "grade_points": Decimal("6.00"),
             "is_pass": True,
             "count": 1,
@@ -46,6 +55,10 @@ def _grade_distribution():
 
 
 def _ranking():
+    """
+    Return formal ranking rows sourced from authoritative outcomes.
+    """
+
     return [
         {
             "candidate_id": 1,
@@ -81,6 +94,14 @@ def _ranking():
 
 
 def _questions():
+    """
+    Return current/live question-analysis fixture data.
+
+    Candidate-level formal analytics are authoritative, while question-level
+    analytics remain based on the current marking dataset until immutable
+    question-level result history is introduced.
+    """
+
     return [
         {
             "question_id": 1,
@@ -106,8 +127,8 @@ def _full_payload(
         "assessment_id": assessment_id,
         "title": "Mechanics End of Topic Test",
         "status": "published",
-        "result_stage": "finalised",
-        "script_selection": "latest",
+        "result_stage": "authoritative",
+        "script_selection": "authoritative",
         "maximum_mark": Decimal("50.00"),
         "markable_question_count": 5,
         "candidate_count": 3,
@@ -118,6 +139,7 @@ def _full_payload(
         "fully_finalised_candidate_count": 3,
         "included_candidate_count": 3,
         "excluded_incomplete_candidate_count": 0,
+        "candidates_without_authoritative_result": 0,
         "candidate_inclusion_percentage": Decimal("100.00"),
         "marking_completion_percentage": Decimal("100.00"),
         "finalisation_completion_percentage": Decimal("100.00"),
@@ -289,19 +311,23 @@ async def test_teacher_can_get_full_assessment_analytics(
 
     assert payload["assessment_id"] == 100
     assert payload["title"] == "Mechanics End of Topic Test"
-    assert payload["result_stage"] == "finalised"
-    assert payload["script_selection"] == "latest"
+
+    assert payload["result_stage"] == "authoritative"
+
+    assert payload["script_selection"] == "authoritative"
+
+    assert payload["candidates_without_authoritative_result"] == 0
 
     assert Decimal(
         str(
             payload["mean_mark"],
-        )
+        ),
     ) == Decimal("35.00")
 
     assert Decimal(
         str(
             payload["mean_percentage"],
-        )
+        ),
     ) == Decimal("70.00")
 
     assert (
@@ -401,10 +427,12 @@ async def test_full_analytics_serialises_grade_distribution(
     assert grades[0]["grade"] == "8"
     assert grades[0]["count"] == 2
 
+    assert grades[0]["minimum_value"] is None
+
     assert Decimal(
         str(
             grades[0]["percentage"],
-        )
+        ),
     ) == Decimal("66.67")
 
 
@@ -446,6 +474,9 @@ async def test_full_analytics_serialises_candidate_ranking(
 
     assert ranking[0]["candidate_id"] == 1
     assert ranking[0]["rank"] == 1
+    assert ranking[0]["script_id"] == 11
+    assert ranking[0]["script_version"] == 1
+
     assert ranking[1]["candidate_id"] == 2
     assert ranking[1]["rank"] == 2
 
@@ -494,6 +525,12 @@ async def test_teacher_can_get_compact_analytics_summary(
     assert payload["assessment_id"] == 100
     assert payload["candidate_count"] == 3
 
+    assert payload["result_stage"] == "authoritative"
+
+    assert payload["script_selection"] == "authoritative"
+
+    assert payload["candidates_without_authoritative_result"] == 0
+
     assert "ranking" not in payload
     assert "questions" not in payload
 
@@ -539,6 +576,12 @@ async def test_summary_passes_assessment_id_to_service(
     assert response.status_code == 200, response.text
     assert received_ids == [321]
 
+    payload = response.json()
+
+    assert payload["assessment_id"] == 321
+
+    assert payload["result_stage"] == "authoritative"
+
 
 # ---------------------------------------------------------------------------
 # Ranking
@@ -559,6 +602,7 @@ async def test_teacher_can_get_candidate_ranking(
         assessment_id,
     ):
         assert assessment_id == 100
+
         return _ranking()
 
     monkeypatch.setattr(
@@ -589,6 +633,7 @@ async def test_teacher_can_get_candidate_ranking(
 
     assert payload[0]["candidate_id"] == 1
     assert payload[0]["rank"] == 1
+    assert payload[0]["script_id"] == 11
 
 
 @pytest.mark.asyncio
@@ -679,9 +724,11 @@ async def test_teacher_can_get_grade_distribution(
         == 2
     )
 
+    assert payload["grades"][0]["minimum_value"] is None
+
 
 @pytest.mark.asyncio
-async def test_grade_distribution_can_be_empty_without_active_scheme(
+async def test_grade_distribution_can_be_empty_for_ungraded_authoritative_results(
     client: AsyncClient,
     teacher_user,
     auth_headers,
@@ -784,7 +831,7 @@ async def test_full_analytics_propagates_forbidden(
     ):
         raise HTTPException(
             status_code=403,
-            detail="You can only view results for your own courses",
+            detail=("You can only view results " "for your own courses"),
         )
 
     monkeypatch.setattr(
@@ -925,7 +972,7 @@ async def test_full_analytics_assessment_id_must_be_integer(
     auth_headers,
 ):
     response = await client.get(
-        "/api/v1/assessment-analytics/assessments/not-an-integer",
+        ("/api/v1/assessment-analytics/" "assessments/not-an-integer"),
         headers=auth_headers(
             teacher_user,
         ),
@@ -975,7 +1022,8 @@ async def test_grade_distribution_assessment_id_must_be_integer(
     response = await client.get(
         (
             "/api/v1/assessment-analytics/"
-            "assessments/not-an-integer/grade-distribution"
+            "assessments/not-an-integer/"
+            "grade-distribution"
         ),
         headers=auth_headers(
             teacher_user,

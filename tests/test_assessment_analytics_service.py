@@ -76,6 +76,7 @@ def _latest_result(
     script_version: int,
     mark: Decimal | None,
     percentage: Decimal | None,
+    maximum_mark: Decimal = Decimal("50.00"),
     fully_marked: bool = True,
     fully_finalised: bool = True,
 ):
@@ -86,7 +87,7 @@ def _latest_result(
         "script_id": script_id,
         "script_version": script_version,
         "script_status": "submitted",
-        "maximum_mark": Decimal("50.00"),
+        "maximum_mark": maximum_mark,
         "mark_awarded": mark,
         "completed_mark_awarded": mark,
         "finalised_mark_awarded": mark,
@@ -131,31 +132,79 @@ def _candidate_result(
     }
 
 
+def _outcome(
+    *,
+    outcome_id: int,
+    candidate_id: int,
+    script_id: int,
+    script_version: int = 1,
+    assessment_id: int = 100,
+    mark: Decimal = Decimal("40.00"),
+    maximum_mark: Decimal = Decimal("50.00"),
+    percentage: Decimal = Decimal("80.00"),
+    grade: str | None = "8",
+    grade_points: Decimal | None = Decimal("8.00"),
+    is_pass: bool | None = True,
+    is_authoritative: bool = True,
+):
+    """
+    Return a lightweight authoritative-outcome object.
+
+    The analytics service consumes model attributes only, so SimpleNamespace
+    gives these unit tests a focused representation without requiring database
+    persistence.
+    """
+
+    return SimpleNamespace(
+        id=outcome_id,
+        school_id=10,
+        assessment_id=assessment_id,
+        candidate_id=candidate_id,
+        script_id=script_id,
+        version=1,
+        status=("authoritative" if is_authoritative else "draft"),
+        change_type="initial",
+        supersedes_id=None,
+        is_authoritative=is_authoritative,
+        mark_awarded_snapshot=mark,
+        maximum_mark_snapshot=maximum_mark,
+        percentage_snapshot=percentage,
+        grading_scheme_id_snapshot=1,
+        grading_scheme_name_snapshot="GCSE",
+        grading_basis_snapshot="percentage",
+        grade_boundary_id_snapshot=1,
+        grade_label_snapshot=grade,
+        grade_points_snapshot=grade_points,
+        is_pass_snapshot=is_pass,
+        script_version_snapshot=script_version,
+    )
+
+
 def _grade_result(
     *,
-    candidate_id: int,
     grade: str | None,
     grade_points: Decimal | None = None,
     is_pass: bool | None = None,
     minimum_value: Decimal | None = None,
 ):
+    """
+    Grade-distribution helper input.
+
+    This no longer represents a live grading-service response. It simply
+    exercises the generic grade-distribution helper.
+    """
+
     return {
-        "assessment_id": 100,
-        "candidate_id": candidate_id,
-        "student_id": candidate_id + 1000,
-        "script_id": candidate_id + 2000,
-        "script_version": 1,
-        "result_stage": "finalised",
-        "grading_scheme_id": 1,
-        "grading_scheme_name": "GCSE",
-        "basis": "percentage",
-        "value": Decimal("80.00"),
         "grade": grade,
-        "boundary_id": (candidate_id if grade is not None else None),
         "minimum_value": minimum_value,
         "grade_points": grade_points,
         "is_pass": is_pass,
     }
+
+
+# ---------------------------------------------------------------------------
+# Monkeypatch helpers
+# ---------------------------------------------------------------------------
 
 
 async def _patch_context(
@@ -171,7 +220,12 @@ async def _patch_context(
             candidate_count=len(
                 candidates,
             ),
-            script_count=sum(len(candidate.scripts) for candidate in candidates),
+            script_count=sum(
+                len(
+                    candidate.scripts,
+                )
+                for candidate in candidates
+            ),
         )
     )
 
@@ -241,34 +295,35 @@ async def _patch_candidate_results(
     )
 
 
-async def _patch_grades(
+async def _patch_outcomes(
     monkeypatch,
     *,
-    grades_by_candidate_id,
+    outcomes,
 ):
-    async def fake_grade(
-        *,
-        db,
-        current_user,
-        candidate_id,
-        result_stage,
-    ):
-        assert result_stage == "finalised"
-
-        value = grades_by_candidate_id[candidate_id]
-
-        if isinstance(
-            value,
-            Exception,
+    class FakeOutcomeRepository:
+        def __init__(
+            self,
+            db,
         ):
-            raise value
+            self.db = db
 
-        return value
+        async def list_for_assessment(
+            self,
+            assessment_id,
+            *,
+            authoritative_only=False,
+        ):
+            assert assessment_id == 100
+            assert authoritative_only is True
+
+            return list(
+                outcomes,
+            )
 
     monkeypatch.setattr(
         service,
-        "grade_candidate_latest_result",
-        fake_grade,
+        "AssessmentResultOutcomeRepository",
+        FakeOutcomeRepository,
     )
 
 
@@ -305,6 +360,7 @@ async def _patch_questions(
         completed_only,
     ):
         assert completed_only is True
+
         return question_rows
 
     monkeypatch.setattr(
@@ -325,7 +381,7 @@ def test_mean_uses_two_decimal_rounding():
             Decimal("1"),
             Decimal("2"),
             Decimal("2"),
-        ]
+        ],
     )
 
     assert result == Decimal("1.67")
@@ -337,7 +393,7 @@ def test_median_of_odd_number_of_values():
             Decimal("10"),
             Decimal("30"),
             Decimal("20"),
-        ]
+        ],
     )
 
     assert result == Decimal("20.00")
@@ -350,19 +406,30 @@ def test_median_of_even_number_of_values():
             Decimal("20"),
             Decimal("30"),
             Decimal("40"),
-        ]
+        ],
     )
 
     assert result == Decimal("25.00")
 
 
 def test_empty_mean_and_median_are_none():
-    assert service._mean([]) is None
-    assert service._median([]) is None
+    assert (
+        service._mean(
+            [],
+        )
+        is None
+    )
+
+    assert (
+        service._median(
+            [],
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
-# Latest-script semantics
+# Latest-script operational semantics
 # ---------------------------------------------------------------------------
 
 
@@ -500,25 +567,19 @@ def test_ranking_orders_highest_percentage_first():
 def test_grade_distribution_counts_resolved_grades():
     grades = [
         _grade_result(
-            candidate_id=1,
             grade="9",
             grade_points=Decimal("9"),
             is_pass=True,
-            minimum_value=Decimal("85"),
         ),
         _grade_result(
-            candidate_id=2,
             grade="9",
             grade_points=Decimal("9"),
             is_pass=True,
-            minimum_value=Decimal("85"),
         ),
         _grade_result(
-            candidate_id=3,
             grade="8",
             grade_points=Decimal("8"),
             is_pass=True,
-            minimum_value=Decimal("75"),
         ),
     ]
 
@@ -539,14 +600,12 @@ def test_unresolved_grades_are_excluded_from_distribution():
     distribution = service._build_grade_distribution(
         [
             _grade_result(
-                candidate_id=1,
                 grade=None,
             ),
             _grade_result(
-                candidate_id=2,
                 grade="7",
             ),
-        ]
+        ],
     )
 
     assert (
@@ -560,13 +619,126 @@ def test_unresolved_grades_are_excluded_from_distribution():
     assert distribution[0]["count"] == 1
 
 
+def test_authoritative_grade_distribution_does_not_invent_boundary_minimum():
+    outcome = _outcome(
+        outcome_id=1,
+        candidate_id=1,
+        script_id=11,
+        grade="8",
+        grade_points=Decimal("8.00"),
+        is_pass=True,
+    )
+
+    result = service._build_authoritative_grade_result(
+        outcome,
+    )
+
+    assert result == {
+        "grade": "8",
+        "minimum_value": None,
+        "grade_points": Decimal("8.00"),
+        "is_pass": True,
+    }
+
+
 # ---------------------------------------------------------------------------
-# Main analytics
+# Authoritative outcome validation
+# ---------------------------------------------------------------------------
+
+
+def test_authoritative_outcome_map_indexes_by_candidate():
+    outcomes = [
+        _outcome(
+            outcome_id=1,
+            candidate_id=10,
+            script_id=100,
+        ),
+        _outcome(
+            outcome_id=2,
+            candidate_id=20,
+            script_id=200,
+        ),
+    ]
+
+    result = service._authoritative_outcome_map(
+        outcomes,
+        assessment_id=100,
+    )
+
+    assert result[10] is outcomes[0]
+    assert result[20] is outcomes[1]
+
+
+def test_authoritative_outcome_map_rejects_wrong_assessment():
+    outcome = _outcome(
+        outcome_id=1,
+        candidate_id=10,
+        script_id=100,
+        assessment_id=999,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        service._authoritative_outcome_map(
+            [outcome],
+            assessment_id=100,
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_authoritative_outcome_map_rejects_non_authoritative_row():
+    outcome = _outcome(
+        outcome_id=1,
+        candidate_id=10,
+        script_id=100,
+        is_authoritative=False,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        service._authoritative_outcome_map(
+            [outcome],
+            assessment_id=100,
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_authoritative_outcome_map_rejects_duplicate_candidate():
+    outcomes = [
+        _outcome(
+            outcome_id=1,
+            candidate_id=10,
+            script_id=100,
+        ),
+        _outcome(
+            outcome_id=2,
+            candidate_id=10,
+            script_id=101,
+        ),
+    ]
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        service._authoritative_outcome_map(
+            outcomes,
+            assessment_id=100,
+        )
+
+    assert exc.value.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Main authoritative analytics
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_assessment_analytics_calculates_cohort_statistics(
+async def test_assessment_analytics_calculates_authoritative_cohort_statistics(
     db_session: AsyncSession,
     teacher_user,
     monkeypatch,
@@ -623,8 +795,8 @@ async def test_assessment_analytics_calculates_cohort_statistics(
                     student_id=101,
                     script_id=11,
                     script_version=1,
-                    mark=Decimal("40"),
-                    percentage=Decimal("80"),
+                    mark=Decimal("41"),
+                    percentage=Decimal("82"),
                 ),
             ),
             2: _candidate_result(
@@ -635,8 +807,8 @@ async def test_assessment_analytics_calculates_cohort_statistics(
                     student_id=102,
                     script_id=21,
                     script_version=1,
-                    mark=Decimal("30"),
-                    percentage=Decimal("60"),
+                    mark=Decimal("31"),
+                    percentage=Decimal("62"),
                 ),
             ),
             3: _candidate_result(
@@ -647,35 +819,47 @@ async def test_assessment_analytics_calculates_cohort_statistics(
                     student_id=103,
                     script_id=31,
                     script_version=1,
-                    mark=Decimal("35"),
-                    percentage=Decimal("70"),
+                    mark=Decimal("36"),
+                    percentage=Decimal("72"),
                 ),
             ),
         },
     )
 
-    await _patch_grades(
+    await _patch_outcomes(
         monkeypatch,
-        grades_by_candidate_id={
-            1: _grade_result(
+        outcomes=[
+            _outcome(
+                outcome_id=101,
                 candidate_id=1,
+                script_id=11,
+                mark=Decimal("40"),
+                percentage=Decimal("80"),
                 grade="8",
                 grade_points=Decimal("8"),
                 is_pass=True,
             ),
-            2: _grade_result(
+            _outcome(
+                outcome_id=102,
                 candidate_id=2,
+                script_id=21,
+                mark=Decimal("30"),
+                percentage=Decimal("60"),
                 grade="6",
                 grade_points=Decimal("6"),
                 is_pass=True,
             ),
-            3: _grade_result(
+            _outcome(
+                outcome_id=103,
                 candidate_id=3,
+                script_id=31,
+                mark=Decimal("35"),
+                percentage=Decimal("70"),
                 grade="7",
                 grade_points=Decimal("7"),
                 is_pass=True,
             ),
-        },
+        ],
     )
 
     await _patch_questions(
@@ -688,8 +872,13 @@ async def test_assessment_analytics_calculates_cohort_statistics(
         100,
     )
 
+    assert result["result_stage"] == "authoritative"
+    assert result["script_selection"] == "authoritative"
+
     assert result["candidate_count"] == 3
     assert result["included_candidate_count"] == 3
+
+    assert result["candidates_without_authoritative_result"] == 0
 
     assert result["mean_mark"] == Decimal("35.00")
     assert result["median_mark"] == Decimal("35.00")
@@ -707,9 +896,13 @@ async def test_assessment_analytics_calculates_cohort_statistics(
         2,
     ]
 
+    # Proves analytics used snapshots rather than the slightly newer live
+    # finalised values in candidate_result.
+    assert result["ranking"][0]["mark_awarded"] == Decimal("40.00")
+
 
 @pytest.mark.asyncio
-async def test_incomplete_candidate_is_excluded_from_statistics(
+async def test_finalised_script_without_authoritative_outcome_is_not_included(
     db_session: AsyncSession,
     teacher_user,
     monkeypatch,
@@ -722,17 +915,6 @@ async def test_incomplete_candidate_is_excluded_from_statistics(
             scripts=[
                 _script(
                     script_id=11,
-                    version=1,
-                ),
-            ],
-        ),
-        _candidate(
-            candidate_id=2,
-            student_id=102,
-            candidate_number="A002",
-            scripts=[
-                _script(
-                    script_id=21,
                     version=1,
                 ),
             ],
@@ -759,31 +941,12 @@ async def test_incomplete_candidate_is_excluded_from_statistics(
                     percentage=Decimal("80"),
                 ),
             ),
-            2: _candidate_result(
-                candidate_id=2,
-                student_id=102,
-                latest=_latest_result(
-                    candidate_id=2,
-                    student_id=102,
-                    script_id=21,
-                    script_version=1,
-                    mark=Decimal("20"),
-                    percentage=Decimal("40"),
-                    fully_finalised=False,
-                ),
-            ),
         },
     )
 
-    await _patch_grades(
+    await _patch_outcomes(
         monkeypatch,
-        grades_by_candidate_id={
-            1: _grade_result(
-                candidate_id=1,
-                grade="8",
-                is_pass=True,
-            ),
-        },
+        outcomes=[],
     )
 
     await _patch_questions(
@@ -796,11 +959,104 @@ async def test_incomplete_candidate_is_excluded_from_statistics(
         100,
     )
 
-    assert result["included_candidate_count"] == 1
+    assert result["fully_finalised_candidate_count"] == 1
+    assert result["included_candidate_count"] == 0
+
+    assert result["candidates_without_authoritative_result"] == 1
+
+    assert result["mean_mark"] is None
+    assert result["ranking"] == []
+
+
+@pytest.mark.asyncio
+async def test_incomplete_latest_script_is_operationally_counted_but_authoritative_result_remains_included(
+    db_session: AsyncSession,
+    teacher_user,
+    monkeypatch,
+):
+    """
+    A newer incomplete retake must not remove the existing official result.
+    """
+
+    candidates = [
+        _candidate(
+            candidate_id=1,
+            student_id=101,
+            candidate_number="A001",
+            scripts=[
+                _script(
+                    script_id=11,
+                    version=1,
+                ),
+                _script(
+                    script_id=12,
+                    version=2,
+                ),
+            ],
+        ),
+    ]
+
+    await _patch_context(
+        monkeypatch,
+        candidates=candidates,
+    )
+
+    await _patch_candidate_results(
+        monkeypatch,
+        results_by_candidate_id={
+            1: _candidate_result(
+                candidate_id=1,
+                student_id=101,
+                latest=_latest_result(
+                    candidate_id=1,
+                    student_id=101,
+                    script_id=12,
+                    script_version=2,
+                    mark=Decimal("25"),
+                    percentage=Decimal("50"),
+                    fully_finalised=False,
+                ),
+            ),
+        },
+    )
+
+    await _patch_outcomes(
+        monkeypatch,
+        outcomes=[
+            _outcome(
+                outcome_id=1,
+                candidate_id=1,
+                script_id=11,
+                script_version=1,
+                mark=Decimal("40"),
+                percentage=Decimal("80"),
+                grade="8",
+            ),
+        ],
+    )
+
+    await _patch_questions(
+        monkeypatch,
+    )
+
+    result = await service.get_assessment_analytics(
+        db_session,
+        teacher_user,
+        100,
+    )
+
+    assert result["fully_finalised_candidate_count"] == 0
 
     assert result["excluded_incomplete_candidate_count"] == 1
 
+    assert result["included_candidate_count"] == 1
+
+    assert result["candidates_without_authoritative_result"] == 0
+
     assert result["mean_mark"] == Decimal("40.00")
+
+    assert result["ranking"][0]["script_id"] == 11
+    assert result["ranking"][0]["script_version"] == 1
 
 
 @pytest.mark.asyncio
@@ -828,9 +1084,9 @@ async def test_candidate_without_script_is_counted_but_not_included(
         results_by_candidate_id={},
     )
 
-    await _patch_grades(
+    await _patch_outcomes(
         monkeypatch,
-        grades_by_candidate_id={},
+        outcomes=[],
     )
 
     await _patch_questions(
@@ -846,13 +1102,16 @@ async def test_candidate_without_script_is_counted_but_not_included(
     assert result["candidate_count"] == 1
     assert result["candidates_without_script"] == 1
     assert result["candidates_with_script"] == 0
+
+    assert result["candidates_without_authoritative_result"] == 1
+
     assert result["included_candidate_count"] == 0
     assert result["mean_mark"] is None
     assert result["ranking"] == []
 
 
 @pytest.mark.asyncio
-async def test_missing_grading_scheme_does_not_remove_mark_statistics(
+async def test_authoritative_result_without_grade_remains_in_mark_statistics(
     db_session: AsyncSession,
     teacher_user,
     monkeypatch,
@@ -894,14 +1153,20 @@ async def test_missing_grading_scheme_does_not_remove_mark_statistics(
         },
     )
 
-    await _patch_grades(
+    await _patch_outcomes(
         monkeypatch,
-        grades_by_candidate_id={
-            1: HTTPException(
-                status_code=404,
-                detail="Assessment grading scheme not found.",
+        outcomes=[
+            _outcome(
+                outcome_id=1,
+                candidate_id=1,
+                script_id=11,
+                mark=Decimal("40"),
+                percentage=Decimal("80"),
+                grade=None,
+                grade_points=None,
+                is_pass=None,
             ),
-        },
+        ],
     )
 
     await _patch_questions(
@@ -915,6 +1180,7 @@ async def test_missing_grading_scheme_does_not_remove_mark_statistics(
     )
 
     assert result["included_candidate_count"] == 1
+
     assert result["mean_mark"] == Decimal("40.00")
     assert result["mean_percentage"] == Decimal("80.00")
 
@@ -924,7 +1190,164 @@ async def test_missing_grading_scheme_does_not_remove_mark_statistics(
 
 
 @pytest.mark.asyncio
-async def test_unexpected_grading_error_is_not_suppressed(
+async def test_newer_retake_does_not_replace_authoritative_analytics_result(
+    db_session: AsyncSession,
+    teacher_user,
+    monkeypatch,
+):
+    candidates = [
+        _candidate(
+            candidate_id=1,
+            student_id=101,
+            candidate_number="A001",
+            scripts=[
+                _script(
+                    script_id=11,
+                    version=1,
+                ),
+                _script(
+                    script_id=12,
+                    version=2,
+                ),
+            ],
+        ),
+    ]
+
+    await _patch_context(
+        monkeypatch,
+        candidates=candidates,
+    )
+
+    await _patch_candidate_results(
+        monkeypatch,
+        results_by_candidate_id={
+            1: _candidate_result(
+                candidate_id=1,
+                student_id=101,
+                latest=_latest_result(
+                    candidate_id=1,
+                    student_id=101,
+                    script_id=12,
+                    script_version=2,
+                    mark=Decimal("50"),
+                    percentage=Decimal("100"),
+                ),
+            ),
+        },
+    )
+
+    await _patch_outcomes(
+        monkeypatch,
+        outcomes=[
+            _outcome(
+                outcome_id=1,
+                candidate_id=1,
+                script_id=11,
+                script_version=1,
+                mark=Decimal("35"),
+                percentage=Decimal("70"),
+                grade="7",
+                grade_points=Decimal("7"),
+            ),
+        ],
+    )
+
+    await _patch_questions(
+        monkeypatch,
+    )
+
+    result = await service.get_assessment_analytics(
+        db_session,
+        teacher_user,
+        100,
+    )
+
+    row = result["ranking"][0]
+
+    assert row["script_id"] == 11
+    assert row["script_version"] == 1
+    assert row["mark_awarded"] == Decimal("35.00")
+    assert row["percentage"] == Decimal("70.00")
+    assert row["grade"] == "7"
+
+
+@pytest.mark.asyncio
+async def test_authoritative_remark_changes_formal_analytics(
+    db_session: AsyncSession,
+    teacher_user,
+    monkeypatch,
+):
+    candidates = [
+        _candidate(
+            candidate_id=1,
+            student_id=101,
+            candidate_number="A001",
+            scripts=[
+                _script(
+                    script_id=11,
+                    version=1,
+                ),
+            ],
+        ),
+    ]
+
+    await _patch_context(
+        monkeypatch,
+        candidates=candidates,
+    )
+
+    await _patch_candidate_results(
+        monkeypatch,
+        results_by_candidate_id={
+            1: _candidate_result(
+                candidate_id=1,
+                student_id=101,
+                latest=_latest_result(
+                    candidate_id=1,
+                    student_id=101,
+                    script_id=11,
+                    script_version=1,
+                    mark=Decimal("42"),
+                    percentage=Decimal("84"),
+                ),
+            ),
+        },
+    )
+
+    await _patch_outcomes(
+        monkeypatch,
+        outcomes=[
+            _outcome(
+                outcome_id=2,
+                candidate_id=1,
+                script_id=11,
+                script_version=1,
+                mark=Decimal("42"),
+                percentage=Decimal("84"),
+                grade="9",
+                grade_points=Decimal("9"),
+                is_pass=True,
+            ),
+        ],
+    )
+
+    await _patch_questions(
+        monkeypatch,
+    )
+
+    result = await service.get_assessment_analytics(
+        db_session,
+        teacher_user,
+        100,
+    )
+
+    assert result["mean_mark"] == Decimal("42.00")
+    assert result["mean_percentage"] == Decimal("84.00")
+    assert result["ranking"][0]["grade"] == "9"
+
+
+@pytest.mark.asyncio
+async def test_snapshotted_grade_is_used_without_live_recalculation(
     db_session: AsyncSession,
     teacher_user,
     monkeypatch,
@@ -966,34 +1389,41 @@ async def test_unexpected_grading_error_is_not_suppressed(
         },
     )
 
-    await _patch_grades(
+    await _patch_outcomes(
         monkeypatch,
-        grades_by_candidate_id={
-            1: HTTPException(
-                status_code=403,
-                detail="Forbidden.",
+        outcomes=[
+            _outcome(
+                outcome_id=1,
+                candidate_id=1,
+                script_id=11,
+                mark=Decimal("40"),
+                percentage=Decimal("80"),
+                grade="7",
+                grade_points=Decimal("7"),
+                is_pass=True,
             ),
-        },
+        ],
     )
 
     await _patch_questions(
         monkeypatch,
     )
 
-    with pytest.raises(
-        HTTPException,
-    ) as exc:
-        await service.get_assessment_analytics(
-            db_session,
-            teacher_user,
-            100,
-        )
+    result = await service.get_assessment_analytics(
+        db_session,
+        teacher_user,
+        100,
+    )
 
-    assert exc.value.status_code == 403
+    assert result["ranking"][0]["grade"] == "7"
+
+    assert result["grade_distribution"][0]["grade"] == "7"
+
+    assert result["grade_distribution"][0]["grade_points"] == Decimal("7.00")
 
 
 @pytest.mark.asyncio
-async def test_pass_percentage_uses_only_classified_candidates(
+async def test_pass_percentage_uses_only_authoritatively_classified_candidates(
     db_session: AsyncSession,
     teacher_user,
     monkeypatch,
@@ -1058,25 +1488,32 @@ async def test_pass_percentage_uses_only_classified_candidates(
         },
     )
 
-    await _patch_grades(
+    await _patch_outcomes(
         monkeypatch,
-        grades_by_candidate_id={
-            1: _grade_result(
+        outcomes=[
+            _outcome(
+                outcome_id=1,
                 candidate_id=1,
+                script_id=11,
                 grade="6",
                 is_pass=True,
             ),
-            2: _grade_result(
+            _outcome(
+                outcome_id=2,
                 candidate_id=2,
+                script_id=21,
                 grade="3",
                 is_pass=False,
             ),
-            3: _grade_result(
+            _outcome(
+                outcome_id=3,
                 candidate_id=3,
+                script_id=31,
                 grade=None,
+                grade_points=None,
                 is_pass=None,
             ),
-        },
+        ],
     )
 
     await _patch_questions(
@@ -1091,9 +1528,109 @@ async def test_pass_percentage_uses_only_classified_candidates(
 
     assert result["pass_count"] == 1
     assert result["fail_count"] == 1
+
     assert result["ungraded_candidate_count"] == 1
 
     assert result["pass_percentage"] == Decimal("50.00")
+
+
+@pytest.mark.asyncio
+async def test_authoritative_outcome_outside_candidate_set_is_rejected(
+    db_session: AsyncSession,
+    teacher_user,
+    monkeypatch,
+):
+    candidates = [
+        _candidate(
+            candidate_id=1,
+            student_id=101,
+            candidate_number="A001",
+            scripts=[
+                _script(
+                    script_id=11,
+                    version=1,
+                ),
+            ],
+        ),
+    ]
+
+    await _patch_context(
+        monkeypatch,
+        candidates=candidates,
+    )
+
+    await _patch_outcomes(
+        monkeypatch,
+        outcomes=[
+            _outcome(
+                outcome_id=99,
+                candidate_id=999,
+                script_id=9999,
+            ),
+        ],
+    )
+
+    await _patch_questions(
+        monkeypatch,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        await service.get_assessment_analytics(
+            db_session,
+            teacher_user,
+            100,
+        )
+
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_authoritative_outcome_without_loaded_script_is_rejected(
+    db_session: AsyncSession,
+    teacher_user,
+    monkeypatch,
+):
+    candidates = [
+        _candidate(
+            candidate_id=1,
+            student_id=101,
+            candidate_number="A001",
+            scripts=[],
+        ),
+    ]
+
+    await _patch_context(
+        monkeypatch,
+        candidates=candidates,
+    )
+
+    await _patch_outcomes(
+        monkeypatch,
+        outcomes=[
+            _outcome(
+                outcome_id=1,
+                candidate_id=1,
+                script_id=11,
+            ),
+        ],
+    )
+
+    await _patch_questions(
+        monkeypatch,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        await service.get_assessment_analytics(
+            db_session,
+            teacher_user,
+            100,
+        )
+
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -1130,9 +1667,9 @@ async def test_existing_question_analysis_is_reused(
         results_by_candidate_id={},
     )
 
-    await _patch_grades(
+    await _patch_outcomes(
         monkeypatch,
-        grades_by_candidate_id={},
+        outcomes=[],
     )
 
     await _patch_questions(
@@ -1286,6 +1823,7 @@ async def test_grade_distribution_view_returns_compact_payload(
     assert result["ungraded_candidate_count"] == 2
     assert result["pass_count"] == 7
     assert result["fail_count"] == 1
+
     assert result["pass_percentage"] == Decimal("87.50")
 
     assert result["grades"] == [
