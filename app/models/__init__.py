@@ -15,6 +15,14 @@ from app.models.assessment_grading import (
     AssessmentGradingBasis,
     AssessmentGradingScheme,
 )
+from app.models.assessment_moderation import (
+    AssessmentModerationItem,
+    AssessmentModerationItemOutcome,
+    AssessmentModerationOutcome,
+    AssessmentModerationReview,
+    AssessmentModerationReviewStatus,
+    AssessmentModerationSamplingMethod,
+)
 from app.models.assessment_question import (
     AssessmentQuestion,
     AssessmentSection,
@@ -78,6 +86,12 @@ __all__ = [
     "AssessmentGradeBoundary",
     "AssessmentGradingBasis",
     "AssessmentGradingScheme",
+    "AssessmentModerationItem",
+    "AssessmentModerationItemOutcome",
+    "AssessmentModerationOutcome",
+    "AssessmentModerationReview",
+    "AssessmentModerationReviewStatus",
+    "AssessmentModerationSamplingMethod",
     "AssessmentQuestion",
     "AssessmentQuestionFeedback",
     "AssessmentResponse",

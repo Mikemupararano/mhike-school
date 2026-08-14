@@ -1,0 +1,554 @@
+"""add assessment moderation reviews
+
+Revision ID: 42fdd9b1822f
+Revises: 5f32f6874350
+Create Date: 2026-08-14 12:50:09.281005+00:00
+
+"""
+
+from alembic import op
+import sqlalchemy as sa
+
+# revision identifiers, used by Alembic.
+revision = "42fdd9b1822f"
+down_revision = "5f32f6874350"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    """
+    Add immutable assessment moderation and QA history.
+
+    This revision intentionally contains only moderation-related schema
+    changes. Unrelated schema differences detected during Alembic
+    autogeneration are excluded.
+    """
+
+    op.create_table(
+        "assessment_moderation_reviews",
+        sa.Column(
+            "id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "school_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "assessment_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "candidate_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "script_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "review_number",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "pending",
+                "in_progress",
+                "completed",
+                "cancelled",
+                name="assessment_moderation_review_status",
+                native_enum=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "outcome",
+            sa.Enum(
+                "confirmed",
+                "adjusted",
+                "returned",
+                "escalated",
+                "no_action",
+                name="assessment_moderation_outcome",
+                native_enum=False,
+            ),
+            nullable=True,
+        ),
+        sa.Column(
+            "sampling_method",
+            sa.Enum(
+                "full",
+                "random_sample",
+                "targeted",
+                "threshold",
+                "manual",
+                name="assessment_moderation_sampling_method",
+                native_enum=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "moderator_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "initiated_by_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "reason",
+            sa.String(length=1000),
+            nullable=True,
+        ),
+        sa.Column(
+            "notes",
+            sa.Text(),
+            nullable=True,
+        ),
+        sa.Column(
+            "sample_description",
+            sa.Text(),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "started_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+        ),
+        sa.Column(
+            "completed_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+        ),
+        sa.Column(
+            "cancelled_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+        ),
+        sa.Column(
+            "cancelled_by_id",
+            sa.Integer(),
+            nullable=True,
+        ),
+        sa.Column(
+            "cancellation_reason",
+            sa.String(length=1000),
+            nullable=True,
+        ),
+        sa.CheckConstraint(
+            (
+                "(status = 'cancelled' AND cancelled_at IS NOT NULL) "
+                "OR "
+                "(status <> 'cancelled')"
+            ),
+            name="ck_assessment_moderation_review_cancelled_timestamp",
+        ),
+        sa.CheckConstraint(
+            (
+                "(status = 'completed' AND outcome IS NOT NULL) "
+                "OR "
+                "(status <> 'completed')"
+            ),
+            name="ck_assessment_moderation_review_completed_outcome",
+        ),
+        sa.CheckConstraint(
+            "review_number >= 1",
+            name="ck_assessment_moderation_review_number_positive",
+        ),
+        sa.ForeignKeyConstraint(
+            ["assessment_id"],
+            ["assessments.id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["cancelled_by_id"],
+            ["users.id"],
+            ondelete="SET NULL",
+        ),
+        sa.ForeignKeyConstraint(
+            ["candidate_id"],
+            ["assessment_candidates.id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["initiated_by_id"],
+            ["users.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["moderator_id"],
+            ["users.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["school_id"],
+            ["schools.id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["script_id"],
+            ["assessment_scripts.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint(
+            "id",
+        ),
+        sa.UniqueConstraint(
+            "script_id",
+            "review_number",
+            name="uq_assessment_moderation_review_script_number",
+        ),
+    )
+
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_assessment_id"),
+        "assessment_moderation_reviews",
+        ["assessment_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_cancelled_by_id"),
+        "assessment_moderation_reviews",
+        ["cancelled_by_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_candidate_id"),
+        "assessment_moderation_reviews",
+        ["candidate_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_initiated_by_id"),
+        "assessment_moderation_reviews",
+        ["initiated_by_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_moderator_id"),
+        "assessment_moderation_reviews",
+        ["moderator_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_outcome"),
+        "assessment_moderation_reviews",
+        ["outcome"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_sampling_method"),
+        "assessment_moderation_reviews",
+        ["sampling_method"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_school_id"),
+        "assessment_moderation_reviews",
+        ["school_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_script_id"),
+        "assessment_moderation_reviews",
+        ["script_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_reviews_status"),
+        "assessment_moderation_reviews",
+        ["status"],
+        unique=False,
+    )
+
+    op.create_table(
+        "assessment_moderation_items",
+        sa.Column(
+            "id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "review_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "response_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "marking_decision_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "outcome",
+            sa.Enum(
+                "confirmed",
+                "adjusted",
+                "returned",
+                "escalated",
+                name="assessment_moderation_item_outcome",
+                native_enum=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "mark_before_snapshot",
+            sa.Numeric(
+                precision=8,
+                scale=2,
+            ),
+            nullable=True,
+        ),
+        sa.Column(
+            "mark_after_snapshot",
+            sa.Numeric(
+                precision=8,
+                scale=2,
+            ),
+            nullable=True,
+        ),
+        sa.Column(
+            "maximum_mark_snapshot",
+            sa.Numeric(
+                precision=8,
+                scale=2,
+            ),
+            nullable=True,
+        ),
+        sa.Column(
+            "mark_changed",
+            sa.Boolean(),
+            nullable=False,
+        ),
+        sa.Column(
+            "decision_status_before_snapshot",
+            sa.String(length=50),
+            nullable=True,
+        ),
+        sa.Column(
+            "decision_status_after_snapshot",
+            sa.String(length=50),
+            nullable=True,
+        ),
+        sa.Column(
+            "moderator_comment",
+            sa.Text(),
+            nullable=True,
+        ),
+        sa.Column(
+            "evidence_notes",
+            sa.Text(),
+            nullable=True,
+        ),
+        sa.Column(
+            "reviewed_by_id",
+            sa.Integer(),
+            nullable=False,
+        ),
+        sa.Column(
+            "reviewed_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            (
+                "(mark_changed = true "
+                "AND mark_after_snapshot IS NOT NULL) "
+                "OR "
+                "(mark_changed = false)"
+            ),
+            name="ck_assessment_moderation_item_changed_mark_present",
+        ),
+        sa.CheckConstraint(
+            ("mark_after_snapshot IS NULL " "OR mark_after_snapshot >= 0"),
+            name="ck_assessment_moderation_item_mark_after_nonnegative",
+        ),
+        sa.CheckConstraint(
+            (
+                "mark_after_snapshot IS NULL "
+                "OR maximum_mark_snapshot IS NULL "
+                "OR mark_after_snapshot <= maximum_mark_snapshot"
+            ),
+            name="ck_assessment_moderation_item_mark_after_within_maximum",
+        ),
+        sa.CheckConstraint(
+            ("mark_before_snapshot IS NULL " "OR mark_before_snapshot >= 0"),
+            name="ck_assessment_moderation_item_mark_before_nonnegative",
+        ),
+        sa.CheckConstraint(
+            (
+                "mark_before_snapshot IS NULL "
+                "OR maximum_mark_snapshot IS NULL "
+                "OR mark_before_snapshot <= maximum_mark_snapshot"
+            ),
+            name="ck_assessment_moderation_item_mark_before_within_maximum",
+        ),
+        sa.CheckConstraint(
+            ("maximum_mark_snapshot IS NULL " "OR maximum_mark_snapshot >= 0"),
+            name="ck_assessment_moderation_item_maximum_nonnegative",
+        ),
+        sa.ForeignKeyConstraint(
+            ["marking_decision_id"],
+            ["marking_decisions.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["response_id"],
+            ["assessment_responses.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["review_id"],
+            ["assessment_moderation_reviews.id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["reviewed_by_id"],
+            ["users.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint(
+            "id",
+        ),
+        sa.UniqueConstraint(
+            "review_id",
+            "response_id",
+            name="uq_assessment_moderation_item_review_response",
+        ),
+    )
+
+    op.create_index(
+        op.f("ix_assessment_moderation_items_mark_changed"),
+        "assessment_moderation_items",
+        ["mark_changed"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_items_marking_decision_id"),
+        "assessment_moderation_items",
+        ["marking_decision_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_items_outcome"),
+        "assessment_moderation_items",
+        ["outcome"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_items_response_id"),
+        "assessment_moderation_items",
+        ["response_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_items_review_id"),
+        "assessment_moderation_items",
+        ["review_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_assessment_moderation_items_reviewed_by_id"),
+        "assessment_moderation_items",
+        ["reviewed_by_id"],
+        unique=False,
+    )
+
+
+def downgrade() -> None:
+    """
+    Remove assessment moderation and QA history tables.
+    """
+
+    op.drop_index(
+        op.f("ix_assessment_moderation_items_reviewed_by_id"),
+        table_name="assessment_moderation_items",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_items_review_id"),
+        table_name="assessment_moderation_items",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_items_response_id"),
+        table_name="assessment_moderation_items",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_items_outcome"),
+        table_name="assessment_moderation_items",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_items_marking_decision_id"),
+        table_name="assessment_moderation_items",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_items_mark_changed"),
+        table_name="assessment_moderation_items",
+    )
+    op.drop_table(
+        "assessment_moderation_items",
+    )
+
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_status"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_script_id"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_school_id"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_sampling_method"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_outcome"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_moderator_id"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_initiated_by_id"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_candidate_id"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_cancelled_by_id"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_index(
+        op.f("ix_assessment_moderation_reviews_assessment_id"),
+        table_name="assessment_moderation_reviews",
+    )
+    op.drop_table(
+        "assessment_moderation_reviews",
+    )
