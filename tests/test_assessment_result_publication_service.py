@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.services.assessment_result_publication_service as publication_service
 from app.models.assessment import (
     Assessment,
     AssessmentStatus,
@@ -871,6 +872,502 @@ async def test_due_scheduled_results_are_published(
     assert len(published) == 1
     assert published[0].id == publication.id
     assert published[0].status == AssessmentResultPublicationStatus.PUBLISHED
+
+
+# ---------------------------------------------------------------------------
+# Publication notifications
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_authoritative_student_recipient_lookup_is_deduplicated_and_sorted(
+    monkeypatch,
+):
+    calls: list[dict] = []
+
+    class FakeOutcomeRepository:
+        def __init__(
+            self,
+            db,
+        ):
+            self.db = db
+
+        async def list_for_assessment(
+            self,
+            assessment_id,
+            *,
+            school_id,
+            authoritative_only,
+            include_relationships,
+        ):
+            calls.append(
+                {
+                    "assessment_id": assessment_id,
+                    "school_id": school_id,
+                    "authoritative_only": authoritative_only,
+                    "include_relationships": include_relationships,
+                }
+            )
+
+            class Candidate:
+                def __init__(
+                    self,
+                    student_id,
+                ):
+                    self.student_id = student_id
+
+            class Outcome:
+                def __init__(
+                    self,
+                    student_id,
+                ):
+                    self.candidate = Candidate(
+                        student_id,
+                    )
+
+            return [
+                Outcome(103),
+                Outcome(101),
+                Outcome(103),
+                Outcome(102),
+            ]
+
+    monkeypatch.setattr(
+        publication_service,
+        "AssessmentResultOutcomeRepository",
+        FakeOutcomeRepository,
+    )
+
+    student_ids = (
+        await publication_service._get_authoritative_student_ids_for_assessment(
+            object(),
+            assessment_id=50,
+            school_id=1,
+        )
+    )
+
+    assert student_ids == [
+        101,
+        102,
+        103,
+    ]
+
+    assert calls == [
+        {
+            "assessment_id": 50,
+            "school_id": 1,
+            "authoritative_only": True,
+            "include_relationships": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "visible_to_students",
+        "visible_to_parents",
+        "expected_notify_students",
+        "expected_notify_parents",
+    ),
+    [
+        (
+            True,
+            False,
+            True,
+            False,
+        ),
+        (
+            False,
+            True,
+            False,
+            True,
+        ),
+        (
+            True,
+            True,
+            True,
+            True,
+        ),
+    ],
+)
+async def test_publication_notification_maps_audience_visibility_exactly(
+    monkeypatch,
+    visible_to_students,
+    visible_to_parents,
+    expected_notify_students,
+    expected_notify_parents,
+):
+    calls: list[dict] = []
+
+    publication = type(
+        "Publication",
+        (),
+        {
+            "id": 7,
+            "assessment_id": 50,
+            "visible_to_students": visible_to_students,
+            "visible_to_parents": visible_to_parents,
+            "assessment": type(
+                "Assessment",
+                (),
+                {
+                    "id": 50,
+                    "school_id": 1,
+                    "title": "Physics Forces Test",
+                },
+            )(),
+        },
+    )()
+
+    async def fake_student_ids(
+        db,
+        *,
+        assessment_id,
+        school_id,
+    ):
+        assert assessment_id == 50
+        assert school_id == 1
+
+        return [
+            101,
+            102,
+        ]
+
+    class FakeAssessmentNotificationService:
+        def __init__(
+            self,
+            db,
+        ):
+            self.db = db
+
+        async def notify_results_published(
+            self,
+            **kwargs,
+        ):
+            calls.append(
+                kwargs,
+            )
+            return []
+
+    monkeypatch.setattr(
+        publication_service,
+        "_get_authoritative_student_ids_for_assessment",
+        fake_student_ids,
+    )
+    monkeypatch.setattr(
+        publication_service,
+        "AssessmentNotificationService",
+        FakeAssessmentNotificationService,
+    )
+
+    await publication_service._notify_results_published_best_effort(
+        object(),
+        publication=publication,
+    )
+
+    assert calls == [
+        {
+            "assessment_id": 50,
+            "assessment_title": "Physics Forces Test",
+            "school_id": 1,
+            "student_ids": [
+                101,
+                102,
+            ],
+            "notify_students": expected_notify_students,
+            "notify_parents": expected_notify_parents,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_publication_notification_is_silent_when_no_audience_is_visible(
+    monkeypatch,
+):
+    publication = type(
+        "Publication",
+        (),
+        {
+            "id": 7,
+            "assessment_id": 50,
+            "visible_to_students": False,
+            "visible_to_parents": False,
+            "assessment": type(
+                "Assessment",
+                (),
+                {
+                    "id": 50,
+                    "school_id": 1,
+                    "title": "Physics Forces Test",
+                },
+            )(),
+        },
+    )()
+
+    lookup_calls: list[tuple] = []
+
+    async def fake_student_ids(
+        db,
+        *,
+        assessment_id,
+        school_id,
+    ):
+        lookup_calls.append(
+            (
+                assessment_id,
+                school_id,
+            )
+        )
+        return [
+            101,
+        ]
+
+    monkeypatch.setattr(
+        publication_service,
+        "_get_authoritative_student_ids_for_assessment",
+        fake_student_ids,
+    )
+
+    await publication_service._notify_results_published_best_effort(
+        object(),
+        publication=publication,
+    )
+
+    assert lookup_calls == []
+
+
+@pytest.mark.asyncio
+async def test_publication_notification_failure_does_not_fail_committed_release(
+    monkeypatch,
+):
+    class FakeDB:
+        def __init__(
+            self,
+        ):
+            self.rolled_back = False
+
+        async def rollback(
+            self,
+        ):
+            self.rolled_back = True
+
+    db = FakeDB()
+
+    publication = type(
+        "Publication",
+        (),
+        {
+            "id": 7,
+            "assessment_id": 50,
+            "visible_to_students": True,
+            "visible_to_parents": True,
+            "assessment": type(
+                "Assessment",
+                (),
+                {
+                    "id": 50,
+                    "school_id": 1,
+                    "title": "Physics Forces Test",
+                },
+            )(),
+        },
+    )()
+
+    async def fake_student_ids(
+        db,
+        *,
+        assessment_id,
+        school_id,
+    ):
+        return [
+            101,
+        ]
+
+    class FailingAssessmentNotificationService:
+        def __init__(
+            self,
+            db,
+        ):
+            self.db = db
+
+        async def notify_results_published(
+            self,
+            **kwargs,
+        ):
+            raise RuntimeError(
+                "notification unavailable",
+            )
+
+    monkeypatch.setattr(
+        publication_service,
+        "_get_authoritative_student_ids_for_assessment",
+        fake_student_ids,
+    )
+    monkeypatch.setattr(
+        publication_service,
+        "AssessmentNotificationService",
+        FailingAssessmentNotificationService,
+    )
+
+    await publication_service._notify_results_published_best_effort(
+        db,
+        publication=publication,
+    )
+
+    assert db.rolled_back is True
+
+
+@pytest.mark.asyncio
+async def test_immediate_publication_runs_notification_after_successful_release(
+    db_session: AsyncSession,
+    teacher_user,
+    monkeypatch,
+):
+    context = await _build_publication_context(
+        db_session,
+        teacher_user,
+    )
+
+    await _finalise_all_marks(
+        db_session,
+        teacher_user,
+        context,
+    )
+
+    publication = await create_result_publication(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=context["assessment"].id,
+        visible_to_students=True,
+        visible_to_parents=False,
+    )
+
+    notification_calls: list[dict] = []
+
+    async def fake_notify(
+        db,
+        *,
+        publication,
+    ):
+        notification_calls.append(
+            {
+                "publication_id": publication.id,
+                "status": publication.status,
+                "visible_to_students": publication.visible_to_students,
+                "visible_to_parents": publication.visible_to_parents,
+            }
+        )
+
+    monkeypatch.setattr(
+        publication_service,
+        "_notify_results_published_best_effort",
+        fake_notify,
+    )
+
+    published = await publish_results(
+        db=db_session,
+        current_user=teacher_user,
+        publication_id=publication.id,
+    )
+
+    assert published.status == AssessmentResultPublicationStatus.PUBLISHED
+
+    assert notification_calls == [
+        {
+            "publication_id": publication.id,
+            "status": AssessmentResultPublicationStatus.PUBLISHED,
+            "visible_to_students": True,
+            "visible_to_parents": False,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_publication_runs_notification_after_successful_release(
+    db_session: AsyncSession,
+    teacher_user,
+    monkeypatch,
+):
+    context = await _build_publication_context(
+        db_session,
+        teacher_user,
+    )
+
+    await _finalise_all_marks(
+        db_session,
+        teacher_user,
+        context,
+    )
+
+    publication = await create_result_publication(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=context["assessment"].id,
+        visible_to_students=False,
+        visible_to_parents=True,
+    )
+
+    scheduled_for = datetime.now(
+        timezone.utc,
+    ) + timedelta(
+        minutes=5,
+    )
+
+    await schedule_results_publication(
+        db=db_session,
+        current_user=teacher_user,
+        publication_id=publication.id,
+        scheduled_for=scheduled_for,
+    )
+
+    notification_calls: list[dict] = []
+
+    async def fake_notify(
+        db,
+        *,
+        publication,
+    ):
+        notification_calls.append(
+            {
+                "publication_id": publication.id,
+                "status": publication.status,
+                "visible_to_students": publication.visible_to_students,
+                "visible_to_parents": publication.visible_to_parents,
+            }
+        )
+
+    monkeypatch.setattr(
+        publication_service,
+        "_notify_results_published_best_effort",
+        fake_notify,
+    )
+
+    published = await publish_due_scheduled_results(
+        db=db_session,
+        now=scheduled_for
+        + timedelta(
+            seconds=1,
+        ),
+    )
+
+    assert (
+        len(
+            published,
+        )
+        == 1
+    )
+    assert published[0].id == publication.id
+    assert published[0].status == AssessmentResultPublicationStatus.PUBLISHED
+
+    assert notification_calls == [
+        {
+            "publication_id": publication.id,
+            "status": AssessmentResultPublicationStatus.PUBLISHED,
+            "visible_to_students": False,
+            "visible_to_parents": True,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

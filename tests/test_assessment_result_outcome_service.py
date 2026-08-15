@@ -38,7 +38,9 @@ def _outcome(
     outcome_id: int = 1,
     school_id: int = 1,
     assessment_id: int = 100,
+    assessment_title: str = "Physics Test",
     candidate_id: int = 200,
+    student_id: int = 400,
     script_id: int = 300,
     version: int = 1,
     status_value: AssessmentResultOutcomeStatus = (
@@ -122,6 +124,17 @@ def _outcome(
         withdrawal_reason=withdrawal_reason,
         recorded_by=recorded_by,
         withdrawn_by=withdrawn_by,
+        assessment=SimpleNamespace(
+            id=assessment_id,
+            school_id=school_id,
+            title=assessment_title,
+        ),
+        candidate=SimpleNamespace(
+            id=candidate_id,
+            school_id=school_id,
+            student_id=student_id,
+            assessment_id=assessment_id,
+        ),
     )
 
 
@@ -2086,3 +2099,448 @@ async def test_create_outcome_rolls_back_concurrent_conflict(
 
     assert exc.value.status_code == 409
     assert db.rolled_back is True
+
+
+# ---------------------------------------------------------------------------
+# Post-authorisation assessment notifications
+# ---------------------------------------------------------------------------
+
+
+class _FakeAssessmentNotificationService:
+    calls: list[dict] = []
+    error: Exception | None = None
+
+    def __init__(
+        self,
+        db,
+    ):
+        self.db = db
+
+    async def notify_official_result_changed(
+        self,
+        *,
+        assessment_id,
+        assessment_title,
+        school_id,
+        student_id,
+        change_type,
+        include_parents,
+    ):
+        type(self).calls.append(
+            {
+                "assessment_id": assessment_id,
+                "assessment_title": assessment_title,
+                "school_id": school_id,
+                "student_id": student_id,
+                "change_type": change_type,
+                "include_parents": include_parents,
+            }
+        )
+
+        if type(self).error is not None:
+            raise type(self).error
+
+        return []
+
+
+def _patch_assessment_notification_service(
+    monkeypatch,
+    *,
+    error: Exception | None = None,
+):
+    _FakeAssessmentNotificationService.calls = []
+    _FakeAssessmentNotificationService.error = error
+
+    monkeypatch.setattr(
+        service,
+        "AssessmentNotificationService",
+        _FakeAssessmentNotificationService,
+    )
+
+    return _FakeAssessmentNotificationService
+
+
+@pytest.mark.asyncio
+async def test_initial_authoritative_notification_helper_is_silent(
+    monkeypatch,
+):
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    await service._notify_authoritative_result_change_best_effort(
+        FakeDB(),
+        outcome=_outcome(
+            change_type=AssessmentResultChangeType.INITIAL,
+        ),
+        student_id=400,
+        assessment_title="Physics Test",
+    )
+
+    assert fake_notifications.calls == []
+
+
+@pytest.mark.asyncio
+async def test_non_initial_authoritative_notification_helper_notifies_once(
+    monkeypatch,
+):
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    await service._notify_authoritative_result_change_best_effort(
+        FakeDB(),
+        outcome=_outcome(
+            outcome_id=8,
+            change_type=AssessmentResultChangeType.REMARK,
+        ),
+        student_id=400,
+        assessment_title="Physics Test",
+    )
+
+    assert fake_notifications.calls == [
+        {
+            "assessment_id": 100,
+            "assessment_title": "Physics Test",
+            "school_id": 1,
+            "student_id": 400,
+            "change_type": AssessmentResultChangeType.REMARK,
+            "include_parents": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notification_failure_does_not_fail_committed_result(
+    monkeypatch,
+):
+    db = FakeDB()
+    db.committed = True
+
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+        error=RuntimeError(
+            "notification unavailable",
+        ),
+    )
+
+    await service._notify_authoritative_result_change_best_effort(
+        db,
+        outcome=_outcome(
+            outcome_id=8,
+            change_type=AssessmentResultChangeType.CORRECTION,
+        ),
+        student_id=400,
+        assessment_title="Physics Test",
+    )
+
+    assert (
+        len(
+            fake_notifications.calls,
+        )
+        == 1
+    )
+    assert db.committed is True
+    assert db.rolled_back is True
+
+
+@pytest.mark.asyncio
+async def test_create_draft_does_not_attempt_result_change_notification(
+    monkeypatch,
+):
+    db = FakeDB()
+
+    current = _outcome(
+        outcome_id=1,
+        script_id=300,
+        script_version=1,
+    )
+
+    _patch_repository(
+        monkeypatch,
+        current=current,
+        latest=current,
+    )
+
+    async def fake_snapshot(
+        db,
+        current_user,
+        *,
+        script_id,
+    ):
+        return _snapshot(
+            script_id=300,
+            script_version=1,
+            mark=Decimal("74"),
+        )
+
+    notification_calls: list[dict] = []
+
+    async def fake_notify(
+        db,
+        **kwargs,
+    ):
+        notification_calls.append(
+            kwargs,
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_build_result_snapshot",
+        fake_snapshot,
+    )
+    monkeypatch.setattr(
+        service,
+        "_notify_authoritative_result_change_best_effort",
+        fake_notify,
+    )
+
+    result = await service.create_assessment_result_outcome(
+        db,
+        _user(),
+        script_id=300,
+        change_type="remark",
+        reason="Remark completed.",
+        make_authoritative=False,
+    )
+
+    assert result["status"] == AssessmentResultOutcomeStatus.DRAFT
+    assert notification_calls == []
+
+
+@pytest.mark.asyncio
+async def test_create_initial_authoritative_outcome_does_not_notify_recipient(
+    monkeypatch,
+):
+    db = FakeDB()
+
+    _patch_repository(
+        monkeypatch,
+        current=None,
+        latest=None,
+    )
+
+    async def fake_snapshot(
+        db,
+        current_user,
+        *,
+        script_id,
+    ):
+        return _snapshot(
+            script_id=script_id,
+        )
+
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_build_result_snapshot",
+        fake_snapshot,
+    )
+
+    result = await service.create_assessment_result_outcome(
+        db,
+        _user(),
+        script_id=300,
+        change_type="initial",
+        make_authoritative=True,
+    )
+
+    assert result["is_authoritative"] is True
+    assert fake_notifications.calls == []
+
+
+@pytest.mark.asyncio
+async def test_create_non_initial_authoritative_outcome_notifies_once(
+    monkeypatch,
+):
+    db = FakeDB()
+
+    current = _outcome(
+        outcome_id=1,
+        script_id=300,
+        script_version=1,
+    )
+
+    _patch_repository(
+        monkeypatch,
+        current=current,
+        latest=current,
+    )
+
+    async def fake_snapshot(
+        db,
+        current_user,
+        *,
+        script_id,
+    ):
+        return _snapshot(
+            student_id=400,
+            script_id=300,
+            script_version=1,
+            mark=Decimal("74"),
+        )
+
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_build_result_snapshot",
+        fake_snapshot,
+    )
+
+    result = await service.create_assessment_result_outcome(
+        db,
+        _user(),
+        script_id=300,
+        change_type="remark",
+        reason="Remark increased the mark.",
+        make_authoritative=True,
+    )
+
+    assert result["is_authoritative"] is True
+    assert (
+        len(
+            fake_notifications.calls,
+        )
+        == 1
+    )
+
+    call = fake_notifications.calls[0]
+
+    assert call["assessment_id"] == 100
+    assert call["assessment_title"] == "Physics Test"
+    assert call["school_id"] == 1
+    assert call["student_id"] == 400
+    assert call["change_type"] == AssessmentResultChangeType.REMARK
+    assert call["include_parents"] is True
+
+
+@pytest.mark.asyncio
+async def test_authorise_initial_draft_does_not_notify_recipient(
+    monkeypatch,
+):
+    db = FakeDB()
+
+    draft = _outcome(
+        outcome_id=2,
+        version=1,
+        status_value=AssessmentResultOutcomeStatus.DRAFT,
+        is_authoritative=False,
+        change_type=AssessmentResultChangeType.INITIAL,
+    )
+
+    _patch_repository(
+        monkeypatch,
+        current=None,
+        latest=draft,
+        by_id=draft,
+    )
+
+    async def fake_get(
+        db,
+        current_user,
+        *,
+        outcome_id,
+    ):
+        return draft
+
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_get_outcome_or_404",
+        fake_get,
+    )
+
+    result = await service.authorise_assessment_result_outcome(
+        db,
+        _user(),
+        outcome_id=draft.id,
+    )
+
+    assert result["is_authoritative"] is True
+    assert fake_notifications.calls == []
+
+
+@pytest.mark.asyncio
+async def test_authorise_non_initial_draft_notifies_once(
+    monkeypatch,
+):
+    db = FakeDB()
+
+    current = _outcome(
+        outcome_id=1,
+        version=1,
+        status_value=AssessmentResultOutcomeStatus.AUTHORITATIVE,
+        is_authoritative=True,
+        change_type=AssessmentResultChangeType.INITIAL,
+        script_id=300,
+        script_version=1,
+    )
+
+    draft = _outcome(
+        outcome_id=2,
+        version=2,
+        status_value=AssessmentResultOutcomeStatus.DRAFT,
+        is_authoritative=False,
+        change_type=AssessmentResultChangeType.REMARK,
+        supersedes_id=current.id,
+        script_id=300,
+        script_version=1,
+        reason="Remark completed.",
+    )
+
+    _patch_repository(
+        monkeypatch,
+        current=current,
+        latest=draft,
+        by_id=draft,
+    )
+
+    async def fake_get(
+        db,
+        current_user,
+        *,
+        outcome_id,
+    ):
+        return draft
+
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_get_outcome_or_404",
+        fake_get,
+    )
+
+    result = await service.authorise_assessment_result_outcome(
+        db,
+        _user(),
+        outcome_id=draft.id,
+    )
+
+    assert result["is_authoritative"] is True
+    assert (
+        len(
+            fake_notifications.calls,
+        )
+        == 1
+    )
+
+    call = fake_notifications.calls[0]
+
+    assert call["assessment_id"] == 100
+    assert call["assessment_title"] == "Physics Test"
+    assert call["school_id"] == 1
+    assert call["student_id"] == 400
+    assert call["change_type"] == AssessmentResultChangeType.REMARK
+    assert call["include_parents"] is True

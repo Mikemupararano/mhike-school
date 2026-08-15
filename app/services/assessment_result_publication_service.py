@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,11 +13,21 @@ from app.models.assessment_result_publication import (
     AssessmentResultPublicationStatus,
 )
 from app.models.user import User, UserRole
+from app.repositories.assessment_result_outcome import (
+    AssessmentResultOutcomeRepository,
+)
 from app.repositories.assessment_result_publication import (
     AssessmentResultPublicationRepository,
 )
+from app.services.assessment_notification_service import (
+    AssessmentNotificationService,
+)
 from app.services.assessment_results_service import (
     get_assessment_results_summary,
+)
+
+logger = logging.getLogger(
+    __name__,
 )
 
 _UNSET = object()
@@ -356,6 +367,117 @@ def _ensure_approval_if_required(
                 "This assessment requires approval before " "results can be published."
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# Publication notification helpers
+# ---------------------------------------------------------------------------
+
+
+async def _get_authoritative_student_ids_for_assessment(
+    db: AsyncSession,
+    *,
+    assessment_id: int,
+    school_id: int,
+) -> list[int]:
+    """
+    Return the students whose current authoritative result belongs to the
+    assessment being released.
+
+    Publication notifications deliberately follow immutable authoritative
+    outcomes rather than mutable live marking state. Candidates without a
+    current authoritative outcome are therefore not notified as having an
+    official result available.
+    """
+
+    outcomes = await AssessmentResultOutcomeRepository(
+        db,
+    ).list_for_assessment(
+        assessment_id,
+        school_id=school_id,
+        authoritative_only=True,
+        include_relationships=True,
+    )
+
+    return sorted(
+        {
+            int(
+                outcome.candidate.student_id,
+            )
+            for outcome in outcomes
+        }
+    )
+
+
+async def _notify_results_published_best_effort(
+    db: AsyncSession,
+    *,
+    publication: AssessmentResultPublication,
+) -> None:
+    """
+    Notify configured audiences after a publication transaction has committed.
+
+    Notifications are a post-commit side effect. A notification failure must
+    not make a successfully published result release appear to have failed,
+    because a client retry could otherwise duplicate or conflict with the
+    already-committed publication transition.
+    """
+
+    if not (publication.visible_to_students or publication.visible_to_parents):
+        return
+
+    assessment = publication.assessment
+
+    if assessment is None:
+        logger.error(
+            (
+                "Unable to create assessment publication notifications "
+                "because publication %s has no loaded assessment."
+            ),
+            publication.id,
+        )
+        return
+
+    try:
+        student_ids = await _get_authoritative_student_ids_for_assessment(
+            db,
+            assessment_id=publication.assessment_id,
+            school_id=assessment.school_id,
+        )
+
+        if not student_ids:
+            return
+
+        await AssessmentNotificationService(
+            db,
+        ).notify_results_published(
+            assessment_id=publication.assessment_id,
+            assessment_title=assessment.title,
+            school_id=assessment.school_id,
+            student_ids=student_ids,
+            notify_students=publication.visible_to_students,
+            notify_parents=publication.visible_to_parents,
+        )
+
+    except Exception:
+        logger.exception(
+            (
+                "Unable to create assessment publication notifications "
+                "after publication %s was committed."
+            ),
+            publication.id,
+        )
+
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception(
+                (
+                    "Unable to roll back failed notification transaction "
+                    "for assessment publication %s."
+                ),
+                publication.id,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -886,6 +1008,11 @@ async def publish_results(
             detail="Assessment result publication not found.",
         )
 
+    await _notify_results_published_best_effort(
+        db,
+        publication=refreshed,
+    )
+
     return refreshed
 
 
@@ -1034,6 +1161,27 @@ async def publish_due_scheduled_results(
             db,
             conflict_detail=("Unable to publish scheduled assessment results."),
         )
+
+        for publication in published:
+            refreshed = await repository.get_by_id(
+                publication.id,
+            )
+
+            if refreshed is None:
+                logger.error(
+                    (
+                        "Assessment result publication %s could not be "
+                        "reloaded for post-commit notification after "
+                        "scheduled publication."
+                    ),
+                    publication.id,
+                )
+                continue
+
+            await _notify_results_published_best_effort(
+                db,
+                publication=refreshed,
+            )
 
     return published
 

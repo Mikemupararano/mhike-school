@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -20,9 +21,16 @@ from app.repositories.assessment_result_outcome import (
     _UNSET,
 )
 from app.services.assessment_grading_service import grade_script_result
+from app.services.assessment_notification_service import (
+    AssessmentNotificationService,
+)
 from app.services.assessment_results_service import (
     get_candidate_result,
     get_script_result,
+)
+
+logger = logging.getLogger(
+    __name__,
 )
 
 # ---------------------------------------------------------------------------
@@ -721,6 +729,70 @@ async def _get_outcome_or_404(
 
 
 # ---------------------------------------------------------------------------
+# Post-authorisation notification
+# ---------------------------------------------------------------------------
+
+
+async def _notify_authoritative_result_change_best_effort(
+    db: AsyncSession,
+    *,
+    outcome: AssessmentResultOutcome,
+    student_id: int,
+    assessment_title: str,
+) -> None:
+    """
+    Notify the student and linked parents after an official result changes.
+
+    Initial authoritative outcomes are deliberately excluded. Initial result
+    visibility is communicated when assessment results are published.
+
+    Notifications occur only after the authoritative-result transaction has
+    committed. Notification failure must therefore never make a successful
+    official-result transition appear to have failed to the caller.
+
+    ``NotificationService`` currently owns its own commit. If notification
+    persistence fails and leaves the session transaction unusable, the
+    notification transaction is rolled back here. This cannot undo the
+    authoritative result because that transaction has already committed.
+    """
+
+    if outcome.change_type == AssessmentResultChangeType.INITIAL:
+        return
+
+    try:
+        await AssessmentNotificationService(
+            db,
+        ).notify_official_result_changed(
+            assessment_id=outcome.assessment_id,
+            assessment_title=assessment_title,
+            school_id=outcome.school_id,
+            student_id=student_id,
+            change_type=outcome.change_type,
+            include_parents=True,
+        )
+
+    except Exception:
+        logger.exception(
+            (
+                "Unable to create assessment result-change notification "
+                "after authoritative outcome %s was committed."
+            ),
+            outcome.id,
+        )
+
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception(
+                (
+                    "Unable to roll back failed notification transaction "
+                    "for authoritative outcome %s."
+                ),
+                outcome.id,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Create result outcome
 # ---------------------------------------------------------------------------
 
@@ -891,6 +963,18 @@ async def create_assessment_result_outcome(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assessment result outcome not found after creation.",
+        )
+
+    if make_authoritative:
+        await _notify_authoritative_result_change_best_effort(
+            db,
+            outcome=refreshed,
+            student_id=int(
+                snapshot["student_id"],
+            ),
+            assessment_title=str(
+                refreshed.assessment.title,
+            ),
         )
 
     return _outcome_to_dict(
@@ -1223,6 +1307,17 @@ async def authorise_assessment_result_outcome(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assessment result outcome not found after authorisation.",
         )
+
+    await _notify_authoritative_result_change_best_effort(
+        db,
+        outcome=refreshed,
+        student_id=int(
+            refreshed.candidate.student_id,
+        ),
+        assessment_title=str(
+            refreshed.assessment.title,
+        ),
+    )
 
     return _outcome_to_dict(
         refreshed,
