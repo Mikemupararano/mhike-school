@@ -39,6 +39,23 @@ services:
         --loglevel=INFO
         --pool=solo
 
+  beat:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+    command:
+      - bash
+      - -lc
+      - >
+        celery -A app.tasks.celery_app.celery
+        beat
+        --loglevel=INFO
+
   db:
     image: postgres:16
     environment:
