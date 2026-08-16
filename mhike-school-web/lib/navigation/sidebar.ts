@@ -5,6 +5,7 @@ import {
     BookOpen,
     Brush,
     CalendarDays,
+    ClipboardList,
     CreditCard,
     FileSpreadsheet,
     FileText,
@@ -88,13 +89,18 @@ export const teacherSidebar: SidebarSection[] = [
             },
             {
                 label: "Courses",
-                href: "/courses",
+                href: "/teacher/courses",
                 icon: BookOpen,
             },
             {
                 label: "Classes",
                 href: "/teacher/classes",
                 icon: Users,
+            },
+            {
+                label: "Assessments",
+                href: "/teacher/assessments",
+                icon: ClipboardList,
             },
             {
                 label: "Reports",
@@ -430,5 +436,8 @@ export function getSidebarItems(
     return getSidebarSections(
         role,
         roles,
-    ).flatMap((section) => section.items);
+    ).flatMap(
+        section =>
+            section.items,
+    );
 }

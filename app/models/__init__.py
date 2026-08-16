@@ -5,6 +5,7 @@ from app.models.assessment_candidate import (
     AssessmentScript,
     AssessmentScriptStatus,
 )
+from app.models.assessment_document import AssessmentDocument
 from app.models.assessment_feedback import (
     AssessmentFeedback,
     AssessmentFeedbackStatus,
@@ -81,6 +82,7 @@ __all__ = [
     "Assessment",
     "AssessmentCandidate",
     "AssessmentCandidateStatus",
+    "AssessmentDocument",
     "AssessmentFeedback",
     "AssessmentFeedbackStatus",
     "AssessmentGradeBoundary",

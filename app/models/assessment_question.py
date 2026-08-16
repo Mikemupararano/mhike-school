@@ -38,6 +38,9 @@ class AssessmentSection(Base):
 
     Sections allow an assessment to group related questions while keeping
     question numbering and marking logic independent.
+
+    A section does not own its questions. Deleting a section therefore leaves
+    its questions in the assessment and removes only their section assignment.
     """
 
     __tablename__ = "assessment_sections"
@@ -95,9 +98,9 @@ class AssessmentSection(Base):
     questions: Mapped[list["AssessmentQuestion"]] = relationship(
         "AssessmentQuestion",
         back_populates="section",
-        cascade="all, delete-orphan",
         lazy="selectin",
         order_by="AssessmentQuestion.order",
+        passive_deletes=True,
     )
 
     def __repr__(self) -> str:
@@ -127,6 +130,12 @@ class AssessmentQuestion(Base):
 
     Candidate responses are stored separately through ``AssessmentResponse``
     records so the same question can be answered independently by many scripts.
+
+    Section membership is optional. Deleting a section sets ``section_id`` to
+    NULL rather than deleting the question.
+
+    Child questions are structurally owned by their parent question and are
+    removed when that parent is deleted.
     """
 
     __tablename__ = "assessment_questions"

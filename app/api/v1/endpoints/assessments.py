@@ -18,8 +18,26 @@ from app.models.user import User
 from app.schemas.assessment import (
     AssessmentCreate,
     AssessmentOut,
+    AssessmentQuestionCreate,
+    AssessmentQuestionOut,
+    AssessmentQuestionUpdate,
+    AssessmentSectionCreate,
+    AssessmentSectionOut,
+    AssessmentSectionUpdate,
     AssessmentStatusUpdate,
     AssessmentUpdate,
+)
+from app.services.assessment_question_service import (
+    create_assessment_question,
+    create_assessment_section,
+    delete_assessment_question,
+    delete_assessment_section,
+    get_assessment_question,
+    get_assessment_section,
+    list_assessment_questions,
+    list_assessment_sections,
+    update_assessment_question,
+    update_assessment_section,
 )
 from app.services.assessment_service import (
     archive_assessment,
@@ -301,6 +319,433 @@ async def update_assessment_endpoint(
         db,
         current_user=current_user,
         assessment_id=assessment.id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assessment sections - retrieval
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{assessment_id}/sections",
+    response_model=list[AssessmentSectionOut],
+)
+async def list_assessment_sections_endpoint(
+    assessment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[AssessmentSectionOut]:
+    """
+    Return the sections configured for an assessment.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        sections = await list_assessment_sections(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return [
+        AssessmentSectionOut.model_validate(
+            section,
+        )
+        for section in sections
+    ]
+
+
+@router.get(
+    "/{assessment_id}/sections/{section_id}",
+    response_model=AssessmentSectionOut,
+)
+async def get_assessment_section_endpoint(
+    assessment_id: int,
+    section_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentSectionOut:
+    """
+    Return one section belonging to an assessment.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        section = await get_assessment_section(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            section_id=section_id,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentSectionOut.model_validate(
+        section,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assessment sections - mutations
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{assessment_id}/sections",
+    response_model=AssessmentSectionOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_assessment_section_endpoint(
+    assessment_id: int,
+    payload: AssessmentSectionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentSectionOut:
+    """
+    Create a section within a draft assessment.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        section = await create_assessment_section(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            title=payload.title,
+            description=payload.description,
+            order=payload.order,
+            is_optional=payload.is_optional,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentSectionOut.model_validate(
+        section,
+    )
+
+
+@router.patch(
+    "/{assessment_id}/sections/{section_id}",
+    response_model=AssessmentSectionOut,
+)
+async def update_assessment_section_endpoint(
+    assessment_id: int,
+    section_id: int,
+    payload: AssessmentSectionUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentSectionOut:
+    """
+    Update a section within a draft assessment.
+
+    Explicit null for ``description`` clears the description. Omitting the
+    field leaves the current description unchanged.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    fields_set = payload.model_fields_set
+
+    try:
+        section = await update_assessment_section(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            section_id=section_id,
+            title=payload.title,
+            description=payload.description,
+            order=payload.order,
+            is_optional=payload.is_optional,
+            update_description="description" in fields_set,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentSectionOut.model_validate(
+        section,
+    )
+
+
+@router.delete(
+    "/{assessment_id}/sections/{section_id}",
+    response_model=AssessmentOut,
+)
+async def delete_assessment_section_endpoint(
+    assessment_id: int,
+    section_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentOut:
+    """
+    Delete a section from a draft assessment.
+
+    Questions assigned to the section remain in the assessment and become
+    unsectioned.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        assessment = await delete_assessment_section(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            section_id=section_id,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentOut.model_validate(
+        assessment,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assessment questions - retrieval
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{assessment_id}/questions",
+    response_model=list[AssessmentQuestionOut],
+)
+async def list_assessment_questions_endpoint(
+    assessment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[AssessmentQuestionOut]:
+    """
+    Return the questions configured for an assessment.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        questions = await list_assessment_questions(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return [
+        AssessmentQuestionOut.model_validate(
+            question,
+        )
+        for question in questions
+    ]
+
+
+@router.get(
+    "/{assessment_id}/questions/{question_id}",
+    response_model=AssessmentQuestionOut,
+)
+async def get_assessment_question_endpoint(
+    assessment_id: int,
+    question_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentQuestionOut:
+    """
+    Return one question belonging to an assessment.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        question = await get_assessment_question(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            question_id=question_id,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentQuestionOut.model_validate(
+        question,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assessment questions - mutations
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{assessment_id}/questions",
+    response_model=AssessmentQuestionOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_assessment_question_endpoint(
+    assessment_id: int,
+    payload: AssessmentQuestionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentQuestionOut:
+    """
+    Create a question within a draft assessment.
+
+    Section and parent-question references must belong to the same assessment.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        question = await create_assessment_question(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            section_id=payload.section_id,
+            parent_question_id=payload.parent_question_id,
+            question_number=payload.question_number,
+            title=payload.title,
+            prompt=payload.prompt,
+            maximum_mark=payload.maximum_mark,
+            order=payload.order,
+            is_markable=payload.is_markable,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentQuestionOut.model_validate(
+        question,
+    )
+
+
+@router.patch(
+    "/{assessment_id}/questions/{question_id}",
+    response_model=AssessmentQuestionOut,
+)
+async def update_assessment_question_endpoint(
+    assessment_id: int,
+    question_id: int,
+    payload: AssessmentQuestionUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentQuestionOut:
+    """
+    Update a question within a draft assessment.
+
+    PATCH semantics distinguish omitted nullable fields from explicit nulls.
+
+    Explicit null may therefore:
+
+    - remove the section assignment;
+    - remove the parent-question relationship;
+    - clear the question title;
+    - clear the question prompt.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    fields_set = payload.model_fields_set
+
+    try:
+        question = await update_assessment_question(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            question_id=question_id,
+            question_number=payload.question_number,
+            maximum_mark=payload.maximum_mark,
+            section_id=payload.section_id,
+            parent_question_id=payload.parent_question_id,
+            title=payload.title,
+            prompt=payload.prompt,
+            order=payload.order,
+            is_markable=payload.is_markable,
+            update_section="section_id" in fields_set,
+            update_parent="parent_question_id" in fields_set,
+            update_title="title" in fields_set,
+            update_prompt="prompt" in fields_set,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentQuestionOut.model_validate(
+        question,
+    )
+
+
+@router.delete(
+    "/{assessment_id}/questions/{question_id}",
+    response_model=AssessmentOut,
+)
+async def delete_assessment_question_endpoint(
+    assessment_id: int,
+    question_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentOut:
+    """
+    Delete a question from a draft assessment.
+
+    Child questions are removed according to the configured question
+    hierarchy cascade.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    try:
+        assessment = await delete_assessment_question(
+            db=db,
+            current_user=current_user,
+            assessment_id=assessment_id,
+            question_id=question_id,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(
+            exc,
+        ) from exc
+
+    return AssessmentOut.model_validate(
+        assessment,
     )
 
 

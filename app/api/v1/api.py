@@ -1,9 +1,11 @@
 from fastapi import APIRouter
 
+
 from app.api.v1.endpoints import (
     assessment_analytics,
     assessment_candidates,
     assessment_cohort_performance,
+    assessment_documents,
     assessment_feedback,
     assessment_grading,
     assessment_marking,
@@ -130,6 +132,13 @@ api_router.include_router(
     assessments.router,
     prefix="/assessments",
     tags=["assessments"],
+)
+
+
+api_router.include_router(
+    assessment_documents.router,
+    prefix="/assessments",
+    tags=["assessment-documents"],
 )
 
 
