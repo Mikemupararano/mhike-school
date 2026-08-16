@@ -474,6 +474,16 @@ async def test_create_review_moves_marked_script_to_moderation(
 
         return repository.reviews[review_id]
 
+    async def fake_notify_moderation_required(
+        db,
+        *,
+        assessment,
+        review,
+    ):
+        del db
+        del assessment
+        del review
+
     monkeypatch.setattr(
         service,
         "_get_script_or_404",
@@ -493,6 +503,11 @@ async def test_create_review_moves_marked_script_to_moderation(
         service,
         "_get_review_or_404",
         fake_get_review,
+    )
+    monkeypatch.setattr(
+        service,
+        "_notify_moderation_required_best_effort",
+        fake_notify_moderation_required,
     )
 
     result = await service.create_moderation_review(
@@ -584,6 +599,16 @@ async def test_create_review_does_not_reopen_finalised_script(
 
         return repository.reviews[review_id]
 
+    async def fake_notify_moderation_required(
+        db,
+        *,
+        assessment,
+        review,
+    ):
+        del db
+        del assessment
+        del review
+
     monkeypatch.setattr(
         service,
         "_get_script_or_404",
@@ -603,6 +628,11 @@ async def test_create_review_does_not_reopen_finalised_script(
         service,
         "_get_review_or_404",
         fake_get_review,
+    )
+    monkeypatch.setattr(
+        service,
+        "_notify_moderation_required_best_effort",
+        fake_notify_moderation_required,
     )
 
     await service.create_moderation_review(
@@ -676,6 +706,346 @@ async def test_unmarked_script_cannot_enter_moderation(
         )
 
     assert exc.value.status_code == 409
+
+
+# ----------------------------------------------------------------------
+# Moderation-required notifications
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_moderation_required_notification_uses_assigned_moderator(
+    monkeypatch,
+) -> None:
+    db = _FakeDB()
+    calls: list[dict[str, Any]] = []
+
+    assessment = SimpleNamespace(
+        id=20,
+        school_id=10,
+        title="Physics Forces Test",
+    )
+    review = _review(
+        review_id=7,
+        moderator_id=123,
+    )
+
+    class _FakeAssessmentNotificationService:
+        def __init__(
+            self,
+            supplied_db,
+        ) -> None:
+            assert supplied_db is db
+
+        async def notify_moderation_required(
+            self,
+            **kwargs: Any,
+        ):
+            calls.append(
+                dict(
+                    kwargs,
+                ),
+            )
+
+    monkeypatch.setattr(
+        service,
+        "AssessmentNotificationService",
+        _FakeAssessmentNotificationService,
+    )
+
+    await service._notify_moderation_required_best_effort(
+        db,
+        assessment=assessment,
+        review=review,
+    )
+
+    assert calls == [
+        {
+            "assessment_id": 20,
+            "assessment_title": "Physics Forces Test",
+            "school_id": 10,
+            "moderator_user_id": 123,
+        }
+    ]
+    assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_moderation_required_notification_failure_is_best_effort(
+    monkeypatch,
+) -> None:
+    db = _FakeDB()
+
+    assessment = SimpleNamespace(
+        id=20,
+        school_id=10,
+        title="Physics Forces Test",
+    )
+    review = _review(
+        review_id=7,
+        moderator_id=123,
+    )
+
+    class _FailingAssessmentNotificationService:
+        def __init__(
+            self,
+            supplied_db,
+        ) -> None:
+            assert supplied_db is db
+
+        async def notify_moderation_required(
+            self,
+            **kwargs: Any,
+        ):
+            del kwargs
+
+            raise RuntimeError(
+                "notification unavailable",
+            )
+
+    monkeypatch.setattr(
+        service,
+        "AssessmentNotificationService",
+        _FailingAssessmentNotificationService,
+    )
+
+    await service._notify_moderation_required_best_effort(
+        db,
+        assessment=assessment,
+        review=review,
+    )
+
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_create_review_notifies_only_after_commit(
+    monkeypatch,
+) -> None:
+    db = _FakeDB()
+    repository = _FakeModerationRepository()
+
+    _install_repository(
+        monkeypatch,
+        repository,
+    )
+
+    script = _script(
+        script_status=AssessmentScriptStatus.MARKED,
+    )
+
+    candidate = SimpleNamespace(
+        id=30,
+        assessment_id=20,
+    )
+
+    assessment = SimpleNamespace(
+        id=20,
+        school_id=10,
+        course_id=5,
+        title="Physics Forces Test",
+    )
+
+    async def fake_get_script(
+        db,
+        script_id,
+    ):
+        del db
+        del script_id
+
+        return script
+
+    async def fake_access(
+        db,
+        current_user,
+        supplied_script,
+    ):
+        del db
+        del current_user
+
+        assert supplied_script is script
+
+        return candidate, assessment
+
+    async def fake_moderator_validation(
+        db,
+        moderator_id,
+        *,
+        school_id,
+    ):
+        del db
+
+        assert moderator_id == 123
+        assert school_id == 10
+
+        return _user(
+            user_id=123,
+        )
+
+    async def fake_get_review(
+        db,
+        review_id,
+        *,
+        include_items=False,
+    ):
+        del db
+        del include_items
+
+        return repository.reviews[review_id]
+
+    notification_calls: list[dict[str, Any]] = []
+
+    async def fake_notify(
+        supplied_db,
+        *,
+        assessment,
+        review,
+    ):
+        assert supplied_db is db
+        assert db.commits == 1
+
+        notification_calls.append(
+            {
+                "assessment_id": assessment.id,
+                "assessment_title": assessment.title,
+                "review_id": review.id,
+                "moderator_id": review.moderator_id,
+            }
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_get_script_or_404",
+        fake_get_script,
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_script_moderation_access",
+        fake_access,
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_moderator_assignment_valid",
+        fake_moderator_validation,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_review_or_404",
+        fake_get_review,
+    )
+    monkeypatch.setattr(
+        service,
+        "_notify_moderation_required_best_effort",
+        fake_notify,
+    )
+
+    result = await service.create_moderation_review(
+        db,
+        _user(),
+        40,
+        moderator_id=123,
+    )
+
+    assert result.id == 1
+    assert result.moderator_id == 123
+    assert db.commits == 1
+    assert db.rollbacks == 0
+
+    assert notification_calls == [
+        {
+            "assessment_id": 20,
+            "assessment_title": "Physics Forces Test",
+            "review_id": 1,
+            "moderator_id": 123,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_review_does_not_notify_when_creation_fails_before_commit(
+    monkeypatch,
+) -> None:
+    db = _FakeDB()
+
+    script = _script(
+        script_status=AssessmentScriptStatus.MARKING,
+    )
+
+    async def fake_get_script(
+        db,
+        script_id,
+    ):
+        del db
+        del script_id
+
+        return script
+
+    async def fake_access(
+        db,
+        current_user,
+        supplied_script,
+    ):
+        del db
+        del current_user
+        del supplied_script
+
+        return (
+            SimpleNamespace(
+                id=30,
+                assessment_id=20,
+            ),
+            SimpleNamespace(
+                id=20,
+                school_id=10,
+                title="Physics Forces Test",
+            ),
+        )
+
+    notification_calls: list[int] = []
+
+    async def fake_notify(
+        db,
+        *,
+        assessment,
+        review,
+    ):
+        del db
+        del assessment
+        del review
+
+        notification_calls.append(
+            1,
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_get_script_or_404",
+        fake_get_script,
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_script_moderation_access",
+        fake_access,
+    )
+    monkeypatch.setattr(
+        service,
+        "_notify_moderation_required_best_effort",
+        fake_notify,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        await service.create_moderation_review(
+            db,
+            _user(),
+            40,
+            moderator_id=123,
+        )
+
+    assert exc.value.status_code == 409
+    assert db.commits == 0
+    assert notification_calls == []
 
 
 # ----------------------------------------------------------------------

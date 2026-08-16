@@ -59,6 +59,7 @@ class NotificationService:
             )
 
             preferences = preference_result.scalars().first()
+
         delivery_channels: list[str] = []
 
         if email_enabled and (preferences is None or preferences.email_enabled):
@@ -103,13 +104,14 @@ class NotificationService:
             ),
         }
 
+        # User-targeted notifications are private and must not also be emitted
+        # to the school-wide socket room merely because they carry school_id.
         if notification.user_id is not None:
             await emit_user_notification(
                 user_id=notification.user_id,
                 payload=payload,
             )
-
-        if notification.school_id is not None:
+        elif notification.school_id is not None:
             await emit_school_notification(
                 school_id=notification.school_id,
                 payload=payload,

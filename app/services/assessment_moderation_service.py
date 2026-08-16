@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -34,6 +35,13 @@ from app.repositories.assessment import AssessmentRepository
 from app.repositories.assessment_candidate import AssessmentCandidateRepository
 from app.repositories.assessment_moderation import AssessmentModerationRepository
 from app.repositories.course import CourseRepository
+from app.services.assessment_notification_service import (
+    AssessmentNotificationService,
+)
+
+logger = logging.getLogger(
+    __name__,
+)
 
 # ----------------------------------------------------------------------
 # Role helpers
@@ -647,6 +655,57 @@ def _ensure_assigned_moderator_or_platform_admin(
 
 
 # ----------------------------------------------------------------------
+# Moderation notification helper
+# ----------------------------------------------------------------------
+
+
+async def _notify_moderation_required_best_effort(
+    db: AsyncSession,
+    *,
+    assessment: Assessment,
+    review: AssessmentModerationReview,
+) -> None:
+    """
+    Notify the assigned moderator after the review transaction has committed.
+
+    Notification delivery is deliberately best-effort. A failure in the
+    notification subsystem must not make a successfully committed moderation
+    review appear to have failed, because retrying the review creation could
+    otherwise create a conflict or duplicate operational work.
+    """
+
+    try:
+        await AssessmentNotificationService(
+            db,
+        ).notify_moderation_required(
+            assessment_id=assessment.id,
+            assessment_title=assessment.title,
+            school_id=assessment.school_id,
+            moderator_user_id=review.moderator_id,
+        )
+
+    except Exception:
+        logger.exception(
+            (
+                "Unable to create moderation-required notification "
+                "after moderation review %s was committed."
+            ),
+            review.id,
+        )
+
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception(
+                (
+                    "Unable to roll back failed notification transaction "
+                    "for moderation review %s."
+                ),
+                review.id,
+            )
+
+
+# ----------------------------------------------------------------------
 # Review creation
 # ----------------------------------------------------------------------
 
@@ -735,11 +794,19 @@ async def create_moderation_review(
         await db.flush()
         await db.commit()
 
-        return await _get_review_or_404(
+        refreshed = await _get_review_or_404(
             db,
             review.id,
             include_items=True,
         )
+
+        await _notify_moderation_required_best_effort(
+            db,
+            assessment=assessment,
+            review=refreshed,
+        )
+
+        return refreshed
 
     except IntegrityError as exc:
         await db.rollback()

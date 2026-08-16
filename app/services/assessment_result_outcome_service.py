@@ -20,6 +20,9 @@ from app.repositories.assessment_result_outcome import (
     AssessmentResultOutcomeRepository,
     _UNSET,
 )
+from app.repositories.assessment_result_publication import (
+    AssessmentResultPublicationRepository,
+)
 from app.services.assessment_grading_service import grade_script_result
 from app.services.assessment_notification_service import (
     AssessmentNotificationService,
@@ -741,25 +744,44 @@ async def _notify_authoritative_result_change_best_effort(
     assessment_title: str,
 ) -> None:
     """
-    Notify the student and linked parents after an official result changes.
+    Notify only audiences that can currently see the published assessment.
 
     Initial authoritative outcomes are deliberately excluded. Initial result
-    visibility is communicated when assessment results are published.
+    visibility is communicated by the publication event itself.
+
+    Non-initial authoritative changes are also silent while results are
+    unreleased, scheduled, or withdrawn. If results are currently published,
+    student and parent notification audiences follow the publication's
+    ``visible_to_students`` and ``visible_to_parents`` flags independently.
 
     Notifications occur only after the authoritative-result transaction has
     committed. Notification failure must therefore never make a successful
     official-result transition appear to have failed to the caller.
-
-    ``NotificationService`` currently owns its own commit. If notification
-    persistence fails and leaves the session transaction unusable, the
-    notification transaction is rolled back here. This cannot undo the
-    authoritative result because that transaction has already committed.
     """
 
     if outcome.change_type == AssessmentResultChangeType.INITIAL:
         return
 
     try:
+        publication = await AssessmentResultPublicationRepository(
+            db,
+        ).get_published_for_assessment(
+            outcome.assessment_id,
+        )
+
+        if publication is None:
+            return
+
+        notify_student = bool(
+            publication.visible_to_students,
+        )
+        notify_parents = bool(
+            publication.visible_to_parents,
+        )
+
+        if not (notify_student or notify_parents):
+            return
+
         await AssessmentNotificationService(
             db,
         ).notify_official_result_changed(
@@ -768,7 +790,8 @@ async def _notify_authoritative_result_change_best_effort(
             school_id=outcome.school_id,
             student_id=student_id,
             change_type=outcome.change_type,
-            include_parents=True,
+            notify_student=notify_student,
+            notify_parents=notify_parents,
         )
 
     except Exception:

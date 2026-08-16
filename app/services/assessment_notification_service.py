@@ -467,15 +467,23 @@ class AssessmentNotificationService:
         school_id: int,
         student_id: int,
         change_type: AssessmentResultChangeType,
-        include_parents: bool = True,
+        notify_student: bool = True,
+        notify_parents: bool = True,
+        include_parents: bool | None = None,
     ) -> list[Notification]:
         """
-        Notify a student, and optionally linked parents, when the student's
-        official authoritative result changes.
+        Notify the configured student and/or parent audiences when an
+        authoritative assessment result changes.
 
         This method must be called only after the new result has become
         authoritative. Draft or provisional result changes must not trigger
         this notification.
+
+        ``include_parents`` is retained temporarily as a backwards-compatible
+        alias for the former API. When supplied, it overrides
+        ``notify_parents``. New callers should use ``notify_student`` and
+        ``notify_parents`` explicitly so publication visibility can be mapped
+        without ambiguity.
         """
 
         self._validate_positive_integer(
@@ -491,6 +499,33 @@ class AssessmentNotificationService:
             "student_id",
         )
 
+        if not isinstance(
+            notify_student,
+            bool,
+        ):
+            raise ValueError(
+                "notify_student must be a boolean.",
+            )
+
+        if not isinstance(
+            notify_parents,
+            bool,
+        ):
+            raise ValueError(
+                "notify_parents must be a boolean.",
+            )
+
+        if include_parents is not None:
+            if not isinstance(
+                include_parents,
+                bool,
+            ):
+                raise ValueError(
+                    "include_parents must be a boolean or null.",
+                )
+
+            notify_parents = include_parents
+
         cleaned_title = self._clean_required_text(
             assessment_title,
             "assessment_title",
@@ -500,11 +535,14 @@ class AssessmentNotificationService:
             change_type,
         )
 
-        recipient_ids: set[int] = {
-            student_id,
-        }
+        recipient_ids: set[int] = set()
 
-        if include_parents:
+        if notify_student:
+            recipient_ids.add(
+                student_id,
+            )
+
+        if notify_parents:
             parent_ids = await self._get_parent_user_ids(
                 student_id=student_id,
                 school_id=school_id,
@@ -514,12 +552,15 @@ class AssessmentNotificationService:
                 parent_ids,
             )
 
+        if not recipient_ids:
+            return []
+
         return await self._notify_users(
             school_id=school_id,
             user_ids=recipient_ids,
             title="Official assessment result updated",
             message=(
-                f"Your official result for {cleaned_title} "
+                f"Official result for {cleaned_title} "
                 f"has been updated following a {change_label}."
             ),
             priority="high",

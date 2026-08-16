@@ -833,7 +833,8 @@ async def test_official_result_changed_notifies_student_and_parents():
         school_id=1,
         student_id=101,
         change_type=AssessmentResultChangeType.REMARK,
-        include_parents=True,
+        notify_student=True,
+        notify_parents=True,
     )
 
     assert [notification.user_id for notification in notifications] == [
@@ -850,7 +851,7 @@ async def test_official_result_changed_notifies_student_and_parents():
     assert all(
         notification.message
         == (
-            "Your official result for Physics Forces Test "
+            "Official result for Physics Forces Test "
             "has been updated following a remark."
         )
         for notification in notifications
@@ -860,7 +861,7 @@ async def test_official_result_changed_notifies_student_and_parents():
 
 
 @pytest.mark.asyncio
-async def test_official_result_changed_can_exclude_parents():
+async def test_official_result_changed_student_only_audience():
     instance = _build_service()
 
     instance.parent_student_repository.parents_by_student = {
@@ -882,6 +883,114 @@ async def test_official_result_changed_can_exclude_parents():
         school_id=1,
         student_id=101,
         change_type=AssessmentResultChangeType.CORRECTION,
+        notify_student=True,
+        notify_parents=False,
+    )
+
+    assert [notification.user_id for notification in notifications] == [
+        101,
+    ]
+
+    assert instance.parent_student_repository.calls == []
+
+
+@pytest.mark.asyncio
+async def test_official_result_changed_parent_only_audience():
+    instance = _build_service()
+
+    instance.parent_student_repository.parents_by_student = {
+        101: [
+            201,
+            202,
+        ],
+    }
+
+    await _allow_school_users(
+        instance,
+        allowed_user_ids={
+            201,
+            202,
+        },
+    )
+
+    notifications = await instance.notify_official_result_changed(
+        assessment_id=50,
+        assessment_title="Physics Forces Test",
+        school_id=1,
+        student_id=101,
+        change_type=AssessmentResultChangeType.MODERATION,
+        notify_student=False,
+        notify_parents=True,
+    )
+
+    assert [notification.user_id for notification in notifications] == [
+        201,
+        202,
+    ]
+
+    assert (
+        len(
+            instance.parent_student_repository.calls,
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_official_result_changed_no_audience_returns_empty():
+    instance = _build_service()
+
+    instance.parent_student_repository.parents_by_student = {
+        101: [
+            201,
+        ],
+    }
+
+    await _allow_school_users(
+        instance,
+        allowed_user_ids=set(),
+    )
+
+    notifications = await instance.notify_official_result_changed(
+        assessment_id=50,
+        assessment_title="Physics Forces Test",
+        school_id=1,
+        student_id=101,
+        change_type=AssessmentResultChangeType.ADMINISTRATIVE,
+        notify_student=False,
+        notify_parents=False,
+    )
+
+    assert notifications == []
+    assert instance.parent_student_repository.calls == []
+    assert instance.notification_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_official_result_changed_legacy_include_parents_overrides_new_flag():
+    instance = _build_service()
+
+    instance.parent_student_repository.parents_by_student = {
+        101: [
+            201,
+        ],
+    }
+
+    await _allow_school_users(
+        instance,
+        allowed_user_ids={
+            101,
+        },
+    )
+
+    notifications = await instance.notify_official_result_changed(
+        assessment_id=50,
+        assessment_title="Physics Forces Test",
+        school_id=1,
+        student_id=101,
+        change_type=AssessmentResultChangeType.CORRECTION,
+        notify_student=True,
+        notify_parents=True,
         include_parents=False,
     )
 
@@ -890,6 +999,53 @@ async def test_official_result_changed_can_exclude_parents():
     ]
 
     assert instance.parent_student_repository.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "field_name",
+        "kwargs",
+    ),
+    [
+        (
+            "notify_student",
+            {
+                "notify_student": 1,
+            },
+        ),
+        (
+            "notify_parents",
+            {
+                "notify_parents": 1,
+            },
+        ),
+        (
+            "include_parents",
+            {
+                "include_parents": 1,
+            },
+        ),
+    ],
+)
+async def test_official_result_changed_rejects_invalid_audience_flags(
+    field_name,
+    kwargs,
+):
+    instance = _build_service()
+
+    with pytest.raises(
+        ValueError,
+        match=field_name,
+    ):
+        await instance.notify_official_result_changed(
+            assessment_id=50,
+            assessment_title="Physics Forces Test",
+            school_id=1,
+            student_id=101,
+            change_type=AssessmentResultChangeType.REMARK,
+            **kwargs,
+        )
 
 
 @pytest.mark.asyncio
@@ -909,11 +1065,12 @@ async def test_official_result_changed_uses_change_type_wording():
         school_id=1,
         student_id=101,
         change_type=AssessmentResultChangeType.RETAKE,
-        include_parents=False,
+        notify_student=True,
+        notify_parents=False,
     )
 
     assert notifications[0].message == (
-        "Your official result for Physics Forces Test "
+        "Official result for Physics Forces Test "
         "has been updated following a retake."
     )
 

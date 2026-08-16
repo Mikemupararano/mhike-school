@@ -2124,7 +2124,8 @@ class _FakeAssessmentNotificationService:
         school_id,
         student_id,
         change_type,
-        include_parents,
+        notify_student,
+        notify_parents,
     ):
         type(self).calls.append(
             {
@@ -2133,7 +2134,8 @@ class _FakeAssessmentNotificationService:
                 "school_id": school_id,
                 "student_id": student_id,
                 "change_type": change_type,
-                "include_parents": include_parents,
+                "notify_student": notify_student,
+                "notify_parents": notify_parents,
             }
         )
 
@@ -2160,12 +2162,61 @@ def _patch_assessment_notification_service(
     return _FakeAssessmentNotificationService
 
 
+def _patch_publication_repository(
+    monkeypatch,
+    *,
+    published=True,
+    visible_to_students=True,
+    visible_to_parents=True,
+):
+    calls: list[int] = []
+
+    publication = (
+        SimpleNamespace(
+            visible_to_students=visible_to_students,
+            visible_to_parents=visible_to_parents,
+        )
+        if published
+        else None
+    )
+
+    class _FakePublicationRepository:
+        def __init__(
+            self,
+            db,
+        ):
+            self.db = db
+
+        async def get_published_for_assessment(
+            self,
+            assessment_id,
+        ):
+            calls.append(
+                assessment_id,
+            )
+
+            return publication
+
+    monkeypatch.setattr(
+        service,
+        "AssessmentResultPublicationRepository",
+        _FakePublicationRepository,
+    )
+
+    return calls
+
+
 @pytest.mark.asyncio
 async def test_initial_authoritative_notification_helper_is_silent(
     monkeypatch,
 ):
     fake_notifications = _patch_assessment_notification_service(
         monkeypatch,
+    )
+
+    publication_calls = _patch_publication_repository(
+        monkeypatch,
+        published=True,
     )
 
     await service._notify_authoritative_result_change_best_effort(
@@ -2178,14 +2229,20 @@ async def test_initial_authoritative_notification_helper_is_silent(
     )
 
     assert fake_notifications.calls == []
+    assert publication_calls == []
 
 
 @pytest.mark.asyncio
-async def test_non_initial_authoritative_notification_helper_notifies_once(
+async def test_non_initial_authoritative_notification_helper_is_silent_when_unpublished(
     monkeypatch,
 ):
     fake_notifications = _patch_assessment_notification_service(
         monkeypatch,
+    )
+
+    publication_calls = _patch_publication_repository(
+        monkeypatch,
+        published=False,
     )
 
     await service._notify_authoritative_result_change_best_effort(
@@ -2198,6 +2255,73 @@ async def test_non_initial_authoritative_notification_helper_notifies_once(
         assessment_title="Physics Test",
     )
 
+    assert publication_calls == [
+        100,
+    ]
+    assert fake_notifications.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "visible_to_students",
+        "visible_to_parents",
+        "expected_notify_student",
+        "expected_notify_parents",
+    ),
+    [
+        (
+            True,
+            False,
+            True,
+            False,
+        ),
+        (
+            False,
+            True,
+            False,
+            True,
+        ),
+        (
+            True,
+            True,
+            True,
+            True,
+        ),
+    ],
+)
+async def test_non_initial_authoritative_notification_helper_respects_published_audiences(
+    monkeypatch,
+    visible_to_students,
+    visible_to_parents,
+    expected_notify_student,
+    expected_notify_parents,
+):
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    publication_calls = _patch_publication_repository(
+        monkeypatch,
+        published=True,
+        visible_to_students=visible_to_students,
+        visible_to_parents=visible_to_parents,
+    )
+
+    await service._notify_authoritative_result_change_best_effort(
+        FakeDB(),
+        outcome=_outcome(
+            outcome_id=8,
+            change_type=AssessmentResultChangeType.REMARK,
+        ),
+        student_id=400,
+        assessment_title="Physics Test",
+    )
+
+    assert publication_calls == [
+        100,
+    ]
+
     assert fake_notifications.calls == [
         {
             "assessment_id": 100,
@@ -2205,9 +2329,41 @@ async def test_non_initial_authoritative_notification_helper_notifies_once(
             "school_id": 1,
             "student_id": 400,
             "change_type": AssessmentResultChangeType.REMARK,
-            "include_parents": True,
+            "notify_student": expected_notify_student,
+            "notify_parents": expected_notify_parents,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_non_initial_authoritative_notification_helper_is_silent_when_no_audience_visible(
+    monkeypatch,
+):
+    fake_notifications = _patch_assessment_notification_service(
+        monkeypatch,
+    )
+
+    publication_calls = _patch_publication_repository(
+        monkeypatch,
+        published=True,
+        visible_to_students=False,
+        visible_to_parents=False,
+    )
+
+    await service._notify_authoritative_result_change_best_effort(
+        FakeDB(),
+        outcome=_outcome(
+            outcome_id=8,
+            change_type=AssessmentResultChangeType.CORRECTION,
+        ),
+        student_id=400,
+        assessment_title="Physics Test",
+    )
+
+    assert publication_calls == [
+        100,
+    ]
+    assert fake_notifications.calls == []
 
 
 @pytest.mark.asyncio
@@ -2222,6 +2378,13 @@ async def test_notification_failure_does_not_fail_committed_result(
         error=RuntimeError(
             "notification unavailable",
         ),
+    )
+
+    _patch_publication_repository(
+        monkeypatch,
+        published=True,
+        visible_to_students=True,
+        visible_to_parents=True,
     )
 
     await service._notify_authoritative_result_change_best_effort(
@@ -2334,6 +2497,13 @@ async def test_create_initial_authoritative_outcome_does_not_notify_recipient(
         monkeypatch,
     )
 
+    _patch_publication_repository(
+        monkeypatch,
+        published=True,
+        visible_to_students=True,
+        visible_to_parents=False,
+    )
+
     monkeypatch.setattr(
         service,
         "_build_result_snapshot",
@@ -2387,6 +2557,13 @@ async def test_create_non_initial_authoritative_outcome_notifies_once(
         monkeypatch,
     )
 
+    _patch_publication_repository(
+        monkeypatch,
+        published=True,
+        visible_to_students=True,
+        visible_to_parents=False,
+    )
+
     monkeypatch.setattr(
         service,
         "_build_result_snapshot",
@@ -2409,6 +2586,8 @@ async def test_create_non_initial_authoritative_outcome_notifies_once(
         )
         == 1
     )
+    assert fake_notifications.calls[0]["notify_student"] is True
+    assert fake_notifications.calls[0]["notify_parents"] is False
 
     call = fake_notifications.calls[0]
 
@@ -2417,7 +2596,6 @@ async def test_create_non_initial_authoritative_outcome_notifies_once(
     assert call["school_id"] == 1
     assert call["student_id"] == 400
     assert call["change_type"] == AssessmentResultChangeType.REMARK
-    assert call["include_parents"] is True
 
 
 @pytest.mark.asyncio
@@ -2516,6 +2694,13 @@ async def test_authorise_non_initial_draft_notifies_once(
         monkeypatch,
     )
 
+    _patch_publication_repository(
+        monkeypatch,
+        published=True,
+        visible_to_students=False,
+        visible_to_parents=True,
+    )
+
     monkeypatch.setattr(
         service,
         "_get_outcome_or_404",
@@ -2535,6 +2720,8 @@ async def test_authorise_non_initial_draft_notifies_once(
         )
         == 1
     )
+    assert fake_notifications.calls[0]["notify_student"] is False
+    assert fake_notifications.calls[0]["notify_parents"] is True
 
     call = fake_notifications.calls[0]
 
@@ -2543,4 +2730,3 @@ async def test_authorise_non_initial_draft_notifies_once(
     assert call["school_id"] == 1
     assert call["student_id"] == 400
     assert call["change_type"] == AssessmentResultChangeType.REMARK
-    assert call["include_parents"] is True
