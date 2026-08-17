@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     assessment_grading,
     assessment_marking,
     assessment_moderation,
+    assessment_question_extractions,
     assessment_result_exports,
     assessment_result_outcomes,
     assessment_result_publication,
@@ -139,6 +140,13 @@ api_router.include_router(
     assessment_documents.router,
     prefix="/assessments",
     tags=["assessment-documents"],
+)
+
+
+api_router.include_router(
+    assessment_question_extractions.router,
+    prefix="/assessments",
+    tags=["assessment-question-extractions"],
 )
 
 

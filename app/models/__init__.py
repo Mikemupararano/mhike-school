@@ -28,6 +28,10 @@ from app.models.assessment_question import (
     AssessmentQuestion,
     AssessmentSection,
 )
+from app.models.assessment_question_extraction import (
+    AssessmentQuestionExtraction,
+    AssessmentQuestionExtractionStatus,
+)
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -95,6 +99,8 @@ __all__ = [
     "AssessmentModerationReviewStatus",
     "AssessmentModerationSamplingMethod",
     "AssessmentQuestion",
+    "AssessmentQuestionExtraction",
+    "AssessmentQuestionExtractionStatus",
     "AssessmentQuestionFeedback",
     "AssessmentResponse",
     "AssessmentResponseStatus",
