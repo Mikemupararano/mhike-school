@@ -7,6 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.endpoints import assessment_documents as assessment_documents_endpoint
 from app.models.assessment import (
     Assessment,
     AssessmentStatus,
@@ -691,6 +692,90 @@ async def test_empty_pdf_is_rejected(
     assert _error_message(
         response,
     ) == ("The uploaded question paper is empty.")
+
+
+@pytest.mark.asyncio
+async def test_oversized_question_paper_is_rejected_before_service_processing(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    Reject an oversized upload at the endpoint's bounded-read layer.
+
+    The endpoint limit is patched to a tiny value so the test proves the
+    behaviour without allocating a real 25+ MB test payload. The service
+    function is also replaced with a guard that must never be reached.
+    """
+
+    assessment = await _create_teacher_assessment(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    test_limit = 32
+
+    monkeypatch.setattr(
+        assessment_documents_endpoint,
+        "MAX_QUESTION_PAPER_SIZE_BYTES",
+        test_limit,
+    )
+
+    async def _unexpected_upload_question_paper(**kwargs):
+        raise AssertionError(
+            "Oversized upload reached upload_question_paper service.",
+        )
+
+    monkeypatch.setattr(
+        assessment_documents_endpoint,
+        "upload_question_paper",
+        _unexpected_upload_question_paper,
+    )
+
+    oversized_content = b"%PDF-1.4\n" + b"x" * test_limit
+
+    assert len(oversized_content) > test_limit
+
+    response = await client.post(
+        (f"/api/v1/assessments/{assessment['id']}" "/documents/question-paper"),
+        files={
+            "file": (
+                "oversized-paper.pdf",
+                oversized_content,
+                "application/pdf",
+            ),
+        },
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 413
+
+    assert _error_message(
+        response,
+    ) == ("Question papers cannot exceed 25 MB.")
+
+    result = await db_session.execute(
+        select(
+            AssessmentDocument,
+        ).where(
+            AssessmentDocument.assessment_id == assessment["id"],
+        ),
+    )
+
+    documents = list(
+        result.scalars().all(),
+    )
+
+    assert documents == []
+
+    assert not assessment_upload_root.exists()
 
 
 @pytest.mark.asyncio

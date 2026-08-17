@@ -22,6 +22,7 @@ from app.schemas.assessment_document import (
     AssessmentDocumentUploadResponse,
 )
 from app.services.assessment_document_service import (
+    MAX_QUESTION_PAPER_SIZE_BYTES,
     PDF_MIME_TYPE,
     get_current_question_paper,
     list_assessment_documents,
@@ -60,7 +61,7 @@ def _translate_value_error(
     """
 
     return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail=str(
             exc,
         ),
@@ -82,27 +83,41 @@ async def upload_assessment_question_paper(
     Upload or replace the current PDF question paper for a draft assessment.
 
     Previous question-paper versions remain retained for audit/history.
+
+    The upload is read with a strict upper bound of the configured maximum
+    file size plus one byte. Reading one additional byte allows the endpoint
+    to detect an oversized upload without first loading an arbitrarily large
+    file into memory.
     """
 
     _ensure_assessment_document_staff_access(
         current_user,
     )
 
-    contents = await file.read()
-
     try:
-        document = await upload_question_paper(
-            db=db,
-            current_user=current_user,
-            assessment_id=assessment_id,
-            filename=file.filename,
-            mime_type=file.content_type,
-            contents=contents,
+        contents = await file.read(
+            MAX_QUESTION_PAPER_SIZE_BYTES + 1,
         )
-    except ValueError as exc:
-        raise _translate_value_error(
-            exc,
-        ) from exc
+
+        if len(contents) > MAX_QUESTION_PAPER_SIZE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Question papers cannot exceed 25 MB.",
+            )
+
+        try:
+            document = await upload_question_paper(
+                db=db,
+                current_user=current_user,
+                assessment_id=assessment_id,
+                filename=file.filename,
+                mime_type=file.content_type,
+                contents=contents,
+            )
+        except ValueError as exc:
+            raise _translate_value_error(
+                exc,
+            ) from exc
     finally:
         await file.close()
 
