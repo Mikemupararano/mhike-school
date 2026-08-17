@@ -124,7 +124,7 @@ def _validate_pdf_upload(
 
     if file_size > MAX_QUESTION_PAPER_SIZE_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="Question papers cannot exceed 25 MB.",
         )
 
@@ -475,6 +475,12 @@ async def upload_question_paper(
             assessment_id=assessment.id,
             document_type=QUESTION_PAPER_DOCUMENT_TYPE,
         )
+
+        # The partial unique index allows only one current document for each
+        # assessment/document type. Flush the replacement update before
+        # inserting the new current row so PostgreSQL sees the old row as
+        # non-current before enforcing that uniqueness invariant.
+        await db.flush()
 
         document = await repository.create(
             document,

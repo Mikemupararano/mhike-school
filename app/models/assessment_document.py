@@ -11,6 +11,7 @@ from sqlalchemy import (
     Index,
     String,
     func,
+    text,
 )
 from sqlalchemy.orm import (
     Mapped,
@@ -170,5 +171,17 @@ class AssessmentDocument(Base):
             "assessment_id",
             "document_type",
             "is_current",
+        ),
+        Index(
+            "uq_assessment_documents_current_type",
+            "assessment_id",
+            "document_type",
+            unique=True,
+            postgresql_where=text(
+                "is_current = true",
+            ),
+            sqlite_where=text(
+                "is_current = true",
+            ),
         ),
     )
