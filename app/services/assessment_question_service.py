@@ -9,11 +9,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.assessment import Assessment, AssessmentStatus
 from app.models.assessment_question import (
     AssessmentQuestion,
+    AssessmentQuestionAsset,
+    AssessmentQuestionAssetType,
+    AssessmentQuestionOption,
+    AssessmentQuestionType,
     AssessmentSection,
 )
 from app.models.user import User
 from app.repositories.assessment import AssessmentRepository
 from app.repositories.assessment_question import AssessmentQuestionRepository
+from app.schemas.assessment import (
+    AssessmentQuestionAssetCreate,
+    AssessmentQuestionOptionCreate,
+)
 from app.services.assessment_service import (
     _ensure_assessment_management_access,
 )
@@ -329,6 +337,287 @@ async def _ensure_no_parent_cycle(
             )
 
         current_parent_id = parent.parent_question_id
+
+
+def _normalise_question_type(
+    question_type: AssessmentQuestionType | str,
+) -> AssessmentQuestionType:
+    """
+    Return a validated canonical question type.
+
+    API payloads normally arrive as ``AssessmentQuestionType`` instances, but
+    service-level callers may still provide the underlying string value.
+    """
+
+    try:
+        return AssessmentQuestionType(
+            question_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported assessment question type: {question_type!r}",
+        ) from exc
+
+
+def _build_question_options(
+    options: list[AssessmentQuestionOptionCreate] | None,
+) -> list[AssessmentQuestionOption]:
+    """
+    Build ORM option rows from validated authoring payloads.
+
+    Question ownership is established by the SQLAlchemy relationship when the
+    returned rows are assigned to ``AssessmentQuestion.options``.
+    """
+
+    if not options:
+        return []
+
+    return [
+        AssessmentQuestionOption(
+            text=option.text,
+            order=option.order,
+            is_correct=option.is_correct,
+            feedback=option.feedback,
+        )
+        for option in options
+    ]
+
+
+def _build_question_assets(
+    assets: list[AssessmentQuestionAssetCreate] | None,
+) -> list[AssessmentQuestionAsset]:
+    """
+    Build ORM asset rows from validated authoring payloads.
+
+    ``storage_path`` remains server-side metadata. Candidate-facing schemas
+    deliberately omit it, while ``candidate_visible`` determines whether a
+    learner may receive the asset through an authorised delivery endpoint.
+    """
+
+    if not assets:
+        return []
+
+    return [
+        AssessmentQuestionAsset(
+            asset_type=(
+                asset.asset_type.value
+                if isinstance(
+                    asset.asset_type,
+                    AssessmentQuestionAssetType,
+                )
+                else str(
+                    asset.asset_type,
+                )
+            ),
+            storage_path=asset.storage_path,
+            original_filename=asset.original_filename,
+            mime_type=asset.mime_type,
+            file_size_bytes=asset.file_size_bytes,
+            alt_text=asset.alt_text,
+            caption=asset.caption,
+            order=asset.order,
+            candidate_visible=asset.candidate_visible,
+            source_document_id=asset.source_document_id,
+            source_page_number=asset.source_page_number,
+            source_bbox=asset.source_bbox,
+        )
+        for asset in assets
+    ]
+
+
+def _validate_question_configuration(
+    *,
+    question_type: AssessmentQuestionType,
+    maximum_mark: Decimal | int | float | str,
+    is_markable: bool,
+    options: list[AssessmentQuestionOptionCreate],
+) -> None:
+    """
+    Validate the complete merged interaction state for one question.
+
+    This duplicates the important schema invariants intentionally: service
+    functions are also called directly by tests and internal workflows, and a
+    PATCH request must be validated *after* new values have been merged with
+    the existing persisted values.
+    """
+
+    try:
+        maximum_mark_decimal = Decimal(
+            str(
+                maximum_mark,
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="maximum_mark must be a valid decimal value",
+        ) from exc
+
+    if maximum_mark_decimal < Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="maximum_mark cannot be negative",
+        )
+
+    option_orders = [option.order for option in options]
+
+    if len(option_orders) != len(set(option_orders)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question option order values must be unique",
+        )
+
+    option_count = len(
+        options,
+    )
+
+    correct_count = sum(1 for option in options if option.is_correct)
+
+    if (
+        question_type
+        in {
+            AssessmentQuestionType.WRITTEN,
+            AssessmentQuestionType.NUMERIC,
+            AssessmentQuestionType.STRUCTURAL,
+        }
+        and option_count > 0
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Written, numeric and structural questions cannot have "
+                "multiple-choice options"
+            ),
+        )
+
+    if question_type == AssessmentQuestionType.MULTIPLE_CHOICE_SINGLE:
+        if option_count < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "A single-answer multiple-choice question must have "
+                    "at least two options"
+                ),
+            )
+
+        if correct_count != 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "A single-answer multiple-choice question must have "
+                    "exactly one correct option"
+                ),
+            )
+
+    if question_type == AssessmentQuestionType.MULTIPLE_CHOICE_MULTIPLE:
+        if option_count < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "A multiple-answer multiple-choice question must have "
+                    "at least two options"
+                ),
+            )
+
+        if correct_count < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "A multiple-answer multiple-choice question must have "
+                    "at least one correct option"
+                ),
+            )
+
+    if question_type == AssessmentQuestionType.TRUE_FALSE:
+        if option_count != 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A true/false question must have exactly two options",
+            )
+
+        if correct_count != 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A true/false question must have exactly one correct option",
+            )
+
+    if question_type == AssessmentQuestionType.STRUCTURAL:
+        if is_markable:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A structural question cannot be markable",
+            )
+
+        if maximum_mark_decimal != Decimal("0"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A structural question must have a maximum mark of zero",
+            )
+
+
+def _validate_asset_orders(
+    assets: list[AssessmentQuestionAssetCreate],
+) -> None:
+    """
+    Ensure visual/resource ordering is deterministic within a question.
+    """
+
+    asset_orders = [asset.order for asset in assets]
+
+    if len(asset_orders) != len(set(asset_orders)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question asset order values must be unique",
+        )
+
+
+def _options_from_existing_question(
+    question: AssessmentQuestion,
+) -> list[AssessmentQuestionOptionCreate]:
+    """
+    Convert existing ORM options into authoring payloads for merged PATCH
+    validation without mutating the persisted rows.
+    """
+
+    return [
+        AssessmentQuestionOptionCreate(
+            text=option.text,
+            order=option.order,
+            is_correct=option.is_correct,
+            feedback=option.feedback,
+        )
+        for option in question.options
+    ]
+
+
+def _assets_from_existing_question(
+    question: AssessmentQuestion,
+) -> list[AssessmentQuestionAssetCreate]:
+    """
+    Convert existing ORM assets into authoring payloads for PATCH replacement
+    and validation.
+    """
+
+    return [
+        AssessmentQuestionAssetCreate(
+            asset_type=AssessmentQuestionAssetType(
+                asset.asset_type,
+            ),
+            storage_path=asset.storage_path,
+            original_filename=asset.original_filename,
+            mime_type=asset.mime_type,
+            file_size_bytes=asset.file_size_bytes,
+            alt_text=asset.alt_text,
+            caption=asset.caption,
+            order=asset.order,
+            candidate_visible=asset.candidate_visible,
+            source_document_id=asset.source_document_id,
+            source_page_number=asset.source_page_number,
+            source_bbox=asset.source_bbox,
+        )
+        for asset in question.assets
+    ]
 
 
 def _translate_integrity_error(
@@ -713,11 +1002,18 @@ async def create_assessment_question(
     parent_question_id: int | None = None,
     title: str | None = None,
     prompt: str | None = None,
+    question_type: AssessmentQuestionType | str = AssessmentQuestionType.WRITTEN,
     order: int = 1,
     is_markable: bool = True,
+    options: list[AssessmentQuestionOptionCreate] | None = None,
+    assets: list[AssessmentQuestionAssetCreate] | None = None,
 ) -> AssessmentQuestion:
     """
-    Create a question in a draft assessment.
+    Create a canonical question in a draft assessment.
+
+    Multiple-choice options and candidate-visible visual assets are persisted
+    in the same database transaction as the question so callers cannot observe
+    a partially created question definition.
     """
 
     await _get_manageable_draft_assessment(
@@ -748,6 +1044,29 @@ async def create_assessment_question(
         parent_question_id=parent_question_id,
     )
 
+    normalised_question_type = _normalise_question_type(
+        question_type,
+    )
+
+    option_payloads = list(
+        options or [],
+    )
+
+    asset_payloads = list(
+        assets or [],
+    )
+
+    _validate_question_configuration(
+        question_type=normalised_question_type,
+        maximum_mark=maximum_mark,
+        is_markable=is_markable,
+        options=option_payloads,
+    )
+
+    _validate_asset_orders(
+        asset_payloads,
+    )
+
     question = AssessmentQuestion(
         assessment_id=assessment_id,
         section_id=section_id,
@@ -755,9 +1074,16 @@ async def create_assessment_question(
         question_number=question_number,
         title=title,
         prompt=prompt,
+        question_type=normalised_question_type.value,
         maximum_mark=maximum_mark,
         order=order,
         is_markable=is_markable,
+        options=_build_question_options(
+            option_payloads,
+        ),
+        assets=_build_question_assets(
+            asset_payloads,
+        ),
     )
 
     try:
@@ -769,6 +1095,10 @@ async def create_assessment_question(
 
         await db.refresh(
             question,
+            attribute_names=[
+                "options",
+                "assets",
+            ],
         )
 
     except IntegrityError as exc:
@@ -797,15 +1127,21 @@ async def update_assessment_question(
     parent_question_id: int | None = None,
     title: str | None = None,
     prompt: str | None = None,
+    question_type: AssessmentQuestionType | str | None = None,
     order: int | None = None,
     is_markable: bool | None = None,
+    options: list[AssessmentQuestionOptionCreate] | None = None,
+    assets: list[AssessmentQuestionAssetCreate] | None = None,
     update_section: bool = False,
     update_parent: bool = False,
     update_title: bool = False,
     update_prompt: bool = False,
+    update_question_type: bool = False,
+    update_options: bool = False,
+    update_assets: bool = False,
 ) -> AssessmentQuestion:
     """
-    Update a question in a draft assessment.
+    Update a canonical question in a draft assessment.
 
     Explicit update flags distinguish omitted PATCH fields from fields supplied
     as null.
@@ -816,8 +1152,14 @@ async def update_assessment_question(
     - remove a parent relationship with ``parent_question_id=null``;
     - clear a nullable title with ``title=null``;
     - clear a nullable prompt with ``prompt=null``;
+    - replace all structured options atomically, including with an empty list;
+    - replace all visual assets atomically, including with an empty list;
 
     while omitted fields remain unchanged.
+
+    Interaction-specific rules are checked against the *merged* final state.
+    This prevents, for example, converting an MCQ to ``written`` while silently
+    leaving old option rows attached.
     """
 
     await _get_manageable_draft_assessment(
@@ -871,6 +1213,60 @@ async def update_assessment_question(
     if update_prompt:
         question.prompt = prompt
 
+    final_question_type = _normalise_question_type(
+        (
+            question_type
+            if update_question_type and question_type is not None
+            else question.question_type
+        ),
+    )
+
+    final_maximum_mark: Decimal | int | float | str = (
+        maximum_mark if maximum_mark is not None else question.maximum_mark
+    )
+
+    final_is_markable = is_markable if is_markable is not None else question.is_markable
+
+    final_options = (
+        list(
+            options or [],
+        )
+        if update_options
+        else _options_from_existing_question(
+            question,
+        )
+    )
+
+    final_assets = (
+        list(
+            assets or [],
+        )
+        if update_assets
+        else _assets_from_existing_question(
+            question,
+        )
+    )
+
+    _validate_question_configuration(
+        question_type=final_question_type,
+        maximum_mark=final_maximum_mark,
+        is_markable=final_is_markable,
+        options=final_options,
+    )
+
+    _validate_asset_orders(
+        final_assets,
+    )
+
+    if update_question_type:
+        if question_type is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="question_type cannot be null",
+            )
+
+        question.question_type = final_question_type.value
+
     if maximum_mark is not None:
         question.maximum_mark = maximum_mark
 
@@ -879,6 +1275,16 @@ async def update_assessment_question(
 
     if is_markable is not None:
         question.is_markable = is_markable
+
+    if update_options:
+        question.options = _build_question_options(
+            final_options,
+        )
+
+    if update_assets:
+        question.assets = _build_question_assets(
+            final_assets,
+        )
 
     try:
         question = await repository.save_question(
@@ -889,6 +1295,10 @@ async def update_assessment_question(
 
         await db.refresh(
             question,
+            attribute_names=[
+                "options",
+                "assets",
+            ],
         )
 
     except IntegrityError as exc:

@@ -622,6 +622,9 @@ async def create_assessment_question_endpoint(
     Create a question within a draft assessment.
 
     Section and parent-question references must belong to the same assessment.
+
+    Structured answer options and candidate-visible question assets are
+    persisted atomically with the canonical question definition.
     """
 
     _ensure_assessment_staff_access(
@@ -638,9 +641,12 @@ async def create_assessment_question_endpoint(
             question_number=payload.question_number,
             title=payload.title,
             prompt=payload.prompt,
+            question_type=payload.question_type,
             maximum_mark=payload.maximum_mark,
             order=payload.order,
             is_markable=payload.is_markable,
+            options=payload.options,
+            assets=payload.assets,
         )
     except ValueError as exc:
         raise _translate_value_error(
@@ -674,6 +680,13 @@ async def update_assessment_question_endpoint(
     - remove the parent-question relationship;
     - clear the question title;
     - clear the question prompt.
+
+    Structured ``options`` and ``assets`` use complete-replacement semantics:
+    omitting either field leaves the existing collection unchanged, while an
+    explicit empty list removes all rows in that collection.
+
+    ``question_type`` is also PATCH-aware, so omitted values retain the
+    persisted interaction type.
     """
 
     _ensure_assessment_staff_access(
@@ -694,12 +707,18 @@ async def update_assessment_question_endpoint(
             parent_question_id=payload.parent_question_id,
             title=payload.title,
             prompt=payload.prompt,
+            question_type=payload.question_type,
             order=payload.order,
             is_markable=payload.is_markable,
+            options=payload.options,
+            assets=payload.assets,
             update_section="section_id" in fields_set,
             update_parent="parent_question_id" in fields_set,
             update_title="title" in fields_set,
             update_prompt="prompt" in fields_set,
+            update_question_type="question_type" in fields_set,
+            update_options="options" in fields_set,
+            update_assets="assets" in fields_set,
         )
     except ValueError as exc:
         raise _translate_value_error(

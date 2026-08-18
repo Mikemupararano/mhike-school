@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
 from reportlab.pdfgen import canvas
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.assessment_question import AssessmentQuestion
 from app.models.assessment_question_extraction import (
     AssessmentQuestionExtractionStatus,
 )
@@ -358,7 +361,7 @@ async def test_teacher_can_create_question_extraction(
     assert data["status"] == (AssessmentQuestionExtractionStatus.COMPLETED.value)
 
     assert data["extractor_name"] == "pypdf"
-    assert data["parser_version"] == "1"
+    assert data["parser_version"] == "2"
 
     assert data["page_count"] == 2
     assert data["text_page_count"] == 2
@@ -751,3 +754,1009 @@ async def test_missing_question_paper_document_returns_not_found(
         )
         == "Assessment document not found."
     )
+
+
+# ---------------------------------------------------------------------------
+# Teacher review
+# ---------------------------------------------------------------------------
+
+
+def _review_payload_from_extraction(
+    extraction_data: dict,
+    *,
+    review_status: str = "in_progress",
+    review_notes: str | None = None,
+) -> dict:
+    """
+    Build a complete public-API review payload from an extraction response.
+    """
+
+    proposal = extraction_data.get(
+        "proposal_data",
+    )
+
+    assert isinstance(
+        proposal,
+        dict,
+    )
+
+    questions = proposal.get(
+        "questions",
+        [],
+    )
+
+    return {
+        "review_status": review_status,
+        "review_notes": review_notes,
+        "questions": [
+            {
+                "candidate_index": index,
+                "question_number": question["question_number"],
+                "text": question.get(
+                    "text",
+                    "",
+                )
+                or "",
+                "marks": question.get(
+                    "marks",
+                ),
+                "parent_question_number": question.get(
+                    "parent_question_number",
+                ),
+                "included": True,
+                "reviewed": True,
+            }
+            for index, question in enumerate(
+                questions,
+            )
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_save_question_extraction_review(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+                "(a) State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    created = create_response.json()
+
+    original_page_data = created["page_data"]
+    original_source = dict(
+        created["proposal_data"]["questions"][0]["source"],
+    )
+
+    payload = _review_payload_from_extraction(
+        created,
+        review_status="reviewed",
+        review_notes="  Checked against the source paper.  ",
+    )
+
+    payload["questions"][0]["question_number"] = "1 "
+    payload["questions"][0]["text"] = "  State the relative charge of a proton.  "
+    payload["questions"][0]["marks"] = 2
+
+    payload["questions"][1]["included"] = False
+
+    response = await client.patch(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{created['id']}/review"
+        ),
+        json=payload,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    assert data["id"] == created["id"]
+    assert data["status"] == (AssessmentQuestionExtractionStatus.COMPLETED.value)
+    assert data["page_data"] == original_page_data
+    assert data["message"] == "Question extraction review saved."
+
+    proposal = data["proposal_data"]
+
+    assert proposal["review_status"] == "reviewed"
+    assert proposal["review_required"] is False
+    assert proposal["auto_import_allowed"] is False
+    assert proposal["review_notes"] == "Checked against the source paper."
+    assert proposal["reviewed_by_id"] == teacher_user.id
+    assert proposal["reviewed_at"] is not None
+
+    first_question = proposal["questions"][0]
+    second_question = proposal["questions"][1]
+
+    assert first_question["question_number"] == "1"
+    assert first_question["text"] == ("State the relative charge of a proton.")
+    assert first_question["marks"] == 2
+    assert first_question["included"] is True
+    assert first_question["reviewed"] is True
+    assert first_question["source"] == original_source
+
+    assert second_question["included"] is False
+
+    assert proposal["summary"]["included_question_count"] == 1
+    assert proposal["summary"]["included_mark_sum"] == 2
+
+
+@pytest.mark.asyncio
+async def test_review_api_rejects_incomplete_candidate_payload(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+                "(a) State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    created = create_response.json()
+
+    payload = _review_payload_from_extraction(
+        created,
+    )
+
+    payload["questions"] = payload["questions"][:1]
+
+    response = await client.patch(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{created['id']}/review"
+        ),
+        json=payload,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 422
+
+    assert "each stored extraction candidate" in _error_message(
+        response,
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_api_rejects_duplicate_included_question_numbers(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+                "(a) State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    created = create_response.json()
+
+    payload = _review_payload_from_extraction(
+        created,
+    )
+
+    assert (
+        len(
+            payload["questions"],
+        )
+        == 2
+    )
+
+    payload["questions"][0]["question_number"] = "1(a)"
+    payload["questions"][1]["question_number"] = "1 (a)"
+
+    response = await client.patch(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{created['id']}/review"
+        ),
+        json=payload,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 422
+
+    assert "unique question numbers" in _error_message(
+        response,
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_api_rejects_superseded_extraction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction_url = (
+        f"/api/v1/assessments/{assessment['id']}"
+        f"/documents/{document['id']}"
+        "/question-extractions"
+    )
+
+    first_response = await client.post(
+        extraction_url,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert first_response.status_code == 201, first_response.text
+
+    first_extraction = first_response.json()
+
+    second_response = await client.post(
+        extraction_url,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert second_response.status_code == 201, second_response.text
+
+    payload = _review_payload_from_extraction(
+        first_extraction,
+    )
+
+    response = await client.patch(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{first_extraction['id']}/review"
+        ),
+        json=payload,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 409
+
+    assert "completed, active extraction proposal" in _error_message(
+        response,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_teacher_cannot_review_question_extraction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    created = create_response.json()
+
+    other_teacher = await create_test_user(
+        db_session,
+        email="assessment.extraction.review.other.teacher@example.com",
+        roles=[
+            UserRole.TEACHER,
+        ],
+        school_id=teacher_user.school_id,
+    )
+
+    payload = _review_payload_from_extraction(
+        created,
+    )
+
+    response = await client.patch(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{created['id']}/review"
+        ),
+        json=payload,
+        headers=auth_headers(
+            other_teacher,
+        ),
+    )
+
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Explicit import
+# ---------------------------------------------------------------------------
+
+
+async def _create_and_review_extraction_for_import(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    *,
+    teacher_user,
+    auth_headers,
+    pdf_bytes: bytes,
+    question_numbers: list[str] | None = None,
+    marks: list[int | None] | None = None,
+) -> tuple[
+    dict,
+    dict,
+    dict,
+]:
+    """
+    Create an assessment/document/extraction and mark its proposal reviewed.
+
+    Optional question numbers and marks allow API import tests to exercise
+    hierarchy synthesis independently from the parser's initial numbering.
+    """
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction = create_response.json()
+
+    payload = _review_payload_from_extraction(
+        extraction,
+        review_status="reviewed",
+    )
+
+    if question_numbers is not None:
+        assert len(question_numbers) == len(
+            payload["questions"],
+        )
+
+        for question, question_number in zip(
+            payload["questions"],
+            question_numbers,
+            strict=True,
+        ):
+            question["question_number"] = question_number
+            question["parent_question_number"] = None
+
+    if marks is not None:
+        assert len(marks) == len(
+            payload["questions"],
+        )
+
+        for question, question_marks in zip(
+            payload["questions"],
+            marks,
+            strict=True,
+        ):
+            question["marks"] = question_marks
+
+    review_response = await client.patch(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction['id']}/review"
+        ),
+        json=payload,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert review_response.status_code == 200, review_response.text
+
+    return (
+        assessment,
+        document,
+        review_response.json(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_import_reviewed_question_extraction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [2]",
+                "(a) State the charge of an electron. [3]",
+            ],
+        ]
+    )
+
+    assessment, _, reviewed = await _create_and_review_extraction_for_import(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+        question_numbers=[
+            "1(a)",
+            "1(b)",
+        ],
+        marks=[
+            2,
+            3,
+        ],
+    )
+
+    response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{reviewed['id']}/import"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    assert data["id"] == reviewed["id"]
+    assert data["status"] == AssessmentQuestionExtractionStatus.IMPORTED.value
+    assert data["imported_by_id"] == teacher_user.id
+    assert data["imported_at"] is not None
+
+    assert data["message"] == "Reviewed question extraction imported."
+    assert data["imported_question_count"] == 3
+    assert data["imported_markable_question_count"] == 2
+    assert data["synthesised_parent_count"] == 1
+    assert Decimal(
+        str(
+            data["imported_total_marks"],
+        )
+    ) == Decimal("5")
+
+    imported_questions = data["imported_questions"]
+
+    assert [question["question_number"] for question in imported_questions] == [
+        "1",
+        "1(a)",
+        "1(b)",
+    ]
+
+    by_number = {
+        question["question_number"]: question for question in imported_questions
+    }
+
+    assert by_number["1"]["is_markable"] is False
+    assert by_number["1"]["synthesised"] is True
+    assert Decimal(
+        str(
+            by_number["1"]["maximum_mark"],
+        )
+    ) == Decimal("0")
+
+    assert by_number["1(a)"]["is_markable"] is True
+    assert by_number["1(b)"]["is_markable"] is True
+
+    assert by_number["1(a)"]["parent_question_id"] == by_number["1"]["id"]
+    assert by_number["1(b)"]["parent_question_id"] == by_number["1"]["id"]
+
+    result = await db_session.execute(
+        select(
+            AssessmentQuestion,
+        )
+        .where(
+            AssessmentQuestion.assessment_id == assessment["id"],
+        )
+        .order_by(
+            AssessmentQuestion.order.asc(),
+        )
+    )
+
+    canonical_questions = list(
+        result.scalars().all(),
+    )
+
+    assert [question.question_number for question in canonical_questions] == [
+        "1",
+        "1(a)",
+        "1(b)",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_import_api_rejects_unreviewed_extraction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction = create_response.json()
+
+    response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction['id']}/import"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 409
+    assert "fully reviewed before import" in _error_message(
+        response,
+    )
+
+    result = await db_session.execute(
+        select(
+            func.count(
+                AssessmentQuestion.id,
+            ),
+        ).where(
+            AssessmentQuestion.assessment_id == assessment["id"],
+        )
+    )
+
+    assert result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_import_api_rejects_question_number_conflict(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+            ],
+        ]
+    )
+
+    assessment, _, reviewed = await _create_and_review_extraction_for_import(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    existing = AssessmentQuestion(
+        assessment_id=assessment["id"],
+        section_id=None,
+        parent_question_id=None,
+        question_number="1",
+        title=None,
+        prompt="Existing canonical question.",
+        maximum_mark=Decimal("1"),
+        order=1,
+        is_markable=True,
+    )
+
+    db_session.add(
+        existing,
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{reviewed['id']}/import"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 409
+    assert "question numbers already exist" in _error_message(
+        response,
+    )
+
+    result = await db_session.execute(
+        select(
+            AssessmentQuestion,
+        ).where(
+            AssessmentQuestion.assessment_id == assessment["id"],
+        )
+    )
+
+    questions = list(
+        result.scalars().all(),
+    )
+
+    assert len(questions) == 1
+    assert questions[0].id == existing.id
+
+
+@pytest.mark.asyncio
+async def test_import_api_rejects_second_import(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative mass of a proton. [1]",
+            ],
+        ]
+    )
+
+    assessment, _, reviewed = await _create_and_review_extraction_for_import(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    import_url = (
+        f"/api/v1/assessments/{assessment['id']}"
+        f"/question-extractions/{reviewed['id']}/import"
+    )
+
+    first_response = await client.post(
+        import_url,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert first_response.status_code == 200, first_response.text
+
+    second_response = await client.post(
+        import_url,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert second_response.status_code == 409
+    assert "already been imported" in _error_message(
+        second_response,
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_api_rejects_superseded_extraction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction_url = (
+        f"/api/v1/assessments/{assessment['id']}"
+        f"/documents/{document['id']}"
+        "/question-extractions"
+    )
+
+    first_response = await client.post(
+        extraction_url,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert first_response.status_code == 201, first_response.text
+
+    first_extraction = first_response.json()
+
+    review_payload = _review_payload_from_extraction(
+        first_extraction,
+        review_status="reviewed",
+    )
+
+    review_response = await client.patch(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{first_extraction['id']}/review"
+        ),
+        json=review_payload,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert review_response.status_code == 200, review_response.text
+
+    second_response = await client.post(
+        extraction_url,
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert second_response.status_code == 201, second_response.text
+
+    response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{first_extraction['id']}/import"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 409
+    assert "completed, active extraction proposal" in _error_message(
+        response,
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_api_rejects_missing_marks(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope.",
+            ],
+        ]
+    )
+
+    assessment, _, reviewed = await _create_and_review_extraction_for_import(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+        marks=[
+            None,
+        ],
+    )
+
+    response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{reviewed['id']}/import"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 422
+    assert "must have a non-negative integer mark allocation" in _error_message(
+        response,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_teacher_cannot_import_question_extraction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, _, reviewed = await _create_and_review_extraction_for_import(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    other_teacher = await create_test_user(
+        db_session,
+        email="assessment.extraction.import.other.teacher@example.com",
+        roles=[
+            UserRole.TEACHER,
+        ],
+        school_id=teacher_user.school_id,
+    )
+
+    response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{reviewed['id']}/import"
+        ),
+        headers=auth_headers(
+            other_teacher,
+        ),
+    )
+
+    assert response.status_code == 403

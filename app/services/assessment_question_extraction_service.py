@@ -2,31 +2,49 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
 from pypdf import PdfReader, __version__ as pypdf_version
 from pypdf.errors import PdfReadError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.assessment_document import AssessmentDocument
+from app.models.assessment_question import (
+    AssessmentQuestion,
+    AssessmentQuestionAsset,
+    AssessmentQuestionAssetType,
+    AssessmentQuestionOption,
+    AssessmentQuestionType,
+)
 from app.models.assessment_question_extraction import (
     AssessmentQuestionExtraction,
     AssessmentQuestionExtractionStatus,
 )
 from app.models.user import User
 from app.repositories.assessment_document import AssessmentDocumentRepository
+from app.repositories.assessment_question import AssessmentQuestionRepository
 from app.repositories.assessment_question_extraction import (
     AssessmentQuestionExtractionRepository,
+)
+from app.schemas.assessment_question_extraction import (
+    AssessmentQuestionExtractionImportedQuestionResponse,
+    AssessmentQuestionExtractionReviewStatus,
+    AssessmentQuestionExtractionReviewUpdate,
 )
 from app.services.assessment_document_service import (
     QUESTION_PAPER_DOCUMENT_TYPE,
     get_assessment_document,
     resolve_assessment_document_path,
 )
+from app.services.assessment_question_service import (
+    _get_manageable_draft_assessment,
+)
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 
 MAX_EXTRACTED_PAGE_TEXT_LENGTH = 100_000
 
@@ -642,6 +660,9 @@ def _new_proposal_question(
         "depth": _infer_question_depth(
             question_number,
         ),
+        "question_type": AssessmentQuestionType.WRITTEN.value,
+        "options": [],
+        "assets": [],
         "source": {
             "page_number": page_number,
             "line_number": line_number,
@@ -1472,6 +1493,1805 @@ async def create_question_extraction(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=failure_message,
         ) from exc
+
+
+def _normalise_review_text(
+    value: str | None,
+) -> str | None:
+    """
+    Trim optional teacher-authored review text.
+
+    Empty strings are persisted as None so proposal metadata remains compact
+    and semantically clear.
+    """
+
+    if value is None:
+        return None
+
+    cleaned = value.strip()
+
+    if not cleaned:
+        return None
+
+    return cleaned
+
+
+def _review_parent_question_number(
+    value: str | None,
+) -> str | None:
+    """
+    Normalise an optional teacher-supplied parent question identifier.
+    """
+
+    cleaned = _normalise_review_text(
+        value,
+    )
+
+    if cleaned is None:
+        return None
+
+    return _normalise_question_number(
+        cleaned,
+    )
+
+
+def _validate_review_candidate_indexes(
+    *,
+    stored_questions: list[dict[str, Any]],
+    review_update: AssessmentQuestionExtractionReviewUpdate,
+) -> None:
+    """
+    Require a complete, one-to-one review payload for the stored proposal.
+
+    A review save deliberately replaces only editable proposal state. Requiring
+    every stored candidate prevents an omitted browser row from being silently
+    lost or left with stale review state.
+    """
+
+    expected_indexes = set(
+        range(
+            len(
+                stored_questions,
+            )
+        )
+    )
+
+    supplied_indexes = {
+        question.candidate_index for question in review_update.questions
+    }
+
+    if supplied_indexes != expected_indexes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Review questions must contain each stored extraction "
+                "candidate exactly once."
+            ),
+        )
+
+
+def _validate_review_question_numbers(
+    review_update: AssessmentQuestionExtractionReviewUpdate,
+) -> None:
+    """
+    Ensure included proposal questions have unique normalised identifiers.
+    """
+
+    seen_numbers: set[str] = set()
+
+    for question in review_update.questions:
+        if not question.included:
+            continue
+
+        question_number = _normalise_question_number(
+            question.question_number.strip(),
+        )
+
+        if question_number in seen_numbers:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Included extraction questions must have unique "
+                    "question numbers."
+                ),
+            )
+
+        seen_numbers.add(
+            question_number,
+        )
+
+
+def _validate_review_completion(
+    review_update: AssessmentQuestionExtractionReviewUpdate,
+) -> None:
+    """
+    A proposal cannot be marked reviewed while included rows remain unreviewed.
+    """
+
+    if review_update.review_status != AssessmentQuestionExtractionReviewStatus.REVIEWED:
+        return
+
+    unreviewed_indexes = [
+        question.candidate_index
+        for question in review_update.questions
+        if question.included and not question.reviewed
+    ]
+
+    if unreviewed_indexes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "All included extraction questions must be reviewed before "
+                "the proposal can be marked reviewed."
+            ),
+        )
+
+
+def _normalise_review_question_type(
+    value: AssessmentQuestionType | str | None,
+    *,
+    fallback: Any,
+) -> str:
+    """
+    Return a validated canonical question-type value for proposal storage.
+    """
+
+    candidate = value if value is not None else fallback
+
+    if candidate is None:
+        candidate = AssessmentQuestionType.WRITTEN.value
+
+    try:
+        return AssessmentQuestionType(
+            candidate,
+        ).value
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unsupported assessment question type: {candidate!r}.",
+        ) from exc
+
+
+def _serialise_review_options(
+    value: Any,
+) -> list[dict[str, Any]]:
+    """
+    Convert teacher-reviewed option models into JSON-safe proposal rows.
+    """
+
+    if value is None:
+        return []
+
+    return [
+        {
+            "text": option.text.strip(),
+            "order": option.order,
+            "is_correct": option.is_correct,
+            "feedback": _normalise_review_text(
+                option.feedback,
+            ),
+        }
+        for option in value
+    ]
+
+
+def _merge_review_assets(
+    *,
+    stored_question: dict[str, Any],
+    update_assets: Any,
+) -> list[dict[str, Any]]:
+    """
+    Merge teacher-editable asset fields with extractor-owned provenance.
+
+    The client identifies stored assets only by ``asset_index``. Storage paths,
+    source document ids, source pages and bounding boxes remain copied from the
+    persisted proposal and cannot be supplied by the browser.
+    """
+
+    stored_assets = stored_question.get(
+        "assets",
+        [],
+    )
+
+    if stored_assets is None:
+        stored_assets = []
+
+    if not isinstance(
+        stored_assets,
+        list,
+    ) or not all(
+        isinstance(
+            asset,
+            dict,
+        )
+        for asset in stored_assets
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stored extraction proposal contains malformed assets.",
+        )
+
+    if update_assets is None:
+        return [
+            dict(
+                asset,
+            )
+            for asset in stored_assets
+        ]
+
+    expected_indexes = set(
+        range(
+            len(
+                stored_assets,
+            )
+        )
+    )
+
+    supplied_indexes = {asset.asset_index for asset in update_assets}
+
+    if supplied_indexes != expected_indexes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Reviewed question assets must contain each stored visual "
+                "candidate exactly once."
+            ),
+        )
+
+    updates_by_index = {asset.asset_index: asset for asset in update_assets}
+
+    merged_assets: list[dict[str, Any]] = []
+
+    for asset_index, stored_asset in enumerate(
+        stored_assets,
+    ):
+        update = updates_by_index[asset_index]
+
+        merged_asset = dict(
+            stored_asset,
+        )
+
+        merged_asset["asset_type"] = update.asset_type.value
+        merged_asset["alt_text"] = _normalise_review_text(
+            update.alt_text,
+        )
+        merged_asset["caption"] = _normalise_review_text(
+            update.caption,
+        )
+        merged_asset["order"] = update.order
+        merged_asset["candidate_visible"] = update.candidate_visible
+        merged_asset["included"] = update.included
+        merged_asset["reviewed"] = update.reviewed
+
+        merged_assets.append(
+            merged_asset,
+        )
+
+    return merged_assets
+
+
+def _build_reviewed_proposal_questions(
+    *,
+    stored_questions: list[dict[str, Any]],
+    review_update: AssessmentQuestionExtractionReviewUpdate,
+) -> list[dict[str, Any]]:
+    """
+    Merge teacher-editable fields into proposal copies.
+
+    Extractor-owned evidence such as source metadata and confidence is copied
+    from the stored proposal, never accepted from the client.
+    """
+
+    updates_by_index = {
+        question.candidate_index: question for question in review_update.questions
+    }
+
+    reviewed_questions: list[dict[str, Any]] = []
+
+    for candidate_index, stored_question in enumerate(
+        stored_questions,
+    ):
+        update = updates_by_index[candidate_index]
+
+        reviewed_question = dict(
+            stored_question,
+        )
+
+        question_number = _normalise_question_number(
+            update.question_number.strip(),
+        )
+
+        reviewed_question["question_number"] = question_number
+        reviewed_question["text"] = update.text.strip()
+        reviewed_question["marks"] = update.marks
+        reviewed_question["depth"] = _infer_question_depth(
+            question_number,
+        )
+        reviewed_question["parent_question_number"] = _review_parent_question_number(
+            update.parent_question_number,
+        )
+        reviewed_question["question_type"] = _normalise_review_question_type(
+            update.question_type,
+            fallback=stored_question.get(
+                "question_type",
+                AssessmentQuestionType.WRITTEN.value,
+            ),
+        )
+
+        if update.options is None:
+            stored_options = stored_question.get(
+                "options",
+                [],
+            )
+
+            if not isinstance(
+                stored_options,
+                list,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "The stored extraction proposal contains malformed "
+                        "question options."
+                    ),
+                )
+
+            reviewed_question["options"] = [
+                dict(
+                    option,
+                )
+                for option in stored_options
+                if isinstance(
+                    option,
+                    dict,
+                )
+            ]
+        else:
+            reviewed_question["options"] = _serialise_review_options(
+                update.options,
+            )
+
+        reviewed_question["assets"] = _merge_review_assets(
+            stored_question=stored_question,
+            update_assets=update.assets,
+        )
+        reviewed_question["included"] = update.included
+        reviewed_question["reviewed"] = update.reviewed
+
+        if "source" in stored_question:
+            reviewed_question["source"] = stored_question["source"]
+
+        if "confidence" in stored_question:
+            reviewed_question["confidence"] = stored_question["confidence"]
+
+        if "requires_review" in stored_question:
+            reviewed_question["requires_review"] = stored_question["requires_review"]
+
+        reviewed_questions.append(
+            reviewed_question,
+        )
+
+    return reviewed_questions
+
+
+def _review_summary(
+    *,
+    proposal: dict[str, Any],
+    reviewed_questions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Preserve extraction statistics and add teacher-review totals.
+    """
+
+    existing_summary = proposal.get(
+        "summary",
+        {},
+    )
+
+    if not isinstance(
+        existing_summary,
+        dict,
+    ):
+        existing_summary = {}
+
+    summary = dict(
+        existing_summary,
+    )
+
+    included_questions = [
+        question
+        for question in reviewed_questions
+        if bool(
+            question.get(
+                "included",
+                True,
+            )
+        )
+    ]
+
+    included_marks = [
+        question["marks"]
+        for question in included_questions
+        if isinstance(
+            question.get(
+                "marks",
+            ),
+            int,
+        )
+    ]
+
+    summary["included_question_count"] = len(
+        included_questions,
+    )
+    summary["included_mark_sum"] = sum(
+        included_marks,
+    )
+
+    return summary
+
+
+async def update_question_extraction_review(
+    *,
+    db: AsyncSession,
+    current_user: User,
+    assessment_id: int,
+    extraction_id: int,
+    review_update: AssessmentQuestionExtractionReviewUpdate,
+) -> AssessmentQuestionExtraction:
+    """
+    Save teacher review edits to a completed extraction proposal.
+
+    Only proposal_data is changed. Raw page_data/source evidence remains
+    immutable and no AssessmentQuestion records are created by this operation.
+    """
+
+    extraction = await _load_question_paper_document_for_extraction_access(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        extraction_id=extraction_id,
+    )
+
+    if extraction.status != AssessmentQuestionExtractionStatus.COMPLETED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=("Only a completed, active extraction proposal can be " "reviewed."),
+        )
+
+    proposal = extraction.proposal_data
+
+    if not isinstance(
+        proposal,
+        dict,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The extraction does not contain a reviewable proposal.",
+        )
+
+    stored_questions = proposal.get(
+        "questions",
+    )
+
+    if (
+        not isinstance(
+            stored_questions,
+            list,
+        )
+        or not stored_questions
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The extraction proposal does not contain any questions.",
+        )
+
+    if not all(
+        isinstance(
+            question,
+            dict,
+        )
+        for question in stored_questions
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stored extraction proposal is malformed.",
+        )
+
+    _validate_review_candidate_indexes(
+        stored_questions=stored_questions,
+        review_update=review_update,
+    )
+
+    _validate_review_question_numbers(
+        review_update,
+    )
+
+    _validate_review_completion(
+        review_update,
+    )
+
+    reviewed_questions = _build_reviewed_proposal_questions(
+        stored_questions=stored_questions,
+        review_update=review_update,
+    )
+
+    reviewed_proposal = dict(
+        proposal,
+    )
+
+    reviewed_proposal["questions"] = reviewed_questions
+    reviewed_proposal["summary"] = _review_summary(
+        proposal=proposal,
+        reviewed_questions=reviewed_questions,
+    )
+    reviewed_proposal["review_status"] = review_update.review_status.value
+    reviewed_proposal["review_notes"] = _normalise_review_text(
+        review_update.review_notes,
+    )
+    reviewed_proposal["auto_import_allowed"] = False
+
+    if review_update.review_status == AssessmentQuestionExtractionReviewStatus.REVIEWED:
+        reviewed_proposal["review_required"] = False
+        reviewed_proposal["reviewed_by_id"] = current_user.id
+        reviewed_proposal["reviewed_at"] = _utc_now().isoformat()
+    else:
+        reviewed_proposal["review_required"] = True
+        reviewed_proposal["reviewed_by_id"] = None
+        reviewed_proposal["reviewed_at"] = None
+
+    extraction.proposal_data = reviewed_proposal
+
+    repository = AssessmentQuestionExtractionRepository(
+        db,
+    )
+
+    try:
+        extraction = await repository.save(
+            extraction,
+        )
+
+        await db.commit()
+
+        await db.refresh(
+            extraction,
+        )
+
+        return extraction
+
+    except HTTPException:
+        await db.rollback()
+        raise
+
+    except Exception:
+        await db.rollback()
+        raise
+
+
+def _infer_import_parent_question_number(
+    question_number: str,
+) -> str | None:
+    """
+    Infer the immediate structural parent of a canonical question number.
+
+    Examples:
+
+    - ``1`` -> None
+    - ``1(a)`` -> ``1``
+    - ``1(a)(i)`` -> ``1(a)``
+
+    Teacher-supplied ``parent_question_number`` remains authoritative when
+    present. This helper is used only when review did not explicitly set one.
+    """
+
+    cleaned = _normalise_question_number(
+        question_number.strip(),
+    )
+
+    if not cleaned:
+        return None
+
+    match = re.match(
+        r"^(?P<parent>.+)\([^()]+\)$",
+        cleaned,
+    )
+
+    if match is None:
+        return None
+
+    parent = match.group(
+        "parent",
+    ).strip()
+
+    if not parent:
+        return None
+
+    return parent
+
+
+def _normalise_import_question_number(
+    value: Any,
+    *,
+    field_name: str,
+) -> str:
+    """
+    Return one validated canonical question identifier for import.
+    """
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{field_name} must be a string.",
+        )
+
+    cleaned = _normalise_question_number(
+        value.strip(),
+    )
+
+    if not cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{field_name} cannot be blank.",
+        )
+
+    if (
+        len(
+            cleaned,
+        )
+        > 50
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{field_name} cannot exceed 50 characters.",
+        )
+
+    return cleaned
+
+
+def _normalise_import_question_type(
+    value: Any,
+    *,
+    question_number: str,
+) -> AssessmentQuestionType:
+    """
+    Validate the reviewed proposal's canonical question type.
+    """
+
+    if value is None:
+        value = AssessmentQuestionType.WRITTEN.value
+
+    try:
+        return AssessmentQuestionType(
+            value,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Question {question_number!r} contains an unsupported "
+                f"question type {value!r}."
+            ),
+        ) from exc
+
+
+def _normalise_import_options(
+    value: Any,
+    *,
+    question_number: str,
+    question_type: AssessmentQuestionType,
+) -> list[dict[str, Any]]:
+    """
+    Validate and normalise structured options before canonical import.
+    """
+
+    if value is None:
+        value = []
+
+    if not isinstance(
+        value,
+        list,
+    ) or not all(
+        isinstance(
+            option,
+            dict,
+        )
+        for option in value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Question {question_number!r} options are malformed.",
+        )
+
+    options: list[dict[str, Any]] = []
+
+    for index, option in enumerate(
+        value,
+        start=1,
+    ):
+        raw_text = option.get(
+            "text",
+        )
+
+        if (
+            not isinstance(
+                raw_text,
+                str,
+            )
+            or not raw_text.strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} option {index} must contain "
+                    "non-blank text."
+                ),
+            )
+
+        raw_order = option.get(
+            "order",
+            index,
+        )
+
+        if (
+            not isinstance(
+                raw_order,
+                int,
+            )
+            or isinstance(
+                raw_order,
+                bool,
+            )
+            or raw_order < 1
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} option {index} has an "
+                    "invalid order."
+                ),
+            )
+
+        raw_is_correct = option.get(
+            "is_correct",
+            False,
+        )
+
+        if not isinstance(
+            raw_is_correct,
+            bool,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} option {index} has an "
+                    "invalid correctness flag."
+                ),
+            )
+
+        feedback = option.get(
+            "feedback",
+        )
+
+        if feedback is not None and not isinstance(
+            feedback,
+            str,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} option {index} feedback "
+                    "must be text or null."
+                ),
+            )
+
+        options.append(
+            {
+                "text": raw_text.strip(),
+                "order": raw_order,
+                "is_correct": raw_is_correct,
+                "feedback": (
+                    feedback.strip()
+                    if isinstance(
+                        feedback,
+                        str,
+                    )
+                    and feedback.strip()
+                    else None
+                ),
+            }
+        )
+
+    option_orders = [option["order"] for option in options]
+
+    if len(option_orders) != len(set(option_orders)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Question {question_number!r} option order values must be " "unique."
+            ),
+        )
+
+    option_count = len(
+        options,
+    )
+
+    correct_count = sum(1 for option in options if option["is_correct"])
+
+    if (
+        question_type
+        in {
+            AssessmentQuestionType.WRITTEN,
+            AssessmentQuestionType.NUMERIC,
+            AssessmentQuestionType.STRUCTURAL,
+        }
+        and option_count > 0
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Question {question_number!r} cannot have multiple-choice "
+                "options for its selected question type."
+            ),
+        )
+
+    if question_type == AssessmentQuestionType.MULTIPLE_CHOICE_SINGLE:
+        if option_count < 2 or correct_count != 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} must contain at least two "
+                    "options and exactly one correct option."
+                ),
+            )
+
+    if question_type == AssessmentQuestionType.MULTIPLE_CHOICE_MULTIPLE:
+        if option_count < 2 or correct_count < 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} must contain at least two "
+                    "options and at least one correct option."
+                ),
+            )
+
+    if question_type == AssessmentQuestionType.TRUE_FALSE:
+        if option_count != 2 or correct_count != 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} must contain exactly two "
+                    "true/false options and exactly one correct option."
+                ),
+            )
+
+    return options
+
+
+def _normalise_import_assets(
+    value: Any,
+    *,
+    question_number: str,
+    source_document_id: int,
+) -> list[dict[str, Any]]:
+    """
+    Validate reviewed visual assets before canonical import.
+
+    Only included assets are imported. A visual without a real ``storage_path``
+    and ``mime_type`` cannot yet be delivered to a candidate, so import blocks
+    rather than silently dropping the figure.
+    """
+
+    if value is None:
+        value = []
+
+    if not isinstance(
+        value,
+        list,
+    ) or not all(
+        isinstance(
+            asset,
+            dict,
+        )
+        for asset in value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Question {question_number!r} assets are malformed.",
+        )
+
+    assets: list[dict[str, Any]] = []
+
+    for index, asset in enumerate(
+        value,
+        start=1,
+    ):
+        if not bool(
+            asset.get(
+                "included",
+                True,
+            )
+        ):
+            continue
+
+        if not bool(
+            asset.get(
+                "reviewed",
+                False,
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Question {question_number!r} contains a visual asset "
+                    "that has not been reviewed."
+                ),
+            )
+
+        try:
+            asset_type = AssessmentQuestionAssetType(
+                asset.get(
+                    "asset_type",
+                    AssessmentQuestionAssetType.FIGURE.value,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} has an "
+                    "unsupported asset type."
+                ),
+            ) from exc
+
+        storage_path = asset.get(
+            "storage_path",
+        )
+
+        mime_type = asset.get(
+            "mime_type",
+        )
+
+        if (
+            not isinstance(
+                storage_path,
+                str,
+            )
+            or not storage_path.strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Question {question_number!r} contains a reviewed visual "
+                    "that has not yet been materialised for candidate delivery."
+                ),
+            )
+
+        if (
+            not isinstance(
+                mime_type,
+                str,
+            )
+            or not mime_type.strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Question {question_number!r} contains a visual asset "
+                    "without a MIME type."
+                ),
+            )
+
+        raw_order = asset.get(
+            "order",
+            index,
+        )
+
+        if (
+            not isinstance(
+                raw_order,
+                int,
+            )
+            or isinstance(
+                raw_order,
+                bool,
+            )
+            or raw_order < 1
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} has an "
+                    "invalid order."
+                ),
+            )
+
+        source_page_number = asset.get(
+            "source_page_number",
+        )
+
+        if source_page_number is not None and (
+            not isinstance(
+                source_page_number,
+                int,
+            )
+            or isinstance(
+                source_page_number,
+                bool,
+            )
+            or source_page_number < 1
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} has an "
+                    "invalid source page number."
+                ),
+            )
+
+        source_bbox = asset.get(
+            "source_bbox",
+        )
+
+        if source_bbox is not None and not isinstance(
+            source_bbox,
+            dict,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} has malformed "
+                    "source coordinates."
+                ),
+            )
+
+        original_filename = asset.get(
+            "original_filename",
+        )
+
+        if original_filename is not None and not isinstance(
+            original_filename,
+            str,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} filename "
+                    "must be text or null."
+                ),
+            )
+
+        file_size_bytes = asset.get(
+            "file_size_bytes",
+        )
+
+        if file_size_bytes is not None and (
+            not isinstance(
+                file_size_bytes,
+                int,
+            )
+            or isinstance(
+                file_size_bytes,
+                bool,
+            )
+            or file_size_bytes < 0
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} has an "
+                    "invalid file size."
+                ),
+            )
+
+        alt_text = asset.get(
+            "alt_text",
+        )
+
+        caption = asset.get(
+            "caption",
+        )
+
+        if alt_text is not None and not isinstance(
+            alt_text,
+            str,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} alt text "
+                    "must be text or null."
+                ),
+            )
+
+        if caption is not None and not isinstance(
+            caption,
+            str,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} asset {index} caption "
+                    "must be text or null."
+                ),
+            )
+
+        assets.append(
+            {
+                "asset_type": asset_type.value,
+                "storage_path": storage_path.strip(),
+                "original_filename": (
+                    original_filename.strip()
+                    if isinstance(
+                        original_filename,
+                        str,
+                    )
+                    and original_filename.strip()
+                    else None
+                ),
+                "mime_type": mime_type.strip(),
+                "file_size_bytes": file_size_bytes,
+                "alt_text": (
+                    alt_text.strip()
+                    if isinstance(
+                        alt_text,
+                        str,
+                    )
+                    and alt_text.strip()
+                    else None
+                ),
+                "caption": (
+                    caption.strip()
+                    if isinstance(
+                        caption,
+                        str,
+                    )
+                    and caption.strip()
+                    else None
+                ),
+                "order": raw_order,
+                "candidate_visible": bool(
+                    asset.get(
+                        "candidate_visible",
+                        True,
+                    )
+                ),
+                "source_document_id": source_document_id,
+                "source_page_number": source_page_number,
+                "source_bbox": source_bbox,
+            }
+        )
+
+    asset_orders = [asset["order"] for asset in assets]
+
+    if len(asset_orders) != len(set(asset_orders)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Question {question_number!r} asset order values must be " "unique."
+            ),
+        )
+
+    return assets
+
+
+def _build_import_question_specs(
+    *,
+    proposal: dict[str, Any],
+    source_document_id: int,
+) -> list[dict[str, Any]]:
+    """
+    Convert a reviewed proposal into ordered canonical-question specifications.
+
+    Included proposal rows become markable questions. Missing structural parents
+    are synthesised recursively with zero marks and ``is_markable=False``.
+
+    The returned list is topologically ordered: every parent appears before its
+    children, while first appearance in the reviewed proposal remains the
+    controlling display order.
+    """
+
+    questions = proposal.get(
+        "questions",
+    )
+
+    if (
+        not isinstance(
+            questions,
+            list,
+        )
+        or not questions
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The extraction proposal does not contain any questions.",
+        )
+
+    if not all(
+        isinstance(
+            question,
+            dict,
+        )
+        for question in questions
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stored extraction proposal is malformed.",
+        )
+
+    included_candidates: list[dict[str, Any]] = []
+
+    for candidate_index, question in enumerate(
+        questions,
+    ):
+        if not bool(
+            question.get(
+                "included",
+                True,
+            )
+        ):
+            continue
+
+        if not bool(
+            question.get(
+                "reviewed",
+                False,
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Every included extraction question must be reviewed "
+                    "before import."
+                ),
+            )
+
+        question_number = _normalise_import_question_number(
+            question.get(
+                "question_number",
+            ),
+            field_name="question_number",
+        )
+
+        marks = question.get(
+            "marks",
+        )
+
+        if (
+            not isinstance(
+                marks,
+                int,
+            )
+            or isinstance(
+                marks,
+                bool,
+            )
+            or marks < 0
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Included question {question_number!r} must have a "
+                    "non-negative integer mark allocation before import."
+                ),
+            )
+
+        raw_parent = question.get(
+            "parent_question_number",
+        )
+
+        if raw_parent is None:
+            parent_question_number = _infer_import_parent_question_number(
+                question_number,
+            )
+        else:
+            parent_question_number = _normalise_import_question_number(
+                raw_parent,
+                field_name="parent_question_number",
+            )
+
+        if parent_question_number == question_number:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(f"Question {question_number!r} cannot be its own parent."),
+            )
+
+        text = question.get(
+            "text",
+            "",
+        )
+
+        if text is None:
+            text = ""
+
+        if not isinstance(
+            text,
+            str,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(f"Question {question_number!r} text must be a string."),
+            )
+
+        question_type = _normalise_import_question_type(
+            question.get(
+                "question_type",
+                AssessmentQuestionType.WRITTEN.value,
+            ),
+            question_number=question_number,
+        )
+
+        options = _normalise_import_options(
+            question.get(
+                "options",
+                [],
+            ),
+            question_number=question_number,
+            question_type=question_type,
+        )
+
+        assets = _normalise_import_assets(
+            question.get(
+                "assets",
+                [],
+            ),
+            question_number=question_number,
+            source_document_id=source_document_id,
+        )
+
+        included_candidates.append(
+            {
+                "question_number": question_number,
+                "parent_question_number": parent_question_number,
+                "prompt": text.strip() or None,
+                "question_type": question_type.value,
+                "maximum_mark": Decimal(
+                    marks,
+                ),
+                "is_markable": True,
+                "options": options,
+                "assets": assets,
+                "synthesised": False,
+                "source_candidate_index": candidate_index,
+            }
+        )
+
+    if not included_candidates:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The reviewed extraction proposal contains no included questions.",
+        )
+
+    specs_by_number: dict[str, dict[str, Any]] = {}
+
+    for spec in included_candidates:
+        question_number = spec["question_number"]
+
+        if question_number in specs_by_number:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Included extraction questions must have unique "
+                    "question numbers."
+                ),
+            )
+
+        specs_by_number[question_number] = spec
+
+    def ensure_parent_spec(
+        parent_number: str | None,
+        *,
+        ancestry: tuple[str, ...],
+    ) -> None:
+        if parent_number is None:
+            return
+
+        if parent_number in ancestry:
+            cycle = " -> ".join(
+                (
+                    *ancestry,
+                    parent_number,
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Question parent hierarchy contains a cycle: {cycle}.",
+            )
+
+        existing = specs_by_number.get(
+            parent_number,
+        )
+
+        if existing is not None:
+            next_parent = existing.get(
+                "parent_question_number",
+            )
+
+            if next_parent is None and existing["synthesised"]:
+                next_parent = _infer_import_parent_question_number(
+                    parent_number,
+                )
+                existing["parent_question_number"] = next_parent
+
+            ensure_parent_spec(
+                next_parent,
+                ancestry=(
+                    *ancestry,
+                    parent_number,
+                ),
+            )
+            return
+
+        inferred_parent = _infer_import_parent_question_number(
+            parent_number,
+        )
+
+        specs_by_number[parent_number] = {
+            "question_number": parent_number,
+            "parent_question_number": inferred_parent,
+            "prompt": None,
+            "question_type": AssessmentQuestionType.STRUCTURAL.value,
+            "maximum_mark": Decimal("0"),
+            "is_markable": False,
+            "options": [],
+            "assets": [],
+            "synthesised": True,
+            "source_candidate_index": None,
+        }
+
+        ensure_parent_spec(
+            inferred_parent,
+            ancestry=(
+                *ancestry,
+                parent_number,
+            ),
+        )
+
+    for spec in list(
+        included_candidates,
+    ):
+        ensure_parent_spec(
+            spec["parent_question_number"],
+            ancestry=(spec["question_number"],),
+        )
+
+    ordered_specs: list[dict[str, Any]] = []
+    emitted: set[str] = set()
+    visiting: set[str] = set()
+
+    def emit(
+        question_number: str,
+    ) -> None:
+        if question_number in emitted:
+            return
+
+        if question_number in visiting:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Question parent hierarchy contains a cycle.",
+            )
+
+        visiting.add(
+            question_number,
+        )
+
+        spec = specs_by_number[question_number]
+        parent_number = spec.get(
+            "parent_question_number",
+        )
+
+        if parent_number is not None:
+            if parent_number not in specs_by_number:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Question {question_number!r} references an invalid "
+                        f"parent {parent_number!r}."
+                    ),
+                )
+
+            emit(
+                parent_number,
+            )
+
+        visiting.remove(
+            question_number,
+        )
+        emitted.add(
+            question_number,
+        )
+        ordered_specs.append(
+            spec,
+        )
+
+    for candidate in included_candidates:
+        emit(
+            candidate["question_number"],
+        )
+
+    return ordered_specs
+
+
+async def import_question_extraction(
+    *,
+    db: AsyncSession,
+    current_user: User,
+    assessment_id: int,
+    extraction_id: int,
+) -> tuple[
+    AssessmentQuestionExtraction,
+    list[AssessmentQuestionExtractionImportedQuestionResponse],
+]:
+    """
+    Explicitly import a fully reviewed extraction into canonical questions.
+
+    Import is intentionally separate from extraction and review. The operation
+    is atomic: all question rows, hierarchy links and the extraction's IMPORTED
+    state are committed together, or all are rolled back together.
+    """
+
+    await _get_manageable_draft_assessment(
+        db,
+        current_user,
+        assessment_id,
+        include_relationships=False,
+    )
+
+    extraction = await _load_question_paper_document_for_extraction_access(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        extraction_id=extraction_id,
+    )
+
+    if extraction.status == AssessmentQuestionExtractionStatus.IMPORTED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This extraction proposal has already been imported.",
+        )
+
+    if extraction.status != AssessmentQuestionExtractionStatus.COMPLETED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=("Only a completed, active extraction proposal can be imported."),
+        )
+
+    proposal = extraction.proposal_data
+
+    if not isinstance(
+        proposal,
+        dict,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The extraction does not contain a reviewable proposal.",
+        )
+
+    if (
+        proposal.get(
+            "review_status",
+        )
+        != AssessmentQuestionExtractionReviewStatus.REVIEWED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=("The extraction proposal must be fully reviewed before import."),
+        )
+
+    if bool(
+        proposal.get(
+            "review_required",
+            True,
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The extraction proposal still requires review and cannot "
+                "be imported."
+            ),
+        )
+
+    specs = _build_import_question_specs(
+        proposal=proposal,
+        source_document_id=extraction.assessment_document_id,
+    )
+
+    question_repository = AssessmentQuestionRepository(
+        db,
+    )
+
+    extraction_repository = AssessmentQuestionExtractionRepository(
+        db,
+    )
+
+    existing_questions = await question_repository.list_questions_by_assessment(
+        assessment_id,
+        include_relationships=False,
+    )
+
+    existing_numbers = {question.question_number for question in existing_questions}
+
+    import_numbers = {spec["question_number"] for spec in specs}
+
+    conflicts = sorted(
+        existing_numbers.intersection(
+            import_numbers,
+        )
+    )
+
+    if conflicts:
+        conflict_text = ", ".join(
+            repr(
+                question_number,
+            )
+            for question_number in conflicts
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot import the reviewed extraction because these question "
+                f"numbers already exist in the assessment: {conflict_text}."
+            ),
+        )
+
+    next_order = (
+        max(
+            (question.order for question in existing_questions),
+            default=0,
+        )
+        + 1
+    )
+
+    created_by_number: dict[str, AssessmentQuestion] = {}
+
+    imported_question_responses: list[
+        AssessmentQuestionExtractionImportedQuestionResponse
+    ] = []
+
+    try:
+        for offset, spec in enumerate(
+            specs,
+        ):
+            parent_number = spec.get(
+                "parent_question_number",
+            )
+
+            parent_question_id: int | None = None
+
+            if parent_number is not None:
+                parent = created_by_number.get(
+                    parent_number,
+                )
+
+                if parent is None or parent.id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail=(
+                            f"Question {spec['question_number']!r} could not "
+                            f"resolve parent {parent_number!r} during import."
+                        ),
+                    )
+
+                parent_question_id = parent.id
+
+            question = AssessmentQuestion(
+                assessment_id=assessment_id,
+                section_id=None,
+                parent_question_id=parent_question_id,
+                question_number=spec["question_number"],
+                title=None,
+                prompt=spec["prompt"],
+                question_type=spec["question_type"],
+                maximum_mark=spec["maximum_mark"],
+                order=next_order + offset,
+                is_markable=spec["is_markable"],
+                options=[
+                    AssessmentQuestionOption(
+                        text=option["text"],
+                        order=option["order"],
+                        is_correct=option["is_correct"],
+                        feedback=option["feedback"],
+                    )
+                    for option in spec["options"]
+                ],
+                assets=[
+                    AssessmentQuestionAsset(
+                        asset_type=asset["asset_type"],
+                        storage_path=asset["storage_path"],
+                        original_filename=asset["original_filename"],
+                        mime_type=asset["mime_type"],
+                        file_size_bytes=asset["file_size_bytes"],
+                        alt_text=asset["alt_text"],
+                        caption=asset["caption"],
+                        order=asset["order"],
+                        candidate_visible=asset["candidate_visible"],
+                        source_document_id=asset["source_document_id"],
+                        source_page_number=asset["source_page_number"],
+                        source_bbox=asset["source_bbox"],
+                    )
+                    for asset in spec["assets"]
+                ],
+            )
+
+            question = await question_repository.create_question(
+                question,
+            )
+
+            created_by_number[question.question_number] = question
+
+            imported_question_responses.append(
+                AssessmentQuestionExtractionImportedQuestionResponse(
+                    id=question.id,
+                    question_number=question.question_number,
+                    parent_question_id=question.parent_question_id,
+                    parent_question_number=parent_number,
+                    maximum_mark=question.maximum_mark,
+                    order=question.order,
+                    is_markable=question.is_markable,
+                    question_type=AssessmentQuestionType(
+                        question.question_type,
+                    ),
+                    option_count=len(
+                        spec["options"],
+                    ),
+                    asset_count=len(
+                        spec["assets"],
+                    ),
+                    synthesised=spec["synthesised"],
+                    source_candidate_index=spec["source_candidate_index"],
+                )
+            )
+
+        extraction.status = AssessmentQuestionExtractionStatus.IMPORTED.value
+        extraction.imported_by_id = current_user.id
+        extraction.imported_at = _utc_now()
+
+        extraction = await extraction_repository.save(
+            extraction,
+        )
+
+        await db.commit()
+
+        await db.refresh(
+            extraction,
+        )
+
+        return (
+            extraction,
+            imported_question_responses,
+        )
+
+    except HTTPException:
+        await db.rollback()
+        raise
+
+    except IntegrityError as exc:
+        await db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The reviewed extraction could not be imported because the "
+                "assessment structure changed concurrently."
+            ),
+        ) from exc
+
+    except ValueError as exc:
+        await db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(
+                exc,
+            ),
+        ) from exc
+
+    except Exception:
+        await db.rollback()
+        raise
 
 
 async def get_question_extraction(

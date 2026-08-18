@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import RoleGate from "@/components/auth/RoleGate";
+import AssessmentQuestionExtractionPanel from "@/components/assessments/AssessmentQuestionExtractionPanel";
 import { apiGet, apiPatch } from "@/lib/api";
 import {
     archiveAssessment,
@@ -2850,18 +2851,24 @@ function TeacherAssessmentDetailContent() {
                             </div>
                         )}
 
-                        {currentQuestionPaper && (
-                            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                                <p className="text-sm font-semibold text-amber-900">
-                                    Question extraction comes next
-                                </p>
-
-                                <p className="mt-1 text-sm leading-6 text-amber-800">
-                                    The original paper is now stored permanently. The next assessment step will detect question structure from the PDF and present it for teacher review before any questions are imported.
-                                </p>
-                            </div>
-                        )}
                     </section>
+
+                    {currentQuestionPaper && (
+                        <AssessmentQuestionExtractionPanel
+                            assessmentId={
+                                assessment.id
+                            }
+                            questionPaper={
+                                currentQuestionPaper
+                            }
+                            isDraft={
+                                isDraft
+                            }
+                            onImported={
+                                loadAssessment
+                            }
+                        />
+                    )}
 
                     {!isDraft && (
                         <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5">

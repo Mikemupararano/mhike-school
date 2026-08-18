@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -14,13 +16,18 @@ from app.models.user import User
 from app.schemas.assessment_question_extraction import (
     AssessmentQuestionExtractionCreatedResponse,
     AssessmentQuestionExtractionHistoryResponse,
+    AssessmentQuestionExtractionImportResponse,
     AssessmentQuestionExtractionResponse,
+    AssessmentQuestionExtractionReviewResponse,
+    AssessmentQuestionExtractionReviewUpdate,
     AssessmentQuestionExtractionSummaryResponse,
 )
 from app.services.assessment_question_extraction_service import (
     create_question_extraction,
     get_question_extraction,
+    import_question_extraction,
     list_question_extractions_for_document,
+    update_question_extraction_review,
 )
 
 router = APIRouter()
@@ -107,7 +114,7 @@ async def get_assessment_question_extraction(
     Return one full question extraction proposal.
 
     The full response contains the retained page evidence and review proposal
-    required by the future extraction-review workspace.
+    required by the extraction-review workspace.
     """
 
     _ensure_assessment_staff_access(
@@ -123,6 +130,122 @@ async def get_assessment_question_extraction(
 
     return AssessmentQuestionExtractionResponse.model_validate(
         extraction,
+    )
+
+
+@router.patch(
+    "/{assessment_id}/question-extractions/{extraction_id}/review",
+    response_model=AssessmentQuestionExtractionReviewResponse,
+)
+async def review_assessment_question_extraction(
+    assessment_id: int,
+    extraction_id: int,
+    payload: AssessmentQuestionExtractionReviewUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentQuestionExtractionReviewResponse:
+    """
+    Save teacher review changes for an extraction proposal.
+
+    Review changes may edit proposal question numbering, text, marks,
+    parent relationships and inclusion state.
+
+    Raw page evidence and extractor-owned source metadata remain immutable.
+    This operation does not create canonical AssessmentQuestion records.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    extraction = await update_question_extraction_review(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        extraction_id=extraction_id,
+        review_update=payload,
+    )
+
+    response = AssessmentQuestionExtractionReviewResponse.model_validate(
+        extraction,
+    )
+
+    return response.model_copy(
+        update={
+            "message": "Question extraction review saved.",
+        }
+    )
+
+
+@router.post(
+    "/{assessment_id}/question-extractions/{extraction_id}/import",
+    response_model=AssessmentQuestionExtractionImportResponse,
+)
+async def import_assessment_question_extraction(
+    assessment_id: int,
+    extraction_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentQuestionExtractionImportResponse:
+    """
+    Explicitly import a fully reviewed extraction proposal.
+
+    Import:
+
+    - is allowed only for a fully reviewed active extraction;
+    - creates canonical AssessmentQuestion records;
+    - synthesises missing structural parent questions when required;
+    - preserves canonical parent-child relationships;
+    - runs atomically with the extraction lifecycle transition;
+    - marks the extraction IMPORTED only after successful question creation.
+
+    No request body is accepted because the stored reviewed proposal is the
+    authoritative import source. This prevents the client from modifying the
+    approved proposal during import.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    extraction, imported_questions = await import_question_extraction(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        extraction_id=extraction_id,
+    )
+
+    imported_markable_questions = [
+        question for question in imported_questions if question.is_markable
+    ]
+
+    synthesised_parents = [
+        question for question in imported_questions if question.synthesised
+    ]
+
+    imported_total_marks = sum(
+        (question.maximum_mark for question in imported_markable_questions),
+        Decimal("0"),
+    )
+
+    extraction_response = AssessmentQuestionExtractionResponse.model_validate(
+        extraction,
+    )
+
+    return AssessmentQuestionExtractionImportResponse(
+        **extraction_response.model_dump(),
+        message="Reviewed question extraction imported.",
+        imported_question_count=len(
+            imported_questions,
+        ),
+        imported_markable_question_count=len(
+            imported_markable_questions,
+        ),
+        synthesised_parent_count=len(
+            synthesised_parents,
+        ),
+        imported_total_marks=imported_total_marks,
+        imported_questions=imported_questions,
     )
 
 

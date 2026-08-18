@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
@@ -23,13 +24,21 @@ from app.models.course import Course
 from app.repositories.assessment_question_extraction import (
     AssessmentQuestionExtractionRepository,
 )
+from app.schemas.assessment_question_extraction import (
+    AssessmentQuestionExtractionReviewQuestionUpdate,
+    AssessmentQuestionExtractionReviewStatus,
+    AssessmentQuestionExtractionReviewUpdate,
+)
 from app.services import assessment_document_service
+import app.services.assessment_question_extraction_service as extraction_service
 from app.services.assessment_question_extraction_service import (
     _detect_question_line,
     _read_pdf,
     create_question_extraction,
     get_question_extraction,
+    import_question_extraction,
     list_question_extractions_for_document,
+    update_question_extraction_review,
 )
 
 # ---------------------------------------------------------------------------
@@ -776,3 +785,1114 @@ async def test_document_version_unique_constraint_is_reflected_in_repository_seq
         )
         == 2
     )
+
+
+# ---------------------------------------------------------------------------
+# Teacher review tests
+# ---------------------------------------------------------------------------
+
+
+def _review_update_from_extraction(
+    extraction: AssessmentQuestionExtraction,
+    *,
+    review_status: AssessmentQuestionExtractionReviewStatus = (
+        AssessmentQuestionExtractionReviewStatus.IN_PROGRESS
+    ),
+    review_notes: str | None = None,
+) -> AssessmentQuestionExtractionReviewUpdate:
+    """
+    Build a complete review payload from the stored proposal.
+
+    Individual tests may mutate the returned Pydantic model before saving.
+    """
+
+    assert extraction.proposal_data is not None
+
+    stored_questions = extraction.proposal_data.get(
+        "questions",
+        [],
+    )
+
+    return AssessmentQuestionExtractionReviewUpdate(
+        review_status=review_status,
+        review_notes=review_notes,
+        questions=[
+            AssessmentQuestionExtractionReviewQuestionUpdate(
+                candidate_index=index,
+                question_number=str(
+                    question["question_number"],
+                ),
+                text=str(
+                    question.get(
+                        "text",
+                        "",
+                    )
+                    or ""
+                ),
+                marks=question.get(
+                    "marks",
+                ),
+                parent_question_number=question.get(
+                    "parent_question_number",
+                ),
+                included=True,
+                reviewed=True,
+            )
+            for index, question in enumerate(
+                stored_questions,
+            )
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_question_extraction_review_saves_edits_and_preserves_evidence(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+                "(a) State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    original_page_data = extraction.page_data
+
+    assert extraction.proposal_data is not None
+
+    original_source = dict(
+        extraction.proposal_data["questions"][0]["source"],
+    )
+
+    review_update = _review_update_from_extraction(
+        extraction,
+        review_status=AssessmentQuestionExtractionReviewStatus.REVIEWED,
+        review_notes="  Checked against the source paper.  ",
+    )
+
+    review_update.questions[0].question_number = "1 "
+    review_update.questions[0].text = "  State the relative charge of a proton.  "
+    review_update.questions[0].marks = 2
+
+    # Excluding a row keeps it in the proposal/history but removes it from
+    # review totals and future import eligibility.
+    review_update.questions[1].included = False
+
+    updated = await update_question_extraction_review(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        extraction_id=extraction.id,
+        review_update=review_update,
+    )
+
+    assert updated.status == AssessmentQuestionExtractionStatus.COMPLETED.value
+    assert updated.page_data == original_page_data
+
+    assert updated.proposal_data is not None
+
+    proposal = updated.proposal_data
+
+    assert proposal["review_status"] == (
+        AssessmentQuestionExtractionReviewStatus.REVIEWED.value
+    )
+    assert proposal["review_required"] is False
+    assert proposal["auto_import_allowed"] is False
+    assert proposal["review_notes"] == "Checked against the source paper."
+    assert proposal["reviewed_by_id"] == teacher_user.id
+    assert proposal["reviewed_at"]
+
+    first_question = proposal["questions"][0]
+    second_question = proposal["questions"][1]
+
+    assert first_question["question_number"] == "1"
+    assert first_question["text"] == "State the relative charge of a proton."
+    assert first_question["marks"] == 2
+    assert first_question["included"] is True
+    assert first_question["reviewed"] is True
+    assert first_question["source"] == original_source
+
+    assert second_question["included"] is False
+
+    assert proposal["summary"]["included_question_count"] == 1
+    assert proposal["summary"]["included_mark_sum"] == 2
+
+    live_question_count_result = await db_session.execute(
+        select(
+            func.count(
+                AssessmentQuestion.id,
+            ),
+        ).where(
+            AssessmentQuestion.assessment_id == assessment.id,
+        )
+    )
+
+    assert live_question_count_result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_update_question_extraction_review_requires_every_candidate_once(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+                "(a) State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    review_update = _review_update_from_extraction(
+        extraction,
+    )
+
+    review_update.questions = review_update.questions[:1]
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await update_question_extraction_review(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=extraction.id,
+            review_update=review_update,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "each stored extraction candidate" in str(
+        exc_info.value.detail,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_question_extraction_review_rejects_duplicate_included_numbers(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+                "(a) State the charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    review_update = _review_update_from_extraction(
+        extraction,
+    )
+
+    assert (
+        len(
+            review_update.questions,
+        )
+        == 2
+    )
+
+    review_update.questions[0].question_number = "1(a)"
+    review_update.questions[1].question_number = "1 (a)"
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await update_question_extraction_review(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=extraction.id,
+            review_update=review_update,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "unique question numbers" in str(
+        exc_info.value.detail,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_question_extraction_review_requires_included_rows_reviewed_before_completion(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    review_update = _review_update_from_extraction(
+        extraction,
+        review_status=AssessmentQuestionExtractionReviewStatus.REVIEWED,
+    )
+
+    review_update.questions[0].reviewed = False
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await update_question_extraction_review(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=extraction.id,
+            review_update=review_update,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "must be reviewed" in str(
+        exc_info.value.detail,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_question_extraction_review_rejects_superseded_extraction(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    first_extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    review_update = _review_update_from_extraction(
+        first_extraction,
+    )
+
+    await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    await db_session.refresh(
+        first_extraction,
+    )
+
+    assert first_extraction.status == (
+        AssessmentQuestionExtractionStatus.SUPERSEDED.value
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await update_question_extraction_review(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=first_extraction.id,
+            review_update=review_update,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "completed, active extraction proposal" in str(
+        exc_info.value.detail,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Explicit import tests
+# ---------------------------------------------------------------------------
+
+
+async def _review_extraction_for_import(
+    db_session: AsyncSession,
+    *,
+    teacher_user,
+    assessment: Assessment,
+    extraction: AssessmentQuestionExtraction,
+    question_numbers: list[str] | None = None,
+    marks: list[int | None] | None = None,
+) -> AssessmentQuestionExtraction:
+    """
+    Mark an extraction proposal fully reviewed and ready for explicit import.
+
+    Optional question numbers/marks allow import tests to exercise hierarchy
+    synthesis independently from the PDF parser's initial numbering.
+    """
+
+    review_update = _review_update_from_extraction(
+        extraction,
+        review_status=AssessmentQuestionExtractionReviewStatus.REVIEWED,
+    )
+
+    if question_numbers is not None:
+        assert len(question_numbers) == len(
+            review_update.questions,
+        )
+
+        for question, question_number in zip(
+            review_update.questions,
+            question_numbers,
+            strict=True,
+        ):
+            question.question_number = question_number
+            question.parent_question_number = None
+
+    if marks is not None:
+        assert len(marks) == len(
+            review_update.questions,
+        )
+
+        for question, question_marks in zip(
+            review_update.questions,
+            marks,
+            strict=True,
+        ):
+            question.marks = question_marks
+
+    return await update_question_extraction_review(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        extraction_id=extraction.id,
+        review_update=review_update,
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_creates_hierarchy_and_marks_atomically(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [2]",
+                "(a) State the charge of an electron. [3]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    reviewed = await _review_extraction_for_import(
+        db_session,
+        teacher_user=teacher_user,
+        assessment=assessment,
+        extraction=extraction,
+        question_numbers=[
+            "1(a)",
+            "1(b)",
+        ],
+        marks=[
+            2,
+            3,
+        ],
+    )
+
+    imported_extraction, imported_questions = await import_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        extraction_id=reviewed.id,
+    )
+
+    assert imported_extraction.status == (
+        AssessmentQuestionExtractionStatus.IMPORTED.value
+    )
+    assert imported_extraction.imported_by_id == teacher_user.id
+    assert imported_extraction.imported_at is not None
+
+    assert len(imported_questions) == 3
+
+    by_number = {question.question_number: question for question in imported_questions}
+
+    assert set(by_number) == {
+        "1",
+        "1(a)",
+        "1(b)",
+    }
+
+    structural_parent = by_number["1"]
+
+    assert structural_parent.is_markable is False
+    assert structural_parent.synthesised is True
+    assert structural_parent.maximum_mark == Decimal("0")
+    assert structural_parent.parent_question_id is None
+    assert structural_parent.source_candidate_index is None
+
+    first_child = by_number["1(a)"]
+    second_child = by_number["1(b)"]
+
+    assert first_child.is_markable is True
+    assert second_child.is_markable is True
+    assert first_child.synthesised is False
+    assert second_child.synthesised is False
+
+    assert first_child.parent_question_id == structural_parent.id
+    assert second_child.parent_question_id == structural_parent.id
+
+    assert first_child.maximum_mark == Decimal("2")
+    assert second_child.maximum_mark == Decimal("3")
+
+    assert sum(
+        question.maximum_mark for question in imported_questions if question.is_markable
+    ) == Decimal("5")
+
+    result = await db_session.execute(
+        select(
+            AssessmentQuestion,
+        )
+        .where(
+            AssessmentQuestion.assessment_id == assessment.id,
+        )
+        .order_by(
+            AssessmentQuestion.order.asc(),
+        )
+    )
+
+    canonical_questions = list(
+        result.scalars().all(),
+    )
+
+    assert [question.question_number for question in canonical_questions] == [
+        "1",
+        "1(a)",
+        "1(b)",
+    ]
+
+    canonical_by_number = {
+        question.question_number: question for question in canonical_questions
+    }
+
+    assert canonical_by_number["1"].is_markable is False
+    assert canonical_by_number["1"].maximum_mark == Decimal("0.00")
+
+    assert canonical_by_number["1(a)"].parent_question_id == (
+        canonical_by_number["1"].id
+    )
+    assert canonical_by_number["1(b)"].parent_question_id == (
+        canonical_by_number["1"].id
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_synthesises_nested_parents(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    reviewed = await _review_extraction_for_import(
+        db_session,
+        teacher_user=teacher_user,
+        assessment=assessment,
+        extraction=extraction,
+        question_numbers=[
+            "1(a)(i)",
+        ],
+        marks=[
+            2,
+        ],
+    )
+
+    _, imported_questions = await import_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        extraction_id=reviewed.id,
+    )
+
+    assert [question.question_number for question in imported_questions] == [
+        "1",
+        "1(a)",
+        "1(a)(i)",
+    ]
+
+    by_number = {question.question_number: question for question in imported_questions}
+
+    assert by_number["1"].synthesised is True
+    assert by_number["1(a)"].synthesised is True
+    assert by_number["1(a)(i)"].synthesised is False
+
+    assert by_number["1(a)"].parent_question_id == by_number["1"].id
+    assert by_number["1(a)(i)"].parent_question_id == by_number["1(a)"].id
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_requires_completed_teacher_review(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await import_question_extraction(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=extraction.id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "fully reviewed before import" in str(
+        exc_info.value.detail,
+    )
+
+    result = await db_session.execute(
+        select(
+            func.count(
+                AssessmentQuestion.id,
+            ),
+        ).where(
+            AssessmentQuestion.assessment_id == assessment.id,
+        )
+    )
+
+    assert result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_requires_marks_on_included_questions(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope.",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    reviewed = await _review_extraction_for_import(
+        db_session,
+        teacher_user=teacher_user,
+        assessment=assessment,
+        extraction=extraction,
+        marks=[
+            None,
+        ],
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await import_question_extraction(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=reviewed.id,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "must have a non-negative integer mark allocation" in str(
+        exc_info.value.detail,
+    )
+
+    await db_session.refresh(
+        reviewed,
+    )
+
+    assert reviewed.status == AssessmentQuestionExtractionStatus.COMPLETED.value
+
+    result = await db_session.execute(
+        select(
+            func.count(
+                AssessmentQuestion.id,
+            ),
+        ).where(
+            AssessmentQuestion.assessment_id == assessment.id,
+        )
+    )
+
+    assert result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_rejects_existing_question_number_conflict(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    existing = AssessmentQuestion(
+        assessment_id=assessment.id,
+        section_id=None,
+        parent_question_id=None,
+        question_number="1",
+        title=None,
+        prompt="Existing canonical question.",
+        maximum_mark=Decimal("1"),
+        order=1,
+        is_markable=True,
+    )
+
+    db_session.add(
+        existing,
+    )
+    await db_session.commit()
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    reviewed = await _review_extraction_for_import(
+        db_session,
+        teacher_user=teacher_user,
+        assessment=assessment,
+        extraction=extraction,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await import_question_extraction(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=reviewed.id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "question numbers already exist" in str(
+        exc_info.value.detail,
+    )
+
+    result = await db_session.execute(
+        select(
+            AssessmentQuestion,
+        ).where(
+            AssessmentQuestion.assessment_id == assessment.id,
+        )
+    )
+
+    questions = list(
+        result.scalars().all(),
+    )
+
+    assert len(questions) == 1
+    assert questions[0].id == existing.id
+
+    await db_session.refresh(
+        reviewed,
+    )
+
+    assert reviewed.status == AssessmentQuestionExtractionStatus.COMPLETED.value
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_cannot_be_imported_twice(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative mass of a proton. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    reviewed = await _review_extraction_for_import(
+        db_session,
+        teacher_user=teacher_user,
+        assessment=assessment,
+        extraction=extraction,
+    )
+
+    imported, _ = await import_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        extraction_id=reviewed.id,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await import_question_extraction(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=imported.id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "already been imported" in str(
+        exc_info.value.detail,
+    )
+
+    result = await db_session.execute(
+        select(
+            func.count(
+                AssessmentQuestion.id,
+            ),
+        ).where(
+            AssessmentQuestion.assessment_id == assessment.id,
+        )
+    )
+
+    assert result.scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_rejects_superseded_extraction(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 Define isotope. [2]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    first_extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    reviewed_first = await _review_extraction_for_import(
+        db_session,
+        teacher_user=teacher_user,
+        assessment=assessment,
+        extraction=first_extraction,
+    )
+
+    await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment.id,
+        document_id=document.id,
+    )
+
+    await db_session.refresh(
+        reviewed_first,
+    )
+
+    assert reviewed_first.status == (
+        AssessmentQuestionExtractionStatus.SUPERSEDED.value
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        await import_question_extraction(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment.id,
+            extraction_id=reviewed_first.id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "completed, active extraction proposal" in str(
+        exc_info.value.detail,
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_question_extraction_rolls_back_partial_question_creation(
+    db_session: AsyncSession,
+    teacher_user,
+    assessment_upload_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the charge of a proton. [2]",
+                "(a) State the charge of an electron. [3]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_document(
+        db_session,
+        teacher_user=teacher_user,
+        upload_root=assessment_upload_root,
+        pdf_bytes=pdf_bytes,
+    )
+
+    assessment_id = assessment.id
+
+    extraction = await create_question_extraction(
+        db=db_session,
+        current_user=teacher_user,
+        assessment_id=assessment_id,
+        document_id=document.id,
+    )
+
+    reviewed = await _review_extraction_for_import(
+        db_session,
+        teacher_user=teacher_user,
+        assessment=assessment,
+        extraction=extraction,
+        question_numbers=[
+            "1(a)",
+            "1(b)",
+        ],
+        marks=[
+            2,
+            3,
+        ],
+    )
+
+    extraction_id = reviewed.id
+
+    original_create_question = (
+        extraction_service.AssessmentQuestionRepository.create_question
+    )
+
+    call_count = 0
+
+    async def fail_on_second_question(
+        self,
+        question,
+    ):
+        nonlocal call_count
+
+        call_count += 1
+
+        if call_count == 2:
+            raise RuntimeError(
+                "Synthetic import failure.",
+            )
+
+        return await original_create_question(
+            self,
+            question,
+        )
+
+    monkeypatch.setattr(
+        extraction_service.AssessmentQuestionRepository,
+        "create_question",
+        fail_on_second_question,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Synthetic import failure",
+    ):
+        await import_question_extraction(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment_id,
+            extraction_id=extraction_id,
+        )
+
+    result = await db_session.execute(
+        select(
+            func.count(
+                AssessmentQuestion.id,
+            ),
+        ).where(
+            AssessmentQuestion.assessment_id == assessment_id,
+        )
+    )
+
+    assert result.scalar_one() == 0
+
+    refreshed_extraction = await db_session.get(
+        AssessmentQuestionExtraction,
+        extraction_id,
+    )
+
+    assert refreshed_extraction is not None
+    assert refreshed_extraction.status == (
+        AssessmentQuestionExtractionStatus.COMPLETED.value
+    )
+    assert refreshed_extraction.imported_by_id is None
+    assert refreshed_extraction.imported_at is None
