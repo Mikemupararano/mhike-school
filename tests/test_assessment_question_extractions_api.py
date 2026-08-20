@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.assessment_question import AssessmentQuestion
 from app.models.assessment_question_extraction import (
+    AssessmentQuestionExtraction,
     AssessmentQuestionExtractionStatus,
 )
 from app.models.course import Course
@@ -303,6 +305,136 @@ def assessment_upload_root(
     return upload_root
 
 
+async def _attach_test_visual_asset(
+    db_session: AsyncSession,
+    *,
+    assessment_id: int,
+    document_id: int,
+    extraction_id: int,
+    teacher_user,
+    write_file: bool = True,
+    storage_path_override: Path | None = None,
+) -> tuple[AssessmentQuestionExtraction, Path, bytes]:
+    """
+    Attach one synthetic visual asset to the first stored extraction candidate.
+
+    API tests should not depend on the PDF parser happening to detect a visual in
+    a small fixture document. This helper therefore creates the same
+    version-scoped storage layout used by the extraction service and updates a
+    fresh proposal_data copy so SQLAlchemy persists the JSON change reliably.
+    """
+
+    extraction = await db_session.get(
+        AssessmentQuestionExtraction,
+        extraction_id,
+    )
+
+    assert extraction is not None
+    assert extraction.assessment_id == assessment_id
+    assert extraction.assessment_document_id == document_id
+    assert isinstance(
+        extraction.proposal_data,
+        dict,
+    )
+
+    _, document_path = (
+        await assessment_document_service.resolve_assessment_document_path(
+            db=db_session,
+            current_user=teacher_user,
+            assessment_id=assessment_id,
+            document_id=document_id,
+        )
+    )
+
+    expected_root = (
+        document_path.parent
+        / "question-extraction-assets"
+        / f"document-{document_id}"
+        / f"v{extraction.version}"
+    )
+
+    expected_root.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    asset_path = (
+        storage_path_override
+        if storage_path_override is not None
+        else expected_root / "api-test-asset.png"
+    )
+
+    asset_bytes = b"mhike-question-extraction-asset-test"
+
+    if write_file:
+        asset_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        asset_path.write_bytes(
+            asset_bytes,
+        )
+
+    proposal = deepcopy(
+        extraction.proposal_data,
+    )
+
+    questions = proposal.get(
+        "questions",
+    )
+
+    assert isinstance(
+        questions,
+        list,
+    )
+    assert questions
+    assert isinstance(
+        questions[0],
+        dict,
+    )
+
+    questions[0]["assets"] = [
+        {
+            "asset_type": "figure",
+            "storage_path": str(
+                asset_path,
+            ),
+            "original_filename": asset_path.name,
+            "mime_type": "image/png",
+            "file_size_bytes": len(
+                asset_bytes,
+            ),
+            "alt_text": "Synthetic API test visual.",
+            "caption": None,
+            "order": 1,
+            "candidate_visible": True,
+            "source_document_id": document_id,
+            "source_page_number": 1,
+            "source_bbox": {
+                "x0": 10.0,
+                "y0": 20.0,
+                "x1": 110.0,
+                "y1": 120.0,
+            },
+            "included": True,
+            "reviewed": False,
+        }
+    ]
+
+    extraction.proposal_data = proposal
+
+    await db_session.commit()
+    await db_session.refresh(
+        extraction,
+    )
+
+    return (
+        extraction,
+        asset_path,
+        asset_bytes,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Creation
 # ---------------------------------------------------------------------------
@@ -361,7 +493,7 @@ async def test_teacher_can_create_question_extraction(
     assert data["status"] == (AssessmentQuestionExtractionStatus.COMPLETED.value)
 
     assert data["extractor_name"] == "pypdf"
-    assert data["parser_version"] == "2"
+    assert data["parser_version"] == "7"
 
     assert data["page_count"] == 2
     assert data["text_page_count"] == 2
@@ -588,6 +720,533 @@ async def test_teacher_can_list_question_extraction_history(
         assert "page_data" not in extraction
         assert "proposal_data" not in extraction
         assert "source_metadata" not in extraction
+
+
+# ---------------------------------------------------------------------------
+# Secure extraction asset delivery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_full_extraction_derives_asset_content_url_without_persisting_it(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction_id = create_response.json()["id"]
+
+    extraction, _, _ = await _attach_test_visual_asset(
+        db_session,
+        assessment_id=assessment["id"],
+        document_id=document["id"],
+        extraction_id=extraction_id,
+        teacher_user=teacher_user,
+    )
+
+    response = await client.get(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    asset = data["proposal_data"]["questions"][0]["assets"][0]
+
+    assert asset["content_url"] == (
+        f"/api/v1/assessments/{assessment['id']}"
+        f"/question-extractions/{extraction_id}"
+        "/assets/0/0"
+    )
+
+    await db_session.refresh(
+        extraction,
+    )
+
+    stored_asset = extraction.proposal_data["questions"][0]["assets"][0]
+
+    assert "content_url" not in stored_asset
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_read_question_extraction_asset(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction_id = create_response.json()["id"]
+
+    _, _, asset_bytes = await _attach_test_visual_asset(
+        db_session,
+        assessment_id=assessment["id"],
+        document_id=document["id"],
+        extraction_id=extraction_id,
+        teacher_user=teacher_user,
+    )
+
+    response = await client.get(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/0/0"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith(
+        "image/png",
+    )
+    assert response.content == asset_bytes
+
+
+@pytest.mark.asyncio
+async def test_question_extraction_asset_rejects_out_of_range_indexes(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction_id = create_response.json()["id"]
+
+    await _attach_test_visual_asset(
+        db_session,
+        assessment_id=assessment["id"],
+        document_id=document["id"],
+        extraction_id=extraction_id,
+        teacher_user=teacher_user,
+    )
+
+    urls = [
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/-1/0"
+        ),
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/999/0"
+        ),
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/0/-1"
+        ),
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/0/999"
+        ),
+    ]
+
+    for url in urls:
+        response = await client.get(
+            url,
+            headers=auth_headers(
+                teacher_user,
+            ),
+        )
+
+        assert response.status_code == 404, response.text
+        assert (
+            _error_message(
+                response,
+            )
+            == "Question extraction asset not found."
+        )
+
+
+@pytest.mark.asyncio
+async def test_question_extraction_asset_returns_not_found_when_file_is_missing(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction_id = create_response.json()["id"]
+
+    await _attach_test_visual_asset(
+        db_session,
+        assessment_id=assessment["id"],
+        document_id=document["id"],
+        extraction_id=extraction_id,
+        teacher_user=teacher_user,
+        write_file=False,
+    )
+
+    response = await client.get(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/0/0"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 404
+    assert (
+        _error_message(
+            response,
+        )
+        == "Question extraction asset file was not found."
+    )
+
+
+@pytest.mark.asyncio
+async def test_question_extraction_asset_rejects_path_outside_version_directory(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction_id = create_response.json()["id"]
+
+    outside_path = (
+        assessment_upload_root.parent / "outside-authorised-extraction-directory.png"
+    )
+
+    await _attach_test_visual_asset(
+        db_session,
+        assessment_id=assessment["id"],
+        document_id=document["id"],
+        extraction_id=extraction_id,
+        teacher_user=teacher_user,
+        storage_path_override=outside_path,
+    )
+
+    response = await client.get(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/0/0"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 409
+    assert _error_message(
+        response,
+    ) == (
+        "The stored extraction asset path falls outside the "
+        "authorised extraction directory."
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_teacher_cannot_read_question_extraction_asset(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction_id = create_response.json()["id"]
+
+    await _attach_test_visual_asset(
+        db_session,
+        assessment_id=assessment["id"],
+        document_id=document["id"],
+        extraction_id=extraction_id,
+        teacher_user=teacher_user,
+    )
+
+    other_teacher = await create_test_user(
+        db_session,
+        email="assessment.extraction.asset.other.teacher@example.com",
+        roles=[
+            UserRole.TEACHER,
+        ],
+        school_id=teacher_user.school_id,
+    )
+
+    response = await client.get(
+        (
+            f"/api/v1/assessments/{assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/0/0"
+        ),
+        headers=auth_headers(
+            other_teacher,
+        ),
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_question_extraction_asset_cannot_be_read_through_another_assessment(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    pdf_bytes = _build_pdf_bytes(
+        [
+            [
+                "1 State the relative charge of an electron. [1]",
+            ],
+        ]
+    )
+
+    first_assessment, document = await _create_assessment_with_question_paper(
+        client,
+        db_session,
+        teacher_user=teacher_user,
+        auth_headers=auth_headers,
+        pdf_bytes=pdf_bytes,
+    )
+
+    create_response = await client.post(
+        (
+            f"/api/v1/assessments/{first_assessment['id']}"
+            f"/documents/{document['id']}"
+            "/question-extractions"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    extraction_id = create_response.json()["id"]
+
+    await _attach_test_visual_asset(
+        db_session,
+        assessment_id=first_assessment["id"],
+        document_id=document["id"],
+        extraction_id=extraction_id,
+        teacher_user=teacher_user,
+    )
+
+    second_course = await _create_course(
+        db_session,
+        teacher_id=teacher_user.id,
+        school_id=teacher_user.school_id,
+        title="Second Asset Delivery API Course",
+    )
+
+    second_assessment = await _create_assessment(
+        client,
+        course_id=second_course.id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+        title="Second Asset Delivery Assessment",
+    )
+
+    response = await client.get(
+        (
+            f"/api/v1/assessments/{second_assessment['id']}"
+            f"/question-extractions/{extraction_id}"
+            "/assets/0/0"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 404
+    assert (
+        _error_message(
+            response,
+        )
+        == "Assessment question extraction not found."
+    )
 
 
 # ---------------------------------------------------------------------------

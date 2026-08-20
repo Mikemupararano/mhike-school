@@ -1,14 +1,167 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 from app.models.assessment_response import (
     AssessmentResponseStatus,
     MarkingDecisionStatus,
 )
+
+# ---------------------------------------------------------------------------
+# Structured assessment-response payloads
+# ---------------------------------------------------------------------------
+
+
+class DiagramAnnotationPoint(BaseModel):
+    """
+    Represent one learner annotation placed on a question visual.
+
+    Coordinates are normalised to the rendered asset:
+
+        x = 0.0 -> left edge
+        x = 1.0 -> right edge
+        y = 0.0 -> top edge
+        y = 1.0 -> bottom edge
+
+    Normalised coordinates keep an answer stable across different viewport
+    sizes and allow the same response to be rendered consistently to learners
+    and markers.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    id: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    symbol: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    x: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+    y: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+
+class DiagramAnnotationResponseData(BaseModel):
+    """
+    Versioned structured response for a diagram-annotation question.
+
+    ``asset_id`` identifies the canonical AssessmentQuestionAsset on which the
+    learner placed the annotations.
+
+    ``annotations`` may be empty while a response is in progress. Submission
+    completeness remains a service/lifecycle concern because some valid
+    questions may legitimately require zero or a variable number of marks.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    type: Literal["diagram_annotation"] = "diagram_annotation"
+
+    version: Literal[1] = 1
+
+    asset_id: int = Field(
+        gt=0,
+    )
+
+    annotations: list[DiagramAnnotationPoint] = Field(
+        default_factory=list,
+        max_length=500,
+    )
+
+
+def _normalise_response_data(value: Any) -> str | None:
+    """
+    Validate and serialise structured response data while retaining backwards
+    compatibility with existing string-based response payloads.
+
+    Existing non-JSON strings continue to pass through unchanged.
+
+    JSON objects whose ``type`` is ``diagram_annotation`` are validated
+    strictly against ``DiagramAnnotationResponseData`` and serialised to a
+    canonical JSON string for storage in AssessmentResponse.response_data.
+
+    Dictionaries supplied directly by newer clients are also accepted and
+    normalised before reaching the service/ORM layer.
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(value, DiagramAnnotationResponseData):
+        payload = value
+        return json.dumps(
+            payload.model_dump(mode="json"),
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+    if isinstance(value, dict):
+        response_type = value.get("type")
+
+        if response_type == "diagram_annotation":
+            payload = DiagramAnnotationResponseData.model_validate(value)
+            return json.dumps(
+                payload.model_dump(mode="json"),
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+
+        # Preserve compatibility for existing generic structured dictionaries.
+        return json.dumps(
+            value,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+    if not isinstance(value, str):
+        raise ValueError("response_data must be a string, object, or null")
+
+    stripped = value.strip()
+
+    if not stripped:
+        return value
+
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        # Existing response_data historically accepts arbitrary text.
+        return value
+
+    if isinstance(decoded, dict) and decoded.get("type") == "diagram_annotation":
+        payload = DiagramAnnotationResponseData.model_validate(decoded)
+        return json.dumps(
+            payload.model_dump(mode="json"),
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+    # Existing JSON stored in response_data remains valid and is preserved.
+    return value
+
 
 # ---------------------------------------------------------------------------
 # Assessment response payloads
@@ -18,6 +171,13 @@ from app.models.assessment_response import (
 class AssessmentResponseCreate(BaseModel):
     """
     Payload for creating one response for a script/question pair.
+
+    ``response_data`` remains a string at the service/ORM boundary for
+    backwards compatibility with the existing Text database column.
+
+    New clients may nevertheless submit a structured dictionary. Supported
+    typed response formats, such as ``diagram_annotation``, are validated and
+    serialised automatically.
     """
 
     question_id: int = Field(
@@ -32,10 +192,24 @@ class AssessmentResponseCreate(BaseModel):
         max_length=1000,
     )
 
+    @field_validator(
+        "response_data",
+        mode="before",
+    )
+    @classmethod
+    def validate_response_data(
+        cls,
+        value: Any,
+    ) -> str | None:
+        return _normalise_response_data(value)
+
 
 class AssessmentResponseUpdate(BaseModel):
     """
     Payload for updating editable response content.
+
+    Structured response data uses the same validation and serialisation rules
+    as response creation.
     """
 
     response_text: str | None = None
@@ -45,6 +219,17 @@ class AssessmentResponseUpdate(BaseModel):
         default=None,
         max_length=1000,
     )
+
+    @field_validator(
+        "response_data",
+        mode="before",
+    )
+    @classmethod
+    def validate_response_data(
+        cls,
+        value: Any,
+    ) -> str | None:
+        return _normalise_response_data(value)
 
 
 class AssessmentResponseStatusUpdate(BaseModel):
@@ -224,6 +409,9 @@ class AssessmentResponseOut(BaseModel):
     The nested marking decision is included when one exists so a marking
     client can retrieve the current question-level result and supporting
     criterion awards without making a separate request.
+
+    ``response_data`` remains the stored JSON/text representation so existing
+    API consumers remain backwards compatible.
     """
 
     model_config = ConfigDict(

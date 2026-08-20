@@ -50,10 +50,12 @@ class AssessmentQuestionExtractionSource(BaseModel):
     page_number: int = Field(
         ge=1,
     )
+
     line_number: int | None = Field(
         default=None,
         ge=1,
     )
+
     source_line: str | None = None
 
 
@@ -92,8 +94,12 @@ class AssessmentQuestionExtractionAsset(BaseModel):
     One visual/resource proposed for a question.
 
     Extraction-owned provenance remains server-controlled. A detected asset may
-    eventually point at a generated crop through ``storage_path``; until visual
-    extraction creates that crop the path may remain None.
+    point at a generated crop through ``storage_path``. That path remains
+    server-side storage metadata and is never accepted from a review request.
+
+    ``content_url`` is derived by the API response layer and provides an
+    authorised browser-facing route for displaying the asset. It is never
+    persisted into proposal_data.
 
     ``source_bbox`` uses PDF/page coordinates and is kept with the proposal so
     the original location can be audited and, when needed, re-cropped.
@@ -106,6 +112,8 @@ class AssessmentQuestionExtractionAsset(BaseModel):
     asset_type: AssessmentQuestionAssetType = AssessmentQuestionAssetType.FIGURE
 
     storage_path: str | None = None
+
+    content_url: str | None = None
 
     original_filename: str | None = Field(
         default=None,
@@ -529,8 +537,6 @@ class AssessmentQuestionExtractionReviewQuestionUpdate(BaseModel):
 
         return self
 
-    included: bool = True
-
     reviewed: bool = True
 
 
@@ -592,14 +598,15 @@ class AssessmentQuestionExtractionReviewUpdate(BaseModel):
                 in {
                     AssessmentQuestionType.WRITTEN,
                     AssessmentQuestionType.NUMERIC,
+                    AssessmentQuestionType.DIAGRAM_ANNOTATION,
                     AssessmentQuestionType.STRUCTURAL,
                 }
                 and option_count > 0
             ):
                 raise ValueError(
-                    f"Question {question.question_number!r}: written, numeric "
-                    "and structural questions cannot have multiple-choice "
-                    "options.",
+                    f"Question {question.question_number!r}: written, numeric, "
+                    "diagram-annotation and structural questions cannot have "
+                    "multiple-choice options.",
                 )
 
             if question_type == AssessmentQuestionType.MULTIPLE_CHOICE_SINGLE:

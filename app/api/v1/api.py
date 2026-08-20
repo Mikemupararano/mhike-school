@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     assessment_result_outcomes,
     assessment_result_publication,
     assessment_results,
+    assessment_taking,
     assessment_targets,
     assessment_trends,
     assessments,
@@ -147,6 +148,13 @@ api_router.include_router(
     assessment_question_extractions.router,
     prefix="/assessments",
     tags=["assessment-question-extractions"],
+)
+
+
+api_router.include_router(
+    assessment_taking.router,
+    prefix="/student-assessments",
+    tags=["student-assessments"],
 )
 
 

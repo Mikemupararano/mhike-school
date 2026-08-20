@@ -4,11 +4,13 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, raiseload, selectinload
 
 from app.models.assessment import Assessment
 from app.models.assessment_question import (
     AssessmentQuestion,
+    AssessmentQuestionAsset,
+    AssessmentQuestionOption,
     AssessmentSection,
 )
 
@@ -738,6 +740,315 @@ class AssessmentQuestionRepository:
         )
 
         return result.scalar_one_or_none()
+
+    async def get_candidate_visible_question_by_assessment_and_school(
+        self,
+        *,
+        question_id: int,
+        assessment_id: int,
+        school_id: int,
+    ) -> AssessmentQuestion | None:
+        """
+        Return one learner-safe question within an assessment and school.
+
+        This is the single-question counterpart to
+        ``list_candidate_visible_questions_by_assessment_and_school`` and is
+        intended for high-frequency candidate workflows such as autosave.
+
+        It deliberately loads only learner-visible question fields, safe option
+        fields, and candidate-visible asset metadata. Mark schemes, responses,
+        correctness/feedback metadata, storage paths, provenance and unrelated
+        relationships remain unavailable.
+        """
+
+        self._validate_positive_integer(
+            question_id,
+            "question_id",
+        )
+        self._validate_positive_integer(
+            assessment_id,
+            "assessment_id",
+        )
+        self._validate_positive_integer(
+            school_id,
+            "school_id",
+        )
+
+        statement = (
+            select(
+                AssessmentQuestion,
+            )
+            .join(
+                Assessment,
+                Assessment.id == AssessmentQuestion.assessment_id,
+            )
+            .where(
+                AssessmentQuestion.id == question_id,
+                AssessmentQuestion.assessment_id == assessment_id,
+                Assessment.school_id == school_id,
+            )
+            .execution_options(
+                populate_existing=True,
+            )
+            .options(
+                raiseload("*"),
+                load_only(
+                    AssessmentQuestion.id,
+                    AssessmentQuestion.assessment_id,
+                    AssessmentQuestion.section_id,
+                    AssessmentQuestion.parent_question_id,
+                    AssessmentQuestion.question_number,
+                    AssessmentQuestion.title,
+                    AssessmentQuestion.prompt,
+                    AssessmentQuestion.question_type,
+                    AssessmentQuestion.maximum_mark,
+                    AssessmentQuestion.order,
+                    AssessmentQuestion.is_markable,
+                ),
+                selectinload(
+                    AssessmentQuestion.section,
+                ).load_only(
+                    AssessmentSection.id,
+                    AssessmentSection.assessment_id,
+                    AssessmentSection.title,
+                    AssessmentSection.description,
+                    AssessmentSection.order,
+                    AssessmentSection.is_optional,
+                ),
+                selectinload(
+                    AssessmentQuestion.options,
+                ).load_only(
+                    AssessmentQuestionOption.id,
+                    AssessmentQuestionOption.question_id,
+                    AssessmentQuestionOption.text,
+                    AssessmentQuestionOption.order,
+                ),
+                selectinload(
+                    AssessmentQuestion.assets.and_(
+                        AssessmentQuestionAsset.candidate_visible.is_(True),
+                    ),
+                ).load_only(
+                    AssessmentQuestionAsset.id,
+                    AssessmentQuestionAsset.question_id,
+                    AssessmentQuestionAsset.asset_type,
+                    AssessmentQuestionAsset.alt_text,
+                    AssessmentQuestionAsset.caption,
+                    AssessmentQuestionAsset.order,
+                    AssessmentQuestionAsset.candidate_visible,
+                ),
+            )
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return result.scalar_one_or_none()
+
+    async def get_candidate_visible_asset_by_question_assessment_and_school(
+        self,
+        *,
+        asset_id: int,
+        question_id: int,
+        assessment_id: int,
+        school_id: int,
+    ) -> AssessmentQuestionAsset | None:
+        """
+        Return one candidate-visible asset within a question, assessment and school.
+
+        This lookup exists specifically for authorised candidate asset delivery.
+
+        Unlike the learner-facing question loaders, it deliberately includes the
+        server-side storage fields required to resolve and serve the file. Those
+        fields remain internal to the service/endpoint layer and must never be
+        serialised into candidate JSON responses.
+
+        The query is scoped simultaneously by:
+
+        - asset id;
+        - question id;
+        - assessment id;
+        - school id;
+        - candidate_visible=True.
+
+        ORM relationships remain unavailable through ``raiseload("*")``.
+        """
+
+        self._validate_positive_integer(
+            asset_id,
+            "asset_id",
+        )
+        self._validate_positive_integer(
+            question_id,
+            "question_id",
+        )
+        self._validate_positive_integer(
+            assessment_id,
+            "assessment_id",
+        )
+        self._validate_positive_integer(
+            school_id,
+            "school_id",
+        )
+
+        statement = (
+            select(
+                AssessmentQuestionAsset,
+            )
+            .join(
+                AssessmentQuestion,
+                AssessmentQuestion.id == AssessmentQuestionAsset.question_id,
+            )
+            .join(
+                Assessment,
+                Assessment.id == AssessmentQuestion.assessment_id,
+            )
+            .where(
+                AssessmentQuestionAsset.id == asset_id,
+                AssessmentQuestionAsset.question_id == question_id,
+                AssessmentQuestion.id == question_id,
+                AssessmentQuestion.assessment_id == assessment_id,
+                Assessment.school_id == school_id,
+                AssessmentQuestionAsset.candidate_visible.is_(True),
+            )
+            .execution_options(
+                populate_existing=True,
+            )
+            .options(
+                raiseload("*"),
+                load_only(
+                    AssessmentQuestionAsset.id,
+                    AssessmentQuestionAsset.question_id,
+                    AssessmentQuestionAsset.asset_type,
+                    AssessmentQuestionAsset.storage_path,
+                    AssessmentQuestionAsset.original_filename,
+                    AssessmentQuestionAsset.mime_type,
+                    AssessmentQuestionAsset.file_size_bytes,
+                    AssessmentQuestionAsset.alt_text,
+                    AssessmentQuestionAsset.caption,
+                    AssessmentQuestionAsset.order,
+                    AssessmentQuestionAsset.candidate_visible,
+                    AssessmentQuestionAsset.source_document_id,
+                ),
+            )
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return result.scalar_one_or_none()
+
+    async def list_candidate_visible_questions_by_assessment_and_school(
+        self,
+        *,
+        assessment_id: int,
+        school_id: int,
+    ) -> list[AssessmentQuestion]:
+        """
+        Return learner-safe questions for one assessment within one school.
+
+        This lookup is deliberately separate from ordinary staff question
+        retrieval. It applies a restrictive loader policy so candidate-facing
+        workflows do not hydrate mark schemes, responses, source documents, or
+        unrelated ORM relationships.
+
+        Loaded data is limited to:
+
+        - the canonical question fields required by the learner UI;
+        - the owning section;
+        - structured answer options, but only their learner-safe fields;
+        - candidate-visible question assets, but only learner-safe metadata.
+
+        Correct-option flags, option feedback, asset storage paths, extraction
+        provenance, mark schemes, responses, and other relationships are not
+        loaded by this method.
+        """
+
+        self._validate_positive_integer(
+            assessment_id,
+            "assessment_id",
+        )
+        self._validate_positive_integer(
+            school_id,
+            "school_id",
+        )
+
+        statement = (
+            select(
+                AssessmentQuestion,
+            )
+            .join(
+                Assessment,
+                Assessment.id == AssessmentQuestion.assessment_id,
+            )
+            .where(
+                AssessmentQuestion.assessment_id == assessment_id,
+                Assessment.school_id == school_id,
+            )
+            .order_by(
+                AssessmentQuestion.order.asc(),
+                AssessmentQuestion.id.asc(),
+            )
+            .execution_options(
+                populate_existing=True,
+            )
+            .options(
+                raiseload("*"),
+                load_only(
+                    AssessmentQuestion.id,
+                    AssessmentQuestion.assessment_id,
+                    AssessmentQuestion.section_id,
+                    AssessmentQuestion.parent_question_id,
+                    AssessmentQuestion.question_number,
+                    AssessmentQuestion.title,
+                    AssessmentQuestion.prompt,
+                    AssessmentQuestion.question_type,
+                    AssessmentQuestion.maximum_mark,
+                    AssessmentQuestion.order,
+                    AssessmentQuestion.is_markable,
+                ),
+                selectinload(
+                    AssessmentQuestion.section,
+                ).load_only(
+                    AssessmentSection.id,
+                    AssessmentSection.assessment_id,
+                    AssessmentSection.title,
+                    AssessmentSection.description,
+                    AssessmentSection.order,
+                    AssessmentSection.is_optional,
+                ),
+                selectinload(
+                    AssessmentQuestion.options,
+                ).load_only(
+                    AssessmentQuestionOption.id,
+                    AssessmentQuestionOption.question_id,
+                    AssessmentQuestionOption.text,
+                    AssessmentQuestionOption.order,
+                ),
+                selectinload(
+                    AssessmentQuestion.assets.and_(
+                        AssessmentQuestionAsset.candidate_visible.is_(True),
+                    ),
+                ).load_only(
+                    AssessmentQuestionAsset.id,
+                    AssessmentQuestionAsset.question_id,
+                    AssessmentQuestionAsset.asset_type,
+                    AssessmentQuestionAsset.alt_text,
+                    AssessmentQuestionAsset.caption,
+                    AssessmentQuestionAsset.order,
+                    AssessmentQuestionAsset.candidate_visible,
+                ),
+            )
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return list(
+            result.scalars().unique().all(),
+        )
 
     # ------------------------------------------------------------------
     # Question collections

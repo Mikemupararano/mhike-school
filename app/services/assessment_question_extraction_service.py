@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import shutil
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
+import pymupdf
 from pypdf import PdfReader, __version__ as pypdf_version
 from pypdf.errors import PdfReadError
 from sqlalchemy.exc import IntegrityError
@@ -44,9 +46,154 @@ from app.services.assessment_question_service import (
     _get_manageable_draft_assessment,
 )
 
-PARSER_VERSION = "2"
+PARSER_VERSION = "7"
 
 MAX_EXTRACTED_PAGE_TEXT_LENGTH = 100_000
+
+
+MCQ_SINGLE_INSTRUCTION_PATTERN = re.compile(
+    r"""
+    (?P<instruction>
+        \b
+        (?:tick|select|choose|mark|circle)
+        \b
+        .{0,100}?
+        \b(?:one|1)\b
+        (?:\s+(?:box|answer|option|response))?
+        [\.\:\;]?
+    )
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+MCQ_MULTIPLE_INSTRUCTION_PATTERN = re.compile(
+    r"""
+    (?P<instruction>
+        \b
+        (?:
+            select\s+all
+            |
+            choose\s+all
+            |
+            tick\s+all
+            |
+            tick\s+(?:two|three|four|2|3|4)
+            |
+            select\s+(?:two|three|four|2|3|4)
+            |
+            choose\s+(?:two|three|four|2|3|4)
+        )
+        \b
+        .{0,100}?
+        (?:
+            boxes?
+            |
+            answers?
+            |
+            options?
+            |
+            responses?
+            |
+            that\s+apply
+        )?
+        [\.\:\;]?
+    )
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+VISUAL_REFERENCE_PATTERN = re.compile(
+    r"""
+    \b
+    (?:
+        figure
+        |
+        diagram
+        |
+        graph
+        |
+        chart
+        |
+        image
+        |
+        illustration
+        |
+        drawing
+        |
+        model
+    )
+    \b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+VISUAL_ABOVE_PATTERN = re.compile(
+    r"\b(?:above|shown\s+above|figure\s+above|diagram\s+above)\b",
+    re.IGNORECASE,
+)
+
+
+VISUAL_BELOW_PATTERN = re.compile(
+    r"\b(?:below|shown\s+below|figure\s+below|diagram\s+below)\b",
+    re.IGNORECASE,
+)
+
+
+DIAGRAM_ANNOTATION_INSTRUCTION_PATTERN = re.compile(
+    r"""
+    \b
+    (?:
+        complete
+        |
+        annotate
+        |
+        label
+        |
+        mark
+        |
+        add
+        |
+        place
+        |
+        plot
+        |
+        draw
+    )
+    \b
+    .{0,120}?
+    \b
+    (?:
+        figure
+        |
+        diagram
+        |
+        graph
+        |
+        chart
+        |
+        image
+        |
+        drawing
+        |
+        model
+    )
+    \b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+VISUAL_RENDER_SCALE = 2.0
+VISUAL_REGION_MARGIN = 18.0
+VISUAL_EMBEDDED_IMAGE_MARGIN = 2.0
+VISUAL_EMBEDDED_IMAGE_COVERAGE_THRESHOLD = 0.50
+VISUAL_COMPONENT_MERGE_GAP = 36.0
+VISUAL_SAME_BAND_GAP = 120.0
 
 
 QUESTION_NUMBER_PATTERN = re.compile(
@@ -640,6 +787,121 @@ def _clean_continuation_line(
     return stripped
 
 
+def _split_mcq_instruction(
+    text: str,
+) -> tuple[
+    str,
+    AssessmentQuestionType | None,
+    str | None,
+]:
+    """
+    Split a trailing multiple-choice instruction from question stem text.
+
+    Detection is deliberately conservative. Only explicit authoring phrases
+    such as ``Tick one box`` or ``Select all that apply`` cause automatic
+    classification. The parser never infers a correct answer.
+    """
+
+    stripped = text.strip()
+
+    if not stripped:
+        return (
+            "",
+            None,
+            None,
+        )
+
+    multiple_match = MCQ_MULTIPLE_INSTRUCTION_PATTERN.search(
+        stripped,
+    )
+
+    if multiple_match is not None:
+        stem = stripped[: multiple_match.start()].strip()
+        instruction = stripped[multiple_match.start() : multiple_match.end()].strip()
+
+        return (
+            stem,
+            AssessmentQuestionType.MULTIPLE_CHOICE_MULTIPLE,
+            instruction,
+        )
+
+    single_match = MCQ_SINGLE_INSTRUCTION_PATTERN.search(
+        stripped,
+    )
+
+    if single_match is not None:
+        stem = stripped[: single_match.start()].strip()
+        instruction = stripped[single_match.start() : single_match.end()].strip()
+
+        return (
+            stem,
+            AssessmentQuestionType.MULTIPLE_CHOICE_SINGLE,
+            instruction,
+        )
+
+    return (
+        stripped,
+        None,
+        None,
+    )
+
+
+def _is_plausible_mcq_option_line(
+    line: str,
+) -> bool:
+    """
+    Return whether a continuation line is plausible as one answer option.
+
+    This helper is used only after an explicit MCQ instruction has already been
+    detected. That prerequisite is what keeps ordinary continuation prose from
+    being reclassified as answer choices.
+    """
+
+    candidate = line.strip()
+
+    if not candidate:
+        return False
+
+    if len(candidate) > 500:
+        return False
+
+    if _is_page_footer(
+        candidate,
+    ):
+        return False
+
+    if _is_answer_line(
+        candidate,
+    ):
+        return False
+
+    if (
+        _extract_declared_total(
+            candidate,
+        )
+        is not None
+    ):
+        return False
+
+    if (
+        _extract_standalone_mark(
+            candidate,
+        )
+        is not None
+    ):
+        return False
+
+    if (
+        _detect_question_line(
+            candidate,
+        )
+        is not None
+    ):
+        return False
+
+    return True
+
+
 def _new_proposal_question(
     *,
     question_number: str,
@@ -651,16 +913,32 @@ def _new_proposal_question(
 ) -> dict[str, Any]:
     """
     Create one reviewable proposal question.
+
+    Explicit multiple-choice instructions are separated from the stem at this
+    stage so following continuation lines can become structured options rather
+    than being flattened into question text.
     """
 
-    return {
+    (
+        stem_text,
+        detected_question_type,
+        mcq_instruction,
+    ) = _split_mcq_instruction(
+        text,
+    )
+
+    question = {
         "question_number": question_number,
-        "text": text.strip(),
+        "text": stem_text,
         "marks": marks,
         "depth": _infer_question_depth(
             question_number,
         ),
-        "question_type": AssessmentQuestionType.WRITTEN.value,
+        "question_type": (
+            detected_question_type.value
+            if detected_question_type is not None
+            else AssessmentQuestionType.WRITTEN.value
+        ),
         "options": [],
         "assets": [],
         "source": {
@@ -672,13 +950,23 @@ def _new_proposal_question(
         "requires_review": True,
     }
 
+    if detected_question_type is not None:
+        question["_mcq_collecting_options"] = True
+        question["_mcq_instruction"] = mcq_instruction
+
+    return question
+
 
 def _append_question_text(
     question: dict[str, Any],
     line: str,
 ) -> None:
     """
-    Append useful continuation text to a detected question.
+    Append useful continuation content to a detected question.
+
+    Once an explicit multiple-choice instruction is encountered, later
+    continuation lines are captured as structured answer options. Correctness
+    is always left false for teacher review; the parser never guesses answers.
     """
 
     continuation = _clean_continuation_line(
@@ -687,6 +975,80 @@ def _append_question_text(
 
     if continuation is None:
         return
+
+    if bool(
+        question.get(
+            "_mcq_collecting_options",
+            False,
+        )
+    ):
+        if _is_plausible_mcq_option_line(
+            continuation,
+        ):
+            options = question.setdefault(
+                "options",
+                [],
+            )
+
+            options.append(
+                {
+                    "text": continuation,
+                    "order": len(options) + 1,
+                    "is_correct": False,
+                    "feedback": None,
+                }
+            )
+
+            return
+
+        question["_mcq_collecting_options"] = False
+
+    (
+        continuation_stem,
+        detected_question_type,
+        mcq_instruction,
+    ) = _split_mcq_instruction(
+        continuation,
+    )
+
+    existing_text = str(
+        question.get(
+            "text",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if detected_question_type is not None:
+        if continuation_stem:
+            if existing_text:
+                question["text"] = f"{existing_text} {continuation_stem}"
+            else:
+                question["text"] = continuation_stem
+
+        question["question_type"] = detected_question_type.value
+        question["_mcq_collecting_options"] = True
+        question["_mcq_instruction"] = mcq_instruction
+        question["options"] = []
+        return
+
+    if existing_text:
+        question["text"] = f"{existing_text} {continuation}"
+    else:
+        question["text"] = continuation
+
+
+def _restore_unstructured_mcq_candidate(
+    question: dict[str, Any],
+    *,
+    instruction: str | None,
+    options: list[dict[str, Any]],
+) -> None:
+    """
+    Restore uncertain MCQ material to ordinary written question text.
+    """
+
+    fallback_parts: list[str] = []
 
     existing_text = str(
         question.get(
@@ -697,9 +1059,136 @@ def _append_question_text(
     ).strip()
 
     if existing_text:
-        question["text"] = f"{existing_text} {continuation}"
-    else:
-        question["text"] = continuation
+        fallback_parts.append(
+            existing_text,
+        )
+
+    if (
+        isinstance(
+            instruction,
+            str,
+        )
+        and instruction.strip()
+    ):
+        fallback_parts.append(
+            instruction.strip(),
+        )
+
+    for option in options:
+        if not isinstance(
+            option,
+            dict,
+        ):
+            continue
+
+        option_text = option.get(
+            "text",
+        )
+
+        if (
+            isinstance(
+                option_text,
+                str,
+            )
+            and option_text.strip()
+        ):
+            fallback_parts.append(
+                option_text.strip(),
+            )
+
+    question["text"] = " ".join(
+        fallback_parts,
+    )
+    question["question_type"] = AssessmentQuestionType.WRITTEN.value
+    question["options"] = []
+
+
+def _finalise_structured_question_candidate(
+    question: dict[str, Any],
+) -> None:
+    """
+    Finalise temporary parser-only MCQ state before proposal persistence.
+
+    An MCQ classification is retained only when at least two answer options
+    were captured. Otherwise all captured material is restored to ordinary
+    written question text so uncertain extraction never destroys source text.
+    """
+
+    question.pop(
+        "_mcq_collecting_options",
+        None,
+    )
+
+    instruction = question.pop(
+        "_mcq_instruction",
+        None,
+    )
+
+    question_type_value = question.get(
+        "question_type",
+        AssessmentQuestionType.WRITTEN.value,
+    )
+
+    is_mcq = question_type_value in {
+        AssessmentQuestionType.MULTIPLE_CHOICE_SINGLE.value,
+        AssessmentQuestionType.MULTIPLE_CHOICE_MULTIPLE.value,
+    }
+
+    if not is_mcq:
+        return
+
+    raw_options = question.get(
+        "options",
+        [],
+    )
+
+    if not isinstance(
+        raw_options,
+        list,
+    ):
+        raw_options = []
+
+    normalised_options: list[dict[str, Any]] = []
+
+    for option in raw_options:
+        if not isinstance(
+            option,
+            dict,
+        ):
+            continue
+
+        option_text = option.get(
+            "text",
+        )
+
+        if (
+            not isinstance(
+                option_text,
+                str,
+            )
+            or not option_text.strip()
+        ):
+            continue
+
+        normalised_options.append(
+            {
+                "text": option_text.strip(),
+                "order": len(normalised_options) + 1,
+                "is_correct": False,
+                "feedback": None,
+            }
+        )
+
+    if len(normalised_options) < 2:
+        _restore_unstructured_mcq_candidate(
+            question,
+            instruction=instruction,
+            options=normalised_options,
+        )
+        return
+
+    question["options"] = normalised_options
+    question["requires_review"] = True
 
 
 def _prefix_pending_questions_with_main_number(
@@ -989,6 +1478,11 @@ def _build_initial_proposal(
                     stripped,
                 )
 
+    for question in questions:
+        _finalise_structured_question_candidate(
+            question,
+        )
+
     if pending_unparented_question_indexes:
         page_numbers = sorted(
             {
@@ -1062,8 +1556,1252 @@ def _build_initial_proposal(
     }
 
 
+def _normalise_visual_match_text(
+    value: str,
+) -> str:
+    """
+    Return a compact lower-case representation for locating source text blocks.
+    """
+
+    return (
+        re.sub(
+            r"\s+",
+            " ",
+            value,
+        )
+        .strip()
+        .lower()
+    )
+
+
+def _question_visual_direction(
+    question_text: str,
+) -> str:
+    """
+    Return the preferred visual direction for a question reference.
+    """
+
+    if VISUAL_ABOVE_PATTERN.search(
+        question_text,
+    ):
+        return "above"
+
+    if VISUAL_BELOW_PATTERN.search(
+        question_text,
+    ):
+        return "below"
+
+    return "nearest"
+
+
+def _infer_visual_asset_type(
+    question_text: str,
+) -> AssessmentQuestionAssetType:
+    """
+    Infer a conservative canonical asset type from the question wording.
+    """
+
+    lowered = question_text.lower()
+
+    if "graph" in lowered or "chart" in lowered:
+        return AssessmentQuestionAssetType.GRAPH
+
+    if "diagram" in lowered or "drawing" in lowered:
+        return AssessmentQuestionAssetType.DIAGRAM
+
+    if "image" in lowered or "illustration" in lowered:
+        return AssessmentQuestionAssetType.IMAGE
+
+    return AssessmentQuestionAssetType.FIGURE
+
+
+def _is_diagram_annotation_instruction(
+    question_text: str,
+) -> bool:
+    """
+    Return whether the wording explicitly requires the learner to modify a visual.
+
+    Classification is intentionally conservative. A mere reference such as
+    ``Use the figure above`` remains a written response. Only an action directed
+    at a figure/diagram/graph/image/model is eligible for automatic
+    ``diagram_annotation`` classification, and the caller additionally requires
+    that a real visual asset was successfully materialised.
+    """
+
+    return bool(
+        DIAGRAM_ANNOTATION_INSTRUCTION_PATTERN.search(
+            question_text,
+        )
+    )
+
+
+def _rect_distance(
+    left: pymupdf.Rect,
+    right: pymupdf.Rect,
+) -> float:
+    """
+    Return the shortest axis-aligned gap between two rectangles.
+    """
+
+    horizontal_gap = max(
+        0.0,
+        max(
+            left.x0,
+            right.x0,
+        )
+        - min(
+            left.x1,
+            right.x1,
+        ),
+    )
+
+    vertical_gap = max(
+        0.0,
+        max(
+            left.y0,
+            right.y0,
+        )
+        - min(
+            left.y1,
+            right.y1,
+        ),
+    )
+
+    return max(
+        horizontal_gap,
+        vertical_gap,
+    )
+
+
+def _merge_visual_rectangles(
+    rects: list[pymupdf.Rect],
+    *,
+    gap: float,
+) -> list[pymupdf.Rect]:
+    """
+    Merge nearby visual primitives into candidate figure regions.
+    """
+
+    pending = [
+        pymupdf.Rect(
+            rect,
+        )
+        for rect in rects
+    ]
+
+    merged: list[pymupdf.Rect] = []
+
+    while pending:
+        current = pending.pop(
+            0,
+        )
+
+        changed = True
+
+        while changed:
+            changed = False
+            remaining: list[pymupdf.Rect] = []
+
+            for candidate in pending:
+                if (
+                    _rect_distance(
+                        current,
+                        candidate,
+                    )
+                    <= gap
+                ):
+                    current |= candidate
+                    changed = True
+                else:
+                    remaining.append(
+                        candidate,
+                    )
+
+            pending = remaining
+
+        merged.append(
+            current,
+        )
+
+    return merged
+
+
+def _extract_page_visual_regions(
+    page: pymupdf.Page,
+) -> list[pymupdf.Rect]:
+    """
+    Detect raster and vector visual regions on one PDF page.
+
+    The result intentionally excludes page-sized backgrounds, tiny glyph-like
+    shapes and long answer-space rules. Nearby vector primitives are merged so
+    an atom model, graph or multi-part diagram becomes one crop candidate.
+    """
+
+    page_rect = page.rect
+    page_area = max(
+        page_rect.width * page_rect.height,
+        1.0,
+    )
+
+    raw_rects: list[pymupdf.Rect] = []
+
+    # PyMuPDF's ``get_text("blocks")`` does not reliably surface image blocks
+    # for every PDF producer. The Atomic Structure paper is one concrete
+    # example: its atom-model and atom-shell figures are genuine embedded
+    # images, but they are absent from the text-block stream. Therefore inspect
+    # image XRefs directly and ask the page for every placed rectangle.
+    try:
+        page_images = page.get_images(
+            full=True,
+        )
+    except Exception:
+        page_images = []
+
+    seen_image_rects: set[
+        tuple[
+            float,
+            float,
+            float,
+            float,
+        ]
+    ] = set()
+
+    for image_info in page_images:
+        if not image_info:
+            continue
+
+        xref = image_info[0]
+
+        try:
+            image_rects = page.get_image_rects(
+                xref,
+            )
+        except Exception:
+            image_rects = []
+
+        for image_rect in image_rects:
+            rect = pymupdf.Rect(
+                image_rect,
+            )
+
+            if rect.is_empty:
+                continue
+
+            key = (
+                round(
+                    rect.x0,
+                    3,
+                ),
+                round(
+                    rect.y0,
+                    3,
+                ),
+                round(
+                    rect.x1,
+                    3,
+                ),
+                round(
+                    rect.y1,
+                    3,
+                ),
+            )
+
+            if key in seen_image_rects:
+                continue
+
+            seen_image_rects.add(
+                key,
+            )
+
+            # Keep even small embedded images at this stage. Small symbols can
+            # be semantically essential and will be merged with a nearby
+            # principal figure before the final size filter is applied.
+            raw_rects.append(
+                rect,
+            )
+
+    # Retain the block-based path as a secondary source for PDFs that do expose
+    # raster images through the text-block stream.
+    try:
+        blocks = page.get_text(
+            "blocks",
+        )
+    except Exception:
+        blocks = []
+
+    for block in blocks:
+        if len(block) < 7:
+            continue
+
+        block_type = block[6]
+
+        if block_type != 1:
+            continue
+
+        rect = pymupdf.Rect(
+            block[:4],
+        )
+
+        if rect.is_empty:
+            continue
+
+        raw_rects.append(
+            rect,
+        )
+
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        drawings = []
+
+    for drawing in drawings:
+        drawing_rect = drawing.get(
+            "rect",
+        )
+
+        if drawing_rect is None:
+            continue
+
+        rect = pymupdf.Rect(
+            drawing_rect,
+        )
+
+        if rect.is_empty:
+            continue
+
+        area = rect.width * rect.height
+
+        if area >= page_area * 0.70:
+            continue
+
+        # Ignore long single answer rules and near-zero drawing artefacts.
+        if rect.height < 3.0 and rect.width > 120.0:
+            continue
+
+        if rect.width < 2.0 and rect.height < 2.0:
+            continue
+
+        raw_rects.append(
+            rect,
+        )
+
+    if not raw_rects:
+        return []
+
+    merged = _merge_visual_rectangles(
+        raw_rects,
+        gap=VISUAL_COMPONENT_MERGE_GAP,
+    )
+
+    filtered: list[pymupdf.Rect] = []
+
+    for rect in merged:
+        area = rect.width * rect.height
+
+        if area < 250.0:
+            continue
+
+        if rect.width < 16.0 or rect.height < 10.0:
+            continue
+
+        if area >= page_area * 0.70:
+            continue
+
+        filtered.append(
+            rect,
+        )
+
+    return filtered
+
+
+def _page_text_blocks(
+    page: pymupdf.Page,
+) -> list[tuple[pymupdf.Rect, str]]:
+    """
+    Return text block rectangles and text for source-line anchoring.
+    """
+
+    result: list[tuple[pymupdf.Rect, str]] = []
+
+    try:
+        blocks = page.get_text(
+            "blocks",
+        )
+    except Exception:
+        return result
+
+    for block in blocks:
+        if len(block) < 7:
+            continue
+
+        block_type = block[6]
+
+        if block_type != 0:
+            continue
+
+        text = str(
+            block[4],
+        ).strip()
+
+        if not text:
+            continue
+
+        result.append(
+            (
+                pymupdf.Rect(
+                    block[:4],
+                ),
+                text,
+            )
+        )
+
+    return result
+
+
+def _find_question_anchor_rect(
+    *,
+    page: pymupdf.Page,
+    question: dict[str, Any],
+) -> pymupdf.Rect | None:
+    """
+    Locate the question's source text block on the rendered PDF page.
+    """
+
+    source = question.get(
+        "source",
+        {},
+    )
+
+    source_line = source.get(
+        "source_line",
+    )
+
+    question_text = question.get(
+        "text",
+        "",
+    )
+
+    needles: list[str] = []
+
+    for raw_value in (
+        source_line,
+        question_text,
+    ):
+        if not isinstance(
+            raw_value,
+            str,
+        ):
+            continue
+
+        normalised = _normalise_visual_match_text(
+            raw_value,
+        )
+
+        if normalised:
+            needles.append(
+                normalised,
+            )
+
+    if not needles:
+        return None
+
+    candidates: list[
+        tuple[
+            int,
+            pymupdf.Rect,
+        ]
+    ] = []
+
+    for rect, block_text in _page_text_blocks(
+        page,
+    ):
+        normalised_block = _normalise_visual_match_text(
+            block_text,
+        )
+
+        score = 0
+
+        for needle in needles:
+            if needle in normalised_block:
+                score = max(
+                    score,
+                    len(
+                        needle,
+                    ),
+                )
+                continue
+
+            shortened = needle[:80]
+
+            if len(shortened) >= 20 and shortened in normalised_block:
+                score = max(
+                    score,
+                    len(
+                        shortened,
+                    ),
+                )
+
+        if score > 0:
+            candidates.append(
+                (
+                    score,
+                    rect,
+                )
+            )
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (
+            -item[0],
+            item[1].y0,
+        ),
+    )
+
+    return candidates[0][1]
+
+
+def _choose_visual_region_for_question(
+    *,
+    page: pymupdf.Page,
+    question: dict[str, Any],
+    visual_regions: list[pymupdf.Rect],
+) -> pymupdf.Rect | None:
+    """
+    Choose the most plausible visual region referenced by one question.
+    """
+
+    question_text = str(
+        question.get(
+            "text",
+            "",
+        )
+        or ""
+    )
+
+    source = question.get(
+        "source",
+        {},
+    )
+
+    source_line = source.get(
+        "source_line",
+        "",
+    )
+
+    combined_text = " ".join(
+        part
+        for part in (
+            question_text,
+            source_line if isinstance(source_line, str) else "",
+        )
+        if part
+    )
+
+    if (
+        VISUAL_REFERENCE_PATTERN.search(
+            combined_text,
+        )
+        is None
+    ):
+        return None
+
+    anchor = _find_question_anchor_rect(
+        page=page,
+        question=question,
+    )
+
+    if anchor is None:
+        return None
+
+    direction = _question_visual_direction(
+        combined_text,
+    )
+
+    ranked: list[
+        tuple[
+            float,
+            pymupdf.Rect,
+        ]
+    ] = []
+
+    for rect in visual_regions:
+        horizontal_overlap = max(
+            0.0,
+            min(
+                anchor.x1,
+                rect.x1,
+            )
+            - max(
+                anchor.x0,
+                rect.x0,
+            ),
+        )
+
+        horizontal_bonus = horizontal_overlap / max(
+            min(
+                anchor.width,
+                rect.width,
+            ),
+            1.0,
+        )
+
+        if direction == "above":
+            if rect.y1 > anchor.y0 + 12.0:
+                continue
+
+            distance = max(
+                0.0,
+                anchor.y0 - rect.y1,
+            )
+
+        elif direction == "below":
+            if rect.y0 < anchor.y1 - 12.0:
+                continue
+
+            distance = max(
+                0.0,
+                rect.y0 - anchor.y1,
+            )
+
+        else:
+            vertical_gap = max(
+                0.0,
+                max(
+                    anchor.y0,
+                    rect.y0,
+                )
+                - min(
+                    anchor.y1,
+                    rect.y1,
+                ),
+            )
+
+            distance = vertical_gap
+
+        score = distance - (horizontal_bonus * 40.0)
+
+        ranked.append(
+            (
+                score,
+                rect,
+            )
+        )
+
+    if not ranked:
+        return None
+
+    ranked.sort(
+        key=lambda item: item[0],
+    )
+
+    best_score, best_rect = ranked[0]
+
+    # Do not associate a remote figure with a question merely because the page
+    # contains graphics elsewhere.
+    if best_score > 260.0:
+        return None
+
+    selected = pymupdf.Rect(
+        best_rect,
+    )
+
+    # Multi-model figures are often represented as separate vector groups on
+    # the same horizontal band. Fold nearby peer groups into one candidate crop.
+    best_center_y = (best_rect.y0 + best_rect.y1) / 2.0
+
+    for _, candidate in ranked[1:]:
+        candidate_center_y = (candidate.y0 + candidate.y1) / 2.0
+
+        if abs(candidate_center_y - best_center_y) > 45.0:
+            continue
+
+        horizontal_gap = max(
+            0.0,
+            max(
+                selected.x0,
+                candidate.x0,
+            )
+            - min(
+                selected.x1,
+                candidate.x1,
+            ),
+        )
+
+        if horizontal_gap <= VISUAL_SAME_BAND_GAP:
+            selected |= candidate
+
+    return selected
+
+
+def _question_asset_output_directory(
+    *,
+    document_path: Path,
+    source_document_id: int,
+    extraction_version: int,
+) -> Path:
+    """
+    Return the version-scoped directory for generated question visual crops.
+    """
+
+    return (
+        document_path.parent
+        / "question-extraction-assets"
+        / f"document-{source_document_id}"
+        / f"v{extraction_version}"
+    )
+
+
+def _safe_question_asset_filename_part(
+    question_number: str,
+) -> str:
+    """
+    Return a filesystem-safe question-number fragment.
+    """
+
+    cleaned = re.sub(
+        r"[^A-Za-z0-9_-]+",
+        "-",
+        question_number.strip(),
+    ).strip(
+        "-",
+    )
+
+    return cleaned or "question"
+
+
+def _rect_intersection_area(
+    left: pymupdf.Rect,
+    right: pymupdf.Rect,
+) -> float:
+    """
+    Return the area shared by two rectangles.
+    """
+
+    intersection = pymupdf.Rect(
+        max(
+            left.x0,
+            right.x0,
+        ),
+        max(
+            left.y0,
+            right.y0,
+        ),
+        min(
+            left.x1,
+            right.x1,
+        ),
+        min(
+            left.y1,
+            right.y1,
+        ),
+    )
+
+    if intersection.is_empty:
+        return 0.0
+
+    return max(
+        intersection.width,
+        0.0,
+    ) * max(
+        intersection.height,
+        0.0,
+    )
+
+
+def _embedded_image_rectangles(
+    page: pymupdf.Page,
+) -> list[pymupdf.Rect]:
+    """
+    Return unique placed-image rectangles from one PDF page.
+
+    This helper is intentionally defensive because malformed or unusual PDFs can
+    expose image XRefs that PyMuPDF cannot resolve back to placement rectangles.
+    """
+
+    try:
+        page_images = page.get_images(
+            full=True,
+        )
+    except Exception:
+        return []
+
+    result: list[pymupdf.Rect] = []
+    seen: set[
+        tuple[
+            float,
+            float,
+            float,
+            float,
+        ]
+    ] = set()
+
+    for image_info in page_images:
+        if not image_info:
+            continue
+
+        xref = image_info[0]
+
+        try:
+            image_rects = page.get_image_rects(
+                xref,
+            )
+        except Exception:
+            image_rects = []
+
+        for image_rect in image_rects:
+            rect = pymupdf.Rect(
+                image_rect,
+            )
+
+            if rect.is_empty:
+                continue
+
+            key = (
+                round(
+                    rect.x0,
+                    3,
+                ),
+                round(
+                    rect.y0,
+                    3,
+                ),
+                round(
+                    rect.x1,
+                    3,
+                ),
+                round(
+                    rect.y1,
+                    3,
+                ),
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(
+                key,
+            )
+            result.append(
+                rect,
+            )
+
+    return result
+
+
+def _question_visual_render_margin(
+    *,
+    page: pymupdf.Page,
+    crop_rect: pymupdf.Rect,
+) -> tuple[
+    float,
+    str,
+]:
+    """
+    Choose a rendering margin without pulling nearby question prose into crops.
+
+    Raster figures already have a precise placed-image rectangle in the source
+    PDF, so a very small safety margin is sufficient. Vector-built figures still
+    use the wider historical margin because separate strokes, arrowheads and
+    labels may sit just outside the merged primitive region.
+
+    The coverage test also supports figures assembled from more than one placed
+    raster image: intersections are accumulated up to the crop area.
+    """
+
+    crop_area = max(
+        crop_rect.width * crop_rect.height,
+        1.0,
+    )
+
+    covered_area = 0.0
+
+    for image_rect in _embedded_image_rectangles(
+        page,
+    ):
+        covered_area += _rect_intersection_area(
+            crop_rect,
+            image_rect,
+        )
+
+        if covered_area >= crop_area:
+            covered_area = crop_area
+            break
+
+    coverage = min(
+        covered_area / crop_area,
+        1.0,
+    )
+
+    if coverage >= VISUAL_EMBEDDED_IMAGE_COVERAGE_THRESHOLD:
+        return (
+            VISUAL_EMBEDDED_IMAGE_MARGIN,
+            "embedded_image_tight",
+        )
+
+    return (
+        VISUAL_REGION_MARGIN,
+        "visual_region_margin",
+    )
+
+
+def _render_question_visual_asset(
+    *,
+    page: pymupdf.Page,
+    crop_rect: pymupdf.Rect,
+    output_directory: Path,
+    question_number: str,
+    page_number: int,
+    asset_index: int,
+    source_document_id: int,
+    asset_type: AssessmentQuestionAssetType,
+) -> dict[str, Any]:
+    """
+    Render one candidate-visible PNG crop and return proposal asset metadata.
+    """
+
+    page_rect = page.rect
+
+    (
+        render_margin,
+        crop_strategy,
+    ) = _question_visual_render_margin(
+        page=page,
+        crop_rect=crop_rect,
+    )
+
+    expanded = pymupdf.Rect(
+        max(
+            page_rect.x0,
+            crop_rect.x0 - render_margin,
+        ),
+        max(
+            page_rect.y0,
+            crop_rect.y0 - render_margin,
+        ),
+        min(
+            page_rect.x1,
+            crop_rect.x1 + render_margin,
+        ),
+        min(
+            page_rect.y1,
+            crop_rect.y1 + render_margin,
+        ),
+    )
+
+    output_directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    safe_question_number = _safe_question_asset_filename_part(
+        question_number,
+    )
+
+    filename = (
+        f"question-{safe_question_number}"
+        f"-page-{page_number}"
+        f"-asset-{asset_index + 1}.png"
+    )
+
+    output_path = output_directory / filename
+
+    pixmap = page.get_pixmap(
+        matrix=pymupdf.Matrix(
+            VISUAL_RENDER_SCALE,
+            VISUAL_RENDER_SCALE,
+        ),
+        clip=expanded,
+        alpha=False,
+    )
+
+    pixmap.save(
+        str(
+            output_path,
+        )
+    )
+
+    return {
+        "asset_type": asset_type.value,
+        "storage_path": str(
+            output_path,
+        ),
+        "original_filename": filename,
+        "mime_type": "image/png",
+        "file_size_bytes": output_path.stat().st_size,
+        "alt_text": None,
+        "caption": None,
+        "order": asset_index + 1,
+        "candidate_visible": True,
+        "source_document_id": source_document_id,
+        "source_page_number": page_number,
+        "source_bbox": {
+            "x0": round(
+                expanded.x0,
+                3,
+            ),
+            "y0": round(
+                expanded.y0,
+                3,
+            ),
+            "x1": round(
+                expanded.x1,
+                3,
+            ),
+            "y1": round(
+                expanded.y1,
+                3,
+            ),
+            "page_width": round(
+                page_rect.width,
+                3,
+            ),
+            "page_height": round(
+                page_rect.height,
+                3,
+            ),
+            "render_margin": round(
+                render_margin,
+                3,
+            ),
+            "crop_strategy": crop_strategy,
+        },
+        "included": True,
+        "reviewed": False,
+    }
+
+
+def _attach_visual_assets_to_proposal(
+    *,
+    document_path: Path,
+    proposal: dict[str, Any],
+    source_document_id: int,
+    extraction_version: int,
+) -> int:
+    """
+    Detect, crop and attach visually referenced PDF regions to proposal rows.
+
+    Text extraction remains owned by pypdf. PyMuPDF is used only for
+    coordinate-aware visual detection and clipped rendering.
+    """
+
+    questions = proposal.get(
+        "questions",
+        [],
+    )
+
+    if not isinstance(
+        questions,
+        list,
+    ):
+        return 0
+
+    output_directory = _question_asset_output_directory(
+        document_path=document_path,
+        source_document_id=source_document_id,
+        extraction_version=extraction_version,
+    )
+
+    generated_count = 0
+    warning_pages: set[int] = set()
+
+    try:
+        visual_document = pymupdf.open(
+            str(
+                document_path,
+            )
+        )
+    except Exception as exc:
+        proposal.setdefault(
+            "warnings",
+            [],
+        ).append(
+            {
+                "code": "visual_extraction_unavailable",
+                "message": (
+                    "The PDF text was extracted, but visual regions could not "
+                    f"be inspected: {type(exc).__name__}."
+                ),
+                "page_numbers": [],
+            }
+        )
+
+        return 0
+
+    try:
+        regions_by_page: dict[
+            int,
+            list[pymupdf.Rect],
+        ] = {}
+
+        for question in questions:
+            if not isinstance(
+                question,
+                dict,
+            ):
+                continue
+
+            source = question.get(
+                "source",
+                {},
+            )
+
+            page_number = source.get(
+                "page_number",
+            )
+
+            if (
+                not isinstance(
+                    page_number,
+                    int,
+                )
+                or page_number < 1
+                or page_number
+                > len(
+                    visual_document,
+                )
+            ):
+                continue
+
+            question_text = str(
+                question.get(
+                    "text",
+                    "",
+                )
+                or ""
+            )
+
+            source_line = source.get(
+                "source_line",
+                "",
+            )
+
+            combined_text = " ".join(
+                part
+                for part in (
+                    question_text,
+                    source_line if isinstance(source_line, str) else "",
+                )
+                if part
+            )
+
+            if (
+                VISUAL_REFERENCE_PATTERN.search(
+                    combined_text,
+                )
+                is None
+            ):
+                continue
+
+            page = visual_document[page_number - 1]
+
+            if page_number not in regions_by_page:
+                regions_by_page[page_number] = _extract_page_visual_regions(
+                    page,
+                )
+
+            crop_rect = _choose_visual_region_for_question(
+                page=page,
+                question=question,
+                visual_regions=regions_by_page[page_number],
+            )
+
+            if crop_rect is None:
+                warning_pages.add(
+                    page_number,
+                )
+                continue
+
+            existing_assets = question.get(
+                "assets",
+                [],
+            )
+
+            if not isinstance(
+                existing_assets,
+                list,
+            ):
+                existing_assets = []
+
+            asset_type = _infer_visual_asset_type(
+                combined_text,
+            )
+
+            asset = _render_question_visual_asset(
+                page=page,
+                crop_rect=crop_rect,
+                output_directory=output_directory,
+                question_number=str(
+                    question.get(
+                        "question_number",
+                        "",
+                    )
+                ),
+                page_number=page_number,
+                asset_index=len(
+                    existing_assets,
+                ),
+                source_document_id=source_document_id,
+                asset_type=asset_type,
+            )
+
+            existing_assets.append(
+                asset,
+            )
+
+            question["assets"] = existing_assets
+
+            current_question_type = str(
+                question.get(
+                    "question_type",
+                    AssessmentQuestionType.WRITTEN.value,
+                )
+                or AssessmentQuestionType.WRITTEN.value
+            )
+
+            if (
+                current_question_type == AssessmentQuestionType.WRITTEN.value
+                and _is_diagram_annotation_instruction(
+                    combined_text,
+                )
+            ):
+                question["question_type"] = (
+                    AssessmentQuestionType.DIAGRAM_ANNOTATION.value
+                )
+                question["requires_review"] = True
+
+            generated_count += 1
+
+        if warning_pages:
+            proposal.setdefault(
+                "warnings",
+                [],
+            ).append(
+                {
+                    "code": "visual_reference_without_asset",
+                    "message": (
+                        "One or more questions refer to a figure, diagram, "
+                        "graph or model, but no reliable visual crop could be "
+                        "created automatically. Review the original paper."
+                    ),
+                    "page_numbers": sorted(
+                        warning_pages,
+                    ),
+                }
+            )
+
+    finally:
+        visual_document.close()
+
+    return generated_count
+
+
 def _read_pdf(
     document_path: Path,
+    *,
+    source_document_id: int | None = None,
+    extraction_version: int | None = None,
 ) -> tuple[
     dict[str, Any],
     list[dict[str, Any]],
@@ -1109,6 +2847,8 @@ def _read_pdf(
     source_metadata = {
         "extractor": "pypdf",
         "extractor_version": pypdf_version,
+        "visual_extractor": "pymupdf",
+        "visual_extractor_version": pymupdf.__version__,
         "pdf_metadata": _serialise_pdf_metadata(
             reader,
         ),
@@ -1162,6 +2902,18 @@ def _read_pdf(
     proposal = _build_initial_proposal(
         pages=pages,
     )
+
+    generated_visual_asset_count = 0
+
+    if source_document_id is not None and extraction_version is not None:
+        generated_visual_asset_count = _attach_visual_assets_to_proposal(
+            document_path=document_path,
+            proposal=proposal,
+            source_document_id=source_document_id,
+            extraction_version=extraction_version,
+        )
+
+    source_metadata["generated_visual_asset_count"] = generated_visual_asset_count
 
     text_page_count = sum(1 for page in pages if page["has_extractable_text"])
 
@@ -1307,6 +3059,8 @@ async def create_question_extraction(
 
         source_metadata, page_data, proposal_data = _read_pdf(
             document_path,
+            source_document_id=source_document_id,
+            extraction_version=next_version,
         )
 
         questions = proposal_data.get(
@@ -1382,10 +3136,32 @@ async def create_question_extraction(
         return extraction
 
     except HTTPException:
+        asset_output_directory = _question_asset_output_directory(
+            document_path=document_path,
+            source_document_id=source_document_id,
+            extraction_version=next_version,
+        )
+
+        shutil.rmtree(
+            asset_output_directory,
+            ignore_errors=True,
+        )
+
         await db.rollback()
         raise
 
     except Exception as exc:
+        asset_output_directory = _question_asset_output_directory(
+            document_path=document_path,
+            source_document_id=source_document_id,
+            extraction_version=next_version,
+        )
+
+        shutil.rmtree(
+            asset_output_directory,
+            ignore_errors=True,
+        )
+
         await db.rollback()
 
         failure_message = str(
@@ -1874,6 +3650,106 @@ def _build_reviewed_proposal_questions(
     return reviewed_questions
 
 
+def _validate_reviewed_interaction_requirements(
+    reviewed_questions: list[dict[str, Any]],
+) -> None:
+    """
+    Enforce interaction-specific requirements on the fully merged review state.
+
+    Diagram-annotation questions require at least one included,
+    candidate-visible, reviewed visual asset. This validation operates on the
+    merged proposal rather than the raw request so omitted asset updates still
+    preserve and validate extractor-owned assets correctly.
+    """
+
+    for question in reviewed_questions:
+        if not bool(
+            question.get(
+                "included",
+                True,
+            )
+        ):
+            continue
+
+        question_number = str(
+            question.get(
+                "question_number",
+                "",
+            )
+            or ""
+        )
+
+        try:
+            question_type = AssessmentQuestionType(
+                question.get(
+                    "question_type",
+                    AssessmentQuestionType.WRITTEN.value,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} contains an unsupported "
+                    "question type."
+                ),
+            ) from exc
+
+        if question_type != AssessmentQuestionType.DIAGRAM_ANNOTATION:
+            continue
+
+        raw_assets = question.get(
+            "assets",
+            [],
+        )
+
+        if not isinstance(
+            raw_assets,
+            list,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(f"Question {question_number!r} has malformed visual assets."),
+            )
+
+        usable_assets = [
+            asset
+            for asset in raw_assets
+            if isinstance(
+                asset,
+                dict,
+            )
+            and bool(
+                asset.get(
+                    "included",
+                    True,
+                )
+            )
+            and bool(
+                asset.get(
+                    "candidate_visible",
+                    True,
+                )
+            )
+            and bool(
+                asset.get(
+                    "reviewed",
+                    False,
+                )
+            )
+        ]
+
+        if not usable_assets:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r}: a diagram-annotation "
+                    "question must have at least one included, candidate-visible "
+                    "and reviewed visual asset."
+                ),
+            )
+
+
 def _review_summary(
     *,
     proposal: dict[str, Any],
@@ -2014,6 +3890,11 @@ async def update_question_extraction_review(
         stored_questions=stored_questions,
         review_update=review_update,
     )
+
+    if review_update.review_status == AssessmentQuestionExtractionReviewStatus.REVIEWED:
+        _validate_reviewed_interaction_requirements(
+            reviewed_questions,
+        )
 
     reviewed_proposal = dict(
         proposal,
@@ -2324,6 +4205,7 @@ def _normalise_import_options(
         in {
             AssessmentQuestionType.WRITTEN,
             AssessmentQuestionType.NUMERIC,
+            AssessmentQuestionType.DIAGRAM_ANNOTATION,
             AssessmentQuestionType.STRUCTURAL,
         }
         and option_count > 0
@@ -2840,6 +4722,28 @@ def _build_import_question_specs(
             source_document_id=source_document_id,
         )
 
+        if question_type == AssessmentQuestionType.DIAGRAM_ANNOTATION:
+            candidate_visible_assets = [
+                asset
+                for asset in assets
+                if bool(
+                    asset.get(
+                        "candidate_visible",
+                        True,
+                    )
+                )
+            ]
+
+            if not candidate_visible_assets:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Question {question_number!r}: a diagram-annotation "
+                        "question must import at least one candidate-visible "
+                        "visual asset."
+                    ),
+                )
+
         included_candidates.append(
             {
                 "question_number": question_number,
@@ -3329,6 +5233,193 @@ async def get_question_extraction(
         )
 
     return extraction
+
+
+async def resolve_question_extraction_asset_path(
+    *,
+    db: AsyncSession,
+    current_user: User,
+    assessment_id: int,
+    extraction_id: int,
+    candidate_index: int,
+    asset_index: int,
+) -> tuple[dict[str, Any], Path]:
+    """
+    Resolve one extraction visual asset to an authorised local filesystem path.
+
+    The browser identifies an asset only by its extraction-scoped candidate and
+    asset indexes. A client-supplied filesystem path is never accepted.
+
+    Normal extraction access is enforced first, then the source document path
+    is resolved through the assessment-document policy. The stored asset path
+    must remain inside the version-scoped extraction asset directory before the
+    file can be served.
+    """
+
+    if candidate_index < 0 or asset_index < 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question extraction asset not found.",
+        )
+
+    extraction = await get_question_extraction(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        extraction_id=extraction_id,
+    )
+
+    proposal = extraction.proposal_data
+
+    if not isinstance(
+        proposal,
+        dict,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question extraction asset not found.",
+        )
+
+    questions = proposal.get(
+        "questions",
+        [],
+    )
+
+    if not isinstance(
+        questions,
+        list,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stored extraction proposal contains malformed questions.",
+        )
+
+    if candidate_index >= len(
+        questions,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question extraction asset not found.",
+        )
+
+    question = questions[candidate_index]
+
+    if not isinstance(
+        question,
+        dict,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stored extraction proposal contains a malformed question.",
+        )
+
+    assets = question.get(
+        "assets",
+        [],
+    )
+
+    if not isinstance(
+        assets,
+        list,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stored extraction proposal contains malformed assets.",
+        )
+
+    if asset_index >= len(
+        assets,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question extraction asset not found.",
+        )
+
+    asset = assets[asset_index]
+
+    if not isinstance(
+        asset,
+        dict,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The stored extraction proposal contains a malformed asset.",
+        )
+
+    storage_path = asset.get(
+        "storage_path",
+    )
+
+    if (
+        not isinstance(
+            storage_path,
+            str,
+        )
+        or not storage_path.strip()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question extraction asset file is not available.",
+        )
+
+    source_document_id = asset.get(
+        "source_document_id",
+    )
+
+    if (
+        source_document_id is not None
+        and source_document_id != extraction.assessment_document_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The stored extraction asset does not belong to the "
+                "extraction source document."
+            ),
+        )
+
+    _, document_path = await resolve_assessment_document_path(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        document_id=extraction.assessment_document_id,
+    )
+
+    expected_root = _question_asset_output_directory(
+        document_path=document_path,
+        source_document_id=extraction.assessment_document_id,
+        extraction_version=extraction.version,
+    ).resolve()
+
+    asset_path = Path(
+        storage_path,
+    ).resolve()
+
+    try:
+        asset_path.relative_to(
+            expected_root,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The stored extraction asset path falls outside the "
+                "authorised extraction directory."
+            ),
+        ) from exc
+
+    if not asset_path.exists() or not asset_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question extraction asset file was not found.",
+        )
+
+    return (
+        dict(
+            asset,
+        ),
+        asset_path,
+    )
 
 
 async def _load_question_paper_document_for_extraction_access(

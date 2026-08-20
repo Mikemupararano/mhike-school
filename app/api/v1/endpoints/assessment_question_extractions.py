@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import TypeVar
 
 from fastapi import (
     APIRouter,
     Depends,
     status,
 )
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -27,10 +29,16 @@ from app.services.assessment_question_extraction_service import (
     get_question_extraction,
     import_question_extraction,
     list_question_extractions_for_document,
+    resolve_question_extraction_asset_path,
     update_question_extraction_review,
 )
 
 router = APIRouter()
+
+ExtractionResponseT = TypeVar(
+    "ExtractionResponseT",
+    bound=AssessmentQuestionExtractionResponse,
+)
 
 
 def _ensure_assessment_staff_access(
@@ -49,6 +57,72 @@ def _ensure_assessment_staff_access(
 
     PermissionService.ensure_school_staff_or_platform_admin(
         current_user,
+    )
+
+
+def _with_asset_content_urls(
+    response: ExtractionResponseT,
+) -> ExtractionResponseT:
+    """
+    Add browser-facing content URLs to extraction visual assets.
+
+    The URLs are derived response metadata only. They are never written back to
+    ``proposal_data`` and therefore do not become part of extractor provenance.
+
+    Persisted ``storage_path`` values remain server-side file references. The
+    browser uses the authorised extraction-asset endpoint instead.
+    """
+
+    proposal = response.proposal_data
+
+    if proposal is None:
+        return response
+
+    questions = []
+
+    for candidate_index, question in enumerate(
+        proposal.questions,
+    ):
+        assets = []
+
+        for asset_index, asset in enumerate(
+            question.assets,
+        ):
+            content_url: str | None = None
+
+            if asset.storage_path:
+                content_url = (
+                    f"/api/v1/assessments/{response.assessment_id}"
+                    f"/question-extractions/{response.id}"
+                    f"/assets/{candidate_index}/{asset_index}"
+                )
+
+            assets.append(
+                asset.model_copy(
+                    update={
+                        "content_url": content_url,
+                    }
+                )
+            )
+
+        questions.append(
+            question.model_copy(
+                update={
+                    "assets": assets,
+                }
+            )
+        )
+
+    updated_proposal = proposal.model_copy(
+        update={
+            "questions": questions,
+        }
+    )
+
+    return response.model_copy(
+        update={
+            "proposal_data": updated_proposal,
+        }
     )
 
 
@@ -93,10 +167,14 @@ async def create_assessment_question_extraction(
         extraction,
     )
 
-    return response.model_copy(
+    response = response.model_copy(
         update={
             "message": "Question-paper extraction completed.",
         }
+    )
+
+    return _with_asset_content_urls(
+        response,
     )
 
 
@@ -115,6 +193,9 @@ async def get_assessment_question_extraction(
 
     The full response contains the retained page evidence and review proposal
     required by the extraction-review workspace.
+
+    Visual assets receive authorised browser-facing ``content_url`` values at
+    response time. Those URLs are not persisted into the extraction proposal.
     """
 
     _ensure_assessment_staff_access(
@@ -128,8 +209,70 @@ async def get_assessment_question_extraction(
         extraction_id=extraction_id,
     )
 
-    return AssessmentQuestionExtractionResponse.model_validate(
+    response = AssessmentQuestionExtractionResponse.model_validate(
         extraction,
+    )
+
+    return _with_asset_content_urls(
+        response,
+    )
+
+
+@router.get(
+    "/{assessment_id}/question-extractions/"
+    "{extraction_id}/assets/{candidate_index}/{asset_index}",
+)
+async def get_assessment_question_extraction_asset(
+    assessment_id: int,
+    extraction_id: int,
+    candidate_index: int,
+    asset_index: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """
+    Deliver one visual asset belonging to an extraction proposal.
+
+    The browser identifies the resource only through assessment, extraction,
+    candidate and asset identifiers. It never supplies a filesystem path.
+
+    The service layer verifies extraction access, source-document provenance,
+    collection indexes, version-scoped path containment and file existence
+    before the binary is returned.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    (
+        asset,
+        asset_path,
+    ) = await resolve_question_extraction_asset_path(
+        db=db,
+        current_user=current_user,
+        assessment_id=assessment_id,
+        extraction_id=extraction_id,
+        candidate_index=candidate_index,
+        asset_index=asset_index,
+    )
+
+    media_type = asset.get(
+        "mime_type",
+    )
+
+    if (
+        not isinstance(
+            media_type,
+            str,
+        )
+        or not media_type.strip()
+    ):
+        media_type = "application/octet-stream"
+
+    return FileResponse(
+        path=asset_path,
+        media_type=media_type,
     )
 
 
@@ -170,10 +313,14 @@ async def review_assessment_question_extraction(
         extraction,
     )
 
-    return response.model_copy(
+    response = response.model_copy(
         update={
             "message": "Question extraction review saved.",
         }
+    )
+
+    return _with_asset_content_urls(
+        response,
     )
 
 
@@ -230,6 +377,10 @@ async def import_assessment_question_extraction(
 
     extraction_response = AssessmentQuestionExtractionResponse.model_validate(
         extraction,
+    )
+
+    extraction_response = _with_asset_content_urls(
+        extraction_response,
     )
 
     return AssessmentQuestionExtractionImportResponse(

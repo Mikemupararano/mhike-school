@@ -33,6 +33,7 @@ type QuestionType =
     | "multiple_choice_multiple"
     | "true_false"
     | "numeric"
+    | "diagram_annotation"
     | "structural";
 
 
@@ -55,6 +56,7 @@ type ExtractionOption = {
 type ExtractionAsset = {
     asset_type: QuestionAssetType;
     storage_path: string | null;
+    content_url: string | null;
     original_filename: string | null;
     mime_type: string | null;
     file_size_bytes: number | null;
@@ -205,8 +207,8 @@ type ReviewAssetState = {
     included: boolean;
     reviewed: boolean;
 
-    // Display-only extractor-owned provenance.
-    storagePath: string | null;
+    // Display-only extractor-owned metadata.
+    contentUrl: string | null;
     originalFilename: string | null;
     mimeType: string | null;
     fileSizeBytes: number | null;
@@ -520,6 +522,10 @@ const QUESTION_TYPE_OPTIONS: Array<{
             label: "Numeric response",
         },
         {
+            value: "diagram_annotation",
+            label: "Diagram annotation",
+        },
+        {
             value: "structural",
             label: "Structural / heading",
         },
@@ -636,8 +642,8 @@ function normaliseReviewAssets(
             reviewed:
                 asset.reviewed
                 ?? false,
-            storagePath:
-                asset.storage_path
+            contentUrl:
+                asset.content_url
                 ?? null,
             originalFilename:
                 asset.original_filename
@@ -818,6 +824,294 @@ function reviewFingerprint(
         questions:
             payload.questions,
     });
+}
+
+
+function resolveExtractionAssetContentUrl(
+    contentUrl: string,
+): string {
+    if (
+        /^https?:\/\//i.test(
+            contentUrl,
+        )
+    ) {
+        return contentUrl;
+    }
+
+    const normalisedBase =
+        API_BASE_URL.replace(
+            /\/+$/,
+            "",
+        );
+
+    const apiPrefix =
+        "/api/v1";
+
+    if (
+        contentUrl.startsWith(
+            `${apiPrefix}/`,
+        )
+        && normalisedBase.endsWith(
+            apiPrefix,
+        )
+    ) {
+        return `${normalisedBase.slice(
+            0,
+            -apiPrefix.length,
+        )}${contentUrl}`;
+    }
+
+    if (
+        contentUrl.startsWith(
+            "/",
+        )
+    ) {
+        return contentUrl;
+    }
+
+    return `${normalisedBase}/${contentUrl.replace(
+        /^\/+/,
+        "",
+    )}`;
+}
+
+
+type SecureExtractionAssetPreviewProps = {
+    contentUrl: string | null;
+    altText: string;
+    caption: string;
+    mimeType: string | null;
+};
+
+
+function SecureExtractionAssetPreview({
+    contentUrl,
+    altText,
+    caption,
+    mimeType,
+}: SecureExtractionAssetPreviewProps) {
+    const [objectUrl, setObjectUrl] =
+        useState<string | null>(
+            null,
+        );
+
+    const [isLoading, setIsLoading] =
+        useState(
+            false,
+        );
+
+    const [previewError, setPreviewError] =
+        useState<string | null>(
+            null,
+        );
+
+    useEffect(
+        () => {
+            const controller =
+                new AbortController();
+
+            let objectUrlToRevoke:
+                string | null =
+                null;
+
+            setObjectUrl(
+                null,
+            );
+
+            setPreviewError(
+                null,
+            );
+
+            if (!contentUrl) {
+                setIsLoading(
+                    false,
+                );
+
+                return () => {
+                    controller.abort();
+                };
+            }
+
+            const token =
+                getAuthToken();
+
+            if (!token) {
+                setIsLoading(
+                    false,
+                );
+
+                setPreviewError(
+                    "Your session has expired. Please sign in again to view this visual.",
+                );
+
+                return () => {
+                    controller.abort();
+                };
+            }
+
+            const loadPreview =
+                async () => {
+                    try {
+                        setIsLoading(
+                            true,
+                        );
+
+                        const response =
+                            await fetch(
+                                resolveExtractionAssetContentUrl(
+                                    contentUrl,
+                                ),
+                                {
+                                    headers: {
+                                        Authorization:
+                                            `Bearer ${token}`,
+                                    },
+                                    signal:
+                                        controller.signal,
+                                },
+                            );
+
+                        if (!response.ok) {
+                            throw new Error(
+                                await getApiErrorMessage(
+                                    response,
+                                    "Failed to load the extracted visual.",
+                                ),
+                            );
+                        }
+
+                        const blob =
+                            await response.blob();
+
+                        if (
+                            controller.signal.aborted
+                        ) {
+                            return;
+                        }
+
+                        const nextObjectUrl =
+                            URL.createObjectURL(
+                                blob,
+                            );
+
+                        objectUrlToRevoke =
+                            nextObjectUrl;
+
+                        setObjectUrl(
+                            nextObjectUrl,
+                        );
+                    } catch (err: unknown) {
+                        if (
+                            controller.signal.aborted
+                        ) {
+                            return;
+                        }
+
+                        setPreviewError(
+                            err instanceof Error
+                                ? err.message
+                                : "Failed to load the extracted visual.",
+                        );
+                    } finally {
+                        if (
+                            !controller.signal.aborted
+                        ) {
+                            setIsLoading(
+                                false,
+                            );
+                        }
+                    }
+                };
+
+            void loadPreview();
+
+            return () => {
+                controller.abort();
+
+                if (
+                    objectUrlToRevoke
+                ) {
+                    URL.revokeObjectURL(
+                        objectUrlToRevoke,
+                    );
+                }
+            };
+        },
+        [
+            contentUrl,
+        ],
+    );
+
+    if (!contentUrl) {
+        return (
+            <div className="mb-4 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4 text-sm font-medium text-amber-800">
+                This extracted visual does not currently have a secure preview URL.
+            </div>
+        );
+    }
+
+    if (isLoading) {
+        return (
+            <div className="mb-4 flex min-h-40 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm font-medium text-slate-500">
+                Loading extracted visual...
+            </div>
+        );
+    }
+
+    if (previewError) {
+        return (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+                {previewError}
+            </div>
+        );
+    }
+
+    if (!objectUrl) {
+        return null;
+    }
+
+    const accessibleAltText =
+        altText.trim()
+        || caption.trim()
+        || "Extracted visual asset";
+
+    return (
+        <figure className="mb-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="flex min-h-40 items-center justify-center p-3">
+                <img
+                    src={
+                        objectUrl
+                    }
+                    alt={
+                        accessibleAltText
+                    }
+                    className="max-h-[32rem] w-full object-contain"
+                />
+            </div>
+
+            {(caption.trim() || mimeType) && (
+                <figcaption className="border-t border-slate-200 px-3 py-2 text-xs text-slate-500">
+                    {caption.trim() && (
+                        <span>
+                            {caption.trim()}
+                        </span>
+                    )}
+
+                    {caption.trim() && mimeType && (
+                        <span aria-hidden="true">
+                            {" · "}
+                        </span>
+                    )}
+
+                    {mimeType && (
+                        <span>
+                            {mimeType}
+                        </span>
+                    )}
+                </figcaption>
+            )}
+        </figure>
+    );
 }
 
 
@@ -3324,6 +3618,21 @@ export default function AssessmentQuestionExtractionPanel({
                                                                                 : "border-slate-200 bg-slate-100 opacity-75"
                                                                                 }`}
                                                                         >
+                                                                            <SecureExtractionAssetPreview
+                                                                                contentUrl={
+                                                                                    asset.contentUrl
+                                                                                }
+                                                                                altText={
+                                                                                    asset.altText
+                                                                                }
+                                                                                caption={
+                                                                                    asset.caption
+                                                                                }
+                                                                                mimeType={
+                                                                                    asset.mimeType
+                                                                                }
+                                                                            />
+
                                                                             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                                                                 <label className="block">
                                                                                     <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
@@ -3546,9 +3855,9 @@ export default function AssessmentQuestionExtractionPanel({
                                                                                     </span>
                                                                                 )}
 
-                                                                                {!asset.storagePath && asset.included && (
+                                                                                {!asset.contentUrl && asset.included && (
                                                                                     <span className="rounded-full bg-amber-100 px-2.5 py-1 font-bold text-amber-700">
-                                                                                        Visual not yet materialised
+                                                                                        Secure visual preview unavailable
                                                                                     </span>
                                                                                 )}
                                                                             </div>
@@ -3680,7 +3989,9 @@ export default function AssessmentQuestionExtractionPanel({
                                         </p>
                                     )}
 
-                                    {canEditReview && (
+                                    {canEditReview
+                                        && !isReviewComplete
+                                        && (
                                         <div className="flex flex-wrap gap-3">
                                             <button
                                                 type="button"

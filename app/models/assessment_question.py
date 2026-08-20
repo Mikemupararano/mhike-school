@@ -41,6 +41,10 @@ class AssessmentQuestionType(StrEnum):
     prompt. This allows learner-facing radio buttons/checkboxes and reliable
     automatic marking later.
 
+    ``diagram_annotation`` is used when the learner must place labels, symbols,
+    markers, points or other annotations directly onto a candidate-visible
+    diagram or image.
+
     ``structural`` is reserved for non-markable hierarchy nodes such as a
     synthesised parent "1" above markable children "1(a)", "1(b)", etc.
     """
@@ -50,6 +54,7 @@ class AssessmentQuestionType(StrEnum):
     MULTIPLE_CHOICE_MULTIPLE = "multiple_choice_multiple"
     TRUE_FALSE = "true_false"
     NUMERIC = "numeric"
+    DIAGRAM_ANNOTATION = "diagram_annotation"
     STRUCTURAL = "structural"
 
 
@@ -170,6 +175,7 @@ class AssessmentQuestion(Base):
         - multiple_choice_multiple
         - true_false
         - numeric
+        - diagram_annotation
         - structural
 
     Multiple-choice answer choices live in ``AssessmentQuestionOption``.
