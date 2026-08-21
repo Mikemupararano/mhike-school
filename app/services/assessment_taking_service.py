@@ -689,7 +689,7 @@ def _parse_json_object(
         )
     except json.JSONDecodeError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Structured response data must contain valid JSON.",
         ) from exc
 
@@ -698,7 +698,7 @@ def _parse_json_object(
         dict,
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Structured response data must be a JSON object.",
         )
 
@@ -737,7 +737,7 @@ def _validate_response_for_question(
     if question_type == AssessmentQuestionType.DIAGRAM_ANNOTATION:
         if clean_text is not None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     "Diagram-annotation responses must not contain " "response_text."
                 ),
@@ -756,7 +756,7 @@ def _validate_response_for_question(
             )
         except ValidationError as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Invalid diagram-annotation response data.",
             ) from exc
 
@@ -764,12 +764,65 @@ def _validate_response_for_question(
 
         if payload.asset_id not in visible_asset_ids:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     "Diagram annotation references an asset that does not "
                     "belong to this candidate-visible question."
                 ),
             )
+
+        interaction_config = question.interaction_config
+
+        if interaction_config is not None:
+            if not isinstance(interaction_config, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Diagram interaction configuration is invalid for "
+                        "this assessment question."
+                    ),
+                )
+
+            tools = interaction_config.get("tools")
+
+            if not isinstance(tools, list):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Diagram interaction configuration is invalid for "
+                        "this assessment question."
+                    ),
+                )
+
+            allowed_symbols = {
+                symbol
+                for tool in tools
+                if isinstance(tool, dict)
+                and tool.get("tool_type") == "symbol"
+                and isinstance(tool.get("symbol"), str)
+                and (symbol := tool["symbol"].strip())
+            }
+
+            if not allowed_symbols:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Diagram interaction configuration does not define "
+                        "any permitted symbols."
+                    ),
+                )
+
+            if any(
+                annotation.symbol not in allowed_symbols
+                for annotation in payload.annotations
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        "Diagram annotation contains a symbol that is not "
+                        "permitted for this question."
+                    ),
+                )
 
         return (
             None,
@@ -804,7 +857,7 @@ def _validate_response_for_question(
             == "diagram_annotation"
         ):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     "Diagram-annotation response data cannot be saved against "
                     "this question type."
@@ -849,6 +902,10 @@ def _build_question_out(
 ) -> AssessmentTakingQuestionOut:
     """
     Convert one restricted ORM question into the learner-facing schema.
+
+    ``interaction_config`` is included because the candidate-safe repository
+    explicitly loads only learner-permitted configuration. Correct-answer,
+    mark-scheme and server-side provenance data remain excluded.
     """
 
     return AssessmentTakingQuestionOut(
@@ -860,6 +917,7 @@ def _build_question_out(
         title=question.title,
         prompt=question.prompt,
         question_type=question.question_type,
+        interaction_config=question.interaction_config,
         maximum_mark=question.maximum_mark,
         order=question.order,
         is_markable=question.is_markable,
@@ -1756,4 +1814,3 @@ async def submit_student_assessment(
     except Exception:
         await db.rollback()
         raise
-

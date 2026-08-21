@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -331,6 +333,208 @@ class AssessmentQuestionCandidateAssetOut(BaseModel):
 
 
 # ----------------------------------------------------------------------
+# Assessment question interaction configuration schemas
+# ----------------------------------------------------------------------
+
+
+class AssessmentInteractionToolType(StrEnum):
+    """
+    Generic learner tool types supported by visual-response questions.
+
+    Subject-specific palettes should compose these primitives rather than create
+    new database columns or frontend-only question types.
+    """
+
+    SYMBOL = "symbol"
+    PLOT_POINT = "plot_point"
+    LINE = "line"
+    CURVE = "curve"
+    TEXT_LABEL = "text_label"
+    AXIS_LABEL = "axis_label"
+    ARROW = "arrow"
+    LEADER_LINE = "leader_line"
+    SHADE_REGION = "shade_region"
+    FREE_DRAW = "free_draw"
+    EQUATION_EDITOR = "equation_editor"
+    EQUATION_MANIPULATION = "equation_manipulation"
+
+
+class AssessmentInteractionToolConfig(BaseModel):
+    """
+    One tool made available to the learner for a visual-response question.
+
+    ``tool_id`` is a stable machine identifier. ``label`` is learner-facing
+    display text. ``symbol`` is required only for symbol tools and may contain
+    Unicode such as ×, •, ○, +, − or other subject-specific notation.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    tool_id: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    tool_type: AssessmentInteractionToolType
+
+    label: str = Field(
+        min_length=1,
+        max_length=255,
+    )
+
+    symbol: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+    )
+
+    subject: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    @model_validator(
+        mode="after",
+    )
+    def validate_tool(
+        self,
+    ) -> "AssessmentInteractionToolConfig":
+        if (
+            self.tool_type == AssessmentInteractionToolType.SYMBOL
+            and self.symbol is None
+        ):
+            raise ValueError(
+                "A symbol interaction tool must define a symbol.",
+            )
+
+        if (
+            self.tool_type != AssessmentInteractionToolType.SYMBOL
+            and self.symbol is not None
+        ):
+            raise ValueError(
+                "Only symbol interaction tools may define a symbol.",
+            )
+
+        return self
+
+
+class AssessmentQuestionInteractionConfig(BaseModel):
+    """
+    Versioned configuration for learner interaction with a question visual.
+
+    The first version intentionally supports a broad palette/tool model. The
+    same schema can represent atomic-structure symbols, magnetic-field markers,
+    graph plotting, axis labels, leader lines, arrows, equation entry and
+    step-by-step equation manipulation without hard-coding one subject into the
+    pupil interface.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    version: Literal[1] = 1
+
+    mode: Literal[
+        "visual_annotation",
+        "equation",
+        "mixed",
+    ] = "visual_annotation"
+
+    palette_id: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    palette_label: str | None = Field(
+        default=None,
+        max_length=255,
+    )
+
+    coordinate_system: Literal["normalized", "graph"] = "normalized"
+
+    snap_to_grid: bool = False
+
+    tools: list[AssessmentInteractionToolConfig] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+
+    max_annotations: int | None = Field(
+        default=None,
+        ge=1,
+        le=500,
+    )
+
+    equation_format: Literal["latex"] = "latex"
+
+    allow_equation_rearrangement: bool = False
+    allow_equation_substitution: bool = False
+    allow_equation_simplification: bool = False
+    allow_equation_steps: bool = False
+
+    allow_undo: bool = True
+    allow_clear: bool = True
+
+    @model_validator(
+        mode="after",
+    )
+    def validate_config(
+        self,
+    ) -> "AssessmentQuestionInteractionConfig":
+        tool_ids = [
+            tool.tool_id
+            for tool in self.tools
+        ]
+
+        if len(tool_ids) != len(set(tool_ids)):
+            raise ValueError(
+                "Interaction tool ids must be unique within one question.",
+            )
+
+        equation_tool_types = {
+            AssessmentInteractionToolType.EQUATION_EDITOR,
+            AssessmentInteractionToolType.EQUATION_MANIPULATION,
+        }
+
+        has_equation_tool = any(
+            tool.tool_type in equation_tool_types
+            for tool in self.tools
+        )
+
+        if (
+            self.mode in {"equation", "mixed"}
+            and not has_equation_tool
+        ):
+            raise ValueError(
+                "Equation and mixed interaction modes must include an "
+                "equation editor or equation manipulation tool.",
+            )
+
+        if (
+            self.mode == "visual_annotation"
+            and has_equation_tool
+        ):
+            raise ValueError(
+                "Equation tools require equation or mixed interaction mode.",
+            )
+
+        if (
+            self.allow_equation_rearrangement
+            or self.allow_equation_substitution
+            or self.allow_equation_simplification
+            or self.allow_equation_steps
+        ) and not has_equation_tool:
+            raise ValueError(
+                "Equation manipulation options require an equation tool.",
+            )
+
+        return self
+
+
+# ----------------------------------------------------------------------
 # Assessment question schemas
 # ----------------------------------------------------------------------
 
@@ -402,6 +606,8 @@ class AssessmentQuestionCreate(BaseModel):
     prompt: str | None = None
 
     question_type: AssessmentQuestionType = AssessmentQuestionType.WRITTEN
+
+    interaction_config: AssessmentQuestionInteractionConfig | None = None
 
     maximum_mark: Decimal = Field(
         ge=Decimal("0"),
@@ -504,6 +710,58 @@ class AssessmentQuestionCreate(BaseModel):
                     "A true/false question must have exactly one correct " "option.",
                 )
 
+        if self.question_type == AssessmentQuestionType.DIAGRAM_ANNOTATION:
+            if not self.assets:
+                raise ValueError(
+                    "A diagram-annotation question must include at least one asset.",
+                )
+
+            if self.interaction_config is None:
+                raise ValueError(
+                    "A diagram-annotation question must define interaction_config.",
+                )
+
+            if not self.interaction_config.tools:
+                raise ValueError(
+                    "A diagram-annotation interaction_config must define at least one tool.",
+                )
+
+            if self.interaction_config.mode not in {
+                "visual_annotation",
+                "mixed",
+            }:
+                raise ValueError(
+                    "A diagram-annotation question must use visual_annotation "
+                    "or mixed interaction mode.",
+                )
+
+        elif (
+            self.interaction_config is not None
+            and self.question_type
+            not in {
+                AssessmentQuestionType.WRITTEN,
+                AssessmentQuestionType.NUMERIC,
+            }
+        ):
+            raise ValueError(
+                "interaction_config is currently supported for written, numeric "
+                "and diagram-annotation questions.",
+            )
+
+        if (
+            self.interaction_config is not None
+            and self.question_type
+            in {
+                AssessmentQuestionType.WRITTEN,
+                AssessmentQuestionType.NUMERIC,
+            }
+            and self.interaction_config.mode == "visual_annotation"
+        ):
+            raise ValueError(
+                "Written and numeric questions with interaction_config must use "
+                "equation or mixed mode.",
+            )
+
         if self.question_type == AssessmentQuestionType.STRUCTURAL:
             if self.is_markable:
                 raise ValueError(
@@ -535,7 +793,9 @@ class AssessmentQuestionUpdate(BaseModel):
     relying only on field values.
 
     ``options`` and ``assets``, when supplied, represent complete replacement
-    collections for that question. Service logic must apply them atomically.
+    collections for that question. ``interaction_config`` is also replaceable as
+    one versioned object. Service logic must apply the merged question state
+    atomically.
 
     Cross-field rules that depend on the question's existing persisted values
     are deliberately enforced in the service layer for PATCH requests because
@@ -566,6 +826,8 @@ class AssessmentQuestionUpdate(BaseModel):
     prompt: str | None = None
 
     question_type: AssessmentQuestionType | None = None
+
+    interaction_config: AssessmentQuestionInteractionConfig | None = None
 
     maximum_mark: Decimal | None = Field(
         default=None,
@@ -636,6 +898,8 @@ class AssessmentQuestionOut(BaseModel):
 
     question_type: AssessmentQuestionType
 
+    interaction_config: AssessmentQuestionInteractionConfig | None = None
+
     maximum_mark: Decimal
 
     order: int
@@ -677,6 +941,8 @@ class AssessmentQuestionCandidateOut(BaseModel):
     prompt: str | None = None
 
     question_type: AssessmentQuestionType
+
+    interaction_config: AssessmentQuestionInteractionConfig | None = None
 
     maximum_mark: Decimal
 

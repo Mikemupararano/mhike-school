@@ -755,8 +755,9 @@ class AssessmentQuestionRepository:
         ``list_candidate_visible_questions_by_assessment_and_school`` and is
         intended for high-frequency candidate workflows such as autosave.
 
-        It deliberately loads only learner-visible question fields, safe option
-        fields, and candidate-visible asset metadata. Mark schemes, responses,
+        It deliberately loads only learner-visible question fields, including
+        the candidate-safe interaction configuration, safe option fields, and
+        candidate-visible asset metadata. Mark schemes, responses,
         correctness/feedback metadata, storage paths, provenance and unrelated
         relationships remain unavailable.
         """
@@ -801,6 +802,7 @@ class AssessmentQuestionRepository:
                     AssessmentQuestion.title,
                     AssessmentQuestion.prompt,
                     AssessmentQuestion.question_type,
+                    AssessmentQuestion.interaction_config,
                     AssessmentQuestion.maximum_mark,
                     AssessmentQuestion.order,
                     AssessmentQuestion.is_markable,
@@ -955,7 +957,8 @@ class AssessmentQuestionRepository:
 
         Loaded data is limited to:
 
-        - the canonical question fields required by the learner UI;
+        - the canonical question fields required by the learner UI, including
+          the candidate-safe interaction configuration;
         - the owning section;
         - structured answer options, but only their learner-safe fields;
         - candidate-visible question assets, but only learner-safe metadata.
@@ -1004,6 +1007,7 @@ class AssessmentQuestionRepository:
                     AssessmentQuestion.title,
                     AssessmentQuestion.prompt,
                     AssessmentQuestion.question_type,
+                    AssessmentQuestion.interaction_config,
                     AssessmentQuestion.maximum_mark,
                     AssessmentQuestion.order,
                     AssessmentQuestion.is_markable,
@@ -1339,3 +1343,5 @@ class AssessmentQuestionRepository:
             raise ValueError(
                 "is_markable must be a boolean.",
             )
+
+

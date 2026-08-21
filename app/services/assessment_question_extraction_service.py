@@ -32,6 +32,7 @@ from app.repositories.assessment_question import AssessmentQuestionRepository
 from app.repositories.assessment_question_extraction import (
     AssessmentQuestionExtractionRepository,
 )
+from app.schemas.assessment import AssessmentQuestionInteractionConfig
 from app.schemas.assessment_question_extraction import (
     AssessmentQuestionExtractionImportedQuestionResponse,
     AssessmentQuestionExtractionReviewStatus,
@@ -42,11 +43,15 @@ from app.services.assessment_document_service import (
     get_assessment_document,
     resolve_assessment_document_path,
 )
+from app.services.assessment_interaction_palette_service import (
+    infer_interaction_config,
+    interaction_config_as_dict,
+)
 from app.services.assessment_question_service import (
     _get_manageable_draft_assessment,
 )
 
-PARSER_VERSION = "7"
+PARSER_VERSION = "8"
 
 MAX_EXTRACTED_PAGE_TEXT_LENGTH = 100_000
 
@@ -2812,6 +2817,10 @@ def _read_pdf(
 
     OCR is deliberately not attempted here. Pages with no extractable text are
     recorded so a future OCR fallback can identify them explicitly.
+
+    After visual extraction/classification is complete, high-confidence learner
+    interaction palettes are proposed from the final question wording/type.
+    These proposals remain teacher-reviewable and are never treated as answers.
     """
 
     try:
@@ -2914,6 +2923,63 @@ def _read_pdf(
         )
 
     source_metadata["generated_visual_asset_count"] = generated_visual_asset_count
+
+    proposed_interaction_config_count = 0
+
+    raw_questions = proposal.get(
+        "questions",
+        [],
+    )
+
+    if isinstance(
+        raw_questions,
+        list,
+    ):
+        for question in raw_questions:
+            if not isinstance(
+                question,
+                dict,
+            ):
+                continue
+
+            # Preserve any explicit extractor/teacher configuration already
+            # present. Inference is proposal assistance, never an overwrite.
+            if question.get(
+                "interaction_config",
+            ) is not None:
+                continue
+
+            inferred_config = infer_interaction_config(
+                question_text=(
+                    question.get(
+                        "text",
+                    )
+                    if isinstance(
+                        question.get(
+                            "text",
+                        ),
+                        str,
+                    )
+                    else None
+                ),
+                question_type=question.get(
+                    "question_type",
+                    AssessmentQuestionType.WRITTEN.value,
+                ),
+            )
+
+            if inferred_config is None:
+                continue
+
+            question["interaction_config"] = interaction_config_as_dict(
+                inferred_config,
+            )
+            question["requires_review"] = True
+            proposed_interaction_config_count += 1
+
+    source_metadata["proposed_interaction_config_count"] = (
+        proposed_interaction_config_count
+    )
 
     text_page_count = sum(1 for page in pages if page["has_extractable_text"])
 
@@ -3594,6 +3660,37 @@ def _build_reviewed_proposal_questions(
             ),
         )
 
+        if "interaction_config" in update.model_fields_set:
+            reviewed_question["interaction_config"] = (
+                interaction_config_as_dict(
+                    update.interaction_config,
+                )
+                if update.interaction_config is not None
+                else None
+            )
+        else:
+            stored_interaction_config = stored_question.get(
+                "interaction_config",
+            )
+
+            if stored_interaction_config is None:
+                reviewed_question["interaction_config"] = None
+            elif isinstance(
+                stored_interaction_config,
+                dict,
+            ):
+                reviewed_question["interaction_config"] = dict(
+                    stored_interaction_config,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "The stored extraction proposal contains malformed "
+                        "interaction configuration."
+                    ),
+                )
+
         if update.options is None:
             stored_options = stored_question.get(
                 "options",
@@ -3709,7 +3806,9 @@ def _validate_reviewed_interaction_requirements(
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=(f"Question {question_number!r} has malformed visual assets."),
+                detail=(
+                    f"Question {question_number!r} has malformed visual assets."
+                ),
             )
 
         usable_assets = [
@@ -4558,6 +4657,53 @@ def _normalise_import_assets(
     return assets
 
 
+def _normalise_import_interaction_config(
+    raw_config: Any,
+    *,
+    question_number: str,
+) -> dict[str, object] | None:
+    """
+    Validate candidate-visible interaction configuration before canonical import.
+
+    Extraction proposals are JSON documents and may originate from older parser
+    versions. A missing/null configuration therefore remains valid for backwards
+    compatibility, while any supplied configuration must satisfy the shared
+    strict schema before it can reach AssessmentQuestion.interaction_config.
+    """
+
+    if raw_config is None:
+        return None
+
+    if not isinstance(
+        raw_config,
+        dict,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Question {question_number!r} contains malformed interaction "
+                "configuration."
+            ),
+        )
+
+    try:
+        validated = AssessmentQuestionInteractionConfig.model_validate(
+            raw_config,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Question {question_number!r} contains invalid interaction "
+                f"configuration: {exc}"
+            ),
+        ) from exc
+
+    return interaction_config_as_dict(
+        validated,
+    )
+
+
 def _build_import_question_specs(
     *,
     proposal: dict[str, Any],
@@ -4722,6 +4868,13 @@ def _build_import_question_specs(
             source_document_id=source_document_id,
         )
 
+        interaction_config = _normalise_import_interaction_config(
+            question.get(
+                "interaction_config",
+            ),
+            question_number=question_number,
+        )
+
         if question_type == AssessmentQuestionType.DIAGRAM_ANNOTATION:
             candidate_visible_assets = [
                 asset
@@ -4750,6 +4903,7 @@ def _build_import_question_specs(
                 "parent_question_number": parent_question_number,
                 "prompt": text.strip() or None,
                 "question_type": question_type.value,
+                "interaction_config": interaction_config,
                 "maximum_mark": Decimal(
                     marks,
                 ),
@@ -4836,6 +4990,7 @@ def _build_import_question_specs(
             "parent_question_number": inferred_parent,
             "prompt": None,
             "question_type": AssessmentQuestionType.STRUCTURAL.value,
+            "interaction_config": None,
             "maximum_mark": Decimal("0"),
             "is_markable": False,
             "options": [],
@@ -5089,6 +5244,7 @@ async def import_question_extraction(
                 title=None,
                 prompt=spec["prompt"],
                 question_type=spec["question_type"],
+                interaction_config=spec["interaction_config"],
                 maximum_mark=spec["maximum_mark"],
                 order=next_order + offset,
                 is_markable=spec["is_markable"],

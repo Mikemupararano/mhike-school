@@ -37,6 +37,49 @@ type QuestionType =
     | "structural";
 
 
+type InteractionToolType =
+    | "symbol"
+    | "plot_point"
+    | "line"
+    | "curve"
+    | "text_label"
+    | "axis_label"
+    | "arrow"
+    | "leader_line"
+    | "shade_region"
+    | "free_draw"
+    | "equation_editor"
+    | "equation_manipulation";
+
+
+type InteractionToolConfig = {
+    tool_id: string;
+    tool_type: InteractionToolType;
+    label: string;
+    symbol?: string | null;
+    subject?: string | null;
+};
+
+
+type QuestionInteractionConfig = {
+    version: 1;
+    mode: "visual_annotation" | "equation" | "mixed";
+    palette_id?: string | null;
+    palette_label?: string | null;
+    coordinate_system?: "normalized" | "graph";
+    snap_to_grid?: boolean;
+    tools: InteractionToolConfig[];
+    max_annotations?: number | null;
+    equation_format?: "latex";
+    allow_equation_rearrangement?: boolean;
+    allow_equation_substitution?: boolean;
+    allow_equation_simplification?: boolean;
+    allow_equation_steps?: boolean;
+    allow_undo?: boolean;
+    allow_clear?: boolean;
+};
+
+
 type QuestionAssetType =
     | "image"
     | "diagram"
@@ -98,6 +141,7 @@ type ExtractionCandidate = {
     depth: number;
     parent_question_number: string | null;
     question_type: QuestionType;
+    interaction_config: QuestionInteractionConfig | null;
     options: ExtractionOption[];
     assets: ExtractionAsset[];
     included: boolean;
@@ -225,6 +269,7 @@ type ReviewQuestionState = {
     marks: string;
     parentQuestionNumber: string;
     questionType: QuestionType;
+    interactionConfig: QuestionInteractionConfig | null;
     options: ReviewOptionState[];
     assets: ReviewAssetState[];
     included: boolean;
@@ -286,6 +331,7 @@ type ReviewPayload = {
         marks: number | null;
         parent_question_number: string | null;
         question_type: QuestionType;
+        interaction_config: QuestionInteractionConfig | null;
         options: Array<{
             text: string;
             order: number;
@@ -566,6 +612,36 @@ function questionTypeUsesOptions(
 }
 
 
+function interactionModeLabel(
+    mode: QuestionInteractionConfig["mode"],
+): string {
+    switch (mode) {
+        case "visual_annotation":
+            return "Visual annotation";
+        case "equation":
+            return "Equation";
+        case "mixed":
+            return "Mixed";
+        default:
+            return mode;
+    }
+}
+
+
+function interactionToolTypeLabel(
+    toolType: InteractionToolType,
+): string {
+    return toolType
+        .split("_")
+        .map(
+            word =>
+                word.charAt(0).toUpperCase()
+                + word.slice(1),
+        )
+        .join(" ");
+}
+
+
 function createLocalOptionId(
     candidateIndex: number,
     optionIndex: number,
@@ -698,6 +774,9 @@ function buildReviewQuestions(
             questionType:
                 question.question_type
                 ?? "written",
+            interactionConfig:
+                question.interaction_config
+                ?? null,
             options:
                 normaliseReviewOptions(
                     candidateIndex,
@@ -757,6 +836,8 @@ function buildReviewPayload(
                         || null,
                     question_type:
                         question.questionType,
+                    interaction_config:
+                        question.interactionConfig,
                     options:
                         question.options.map(
                             (
@@ -3070,8 +3151,8 @@ export default function AssessmentQuestionExtractionPanel({
                                         <p className="mt-1 text-sm leading-6 text-slate-600">
                                             Check the numbering, wording,
                                             marks, hierarchy, question type,
-                                            answer options and visual assets
-                                            against the original paper.
+                                            answer options, interaction tools
+                                            and visual assets against the original paper.
                                         </p>
                                     </div>
 
@@ -3365,6 +3446,75 @@ export default function AssessmentQuestionExtractionPanel({
                                                             />
                                                         </div>
                                                     </label>
+
+                                                    {question.interactionConfig && (
+                                                        <div className="md:col-span-2 xl:col-span-4">
+                                                            <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
+                                                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                                                    <div>
+                                                                        <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">
+                                                                            Interaction tools
+                                                                        </p>
+
+                                                                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                                                                            {question.interactionConfig.palette_label
+                                                                                || question.interactionConfig.palette_id
+                                                                                || "Question-specific tools"}
+                                                                        </p>
+
+                                                                        {question.interactionConfig.palette_id && (
+                                                                            <p className="mt-1 text-xs text-slate-500">
+                                                                                Palette: {question.interactionConfig.palette_id}
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
+
+                                                                    <span className="self-start rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">
+                                                                        {interactionModeLabel(
+                                                                            question.interactionConfig.mode,
+                                                                        )}
+                                                                    </span>
+                                                                </div>
+
+                                                                <div className="mt-3 flex flex-wrap gap-2">
+                                                                    {question.interactionConfig.tools.map(
+                                                                        tool => (
+                                                                            <div
+                                                                                key={
+                                                                                    tool.tool_id
+                                                                                }
+                                                                                className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
+                                                                            >
+                                                                                {tool.symbol && (
+                                                                                    <span
+                                                                                        className="flex h-8 min-w-8 items-center justify-center rounded-md bg-slate-100 px-2 text-xl font-bold text-slate-900"
+                                                                                        aria-hidden="true"
+                                                                                    >
+                                                                                        {tool.symbol}
+                                                                                    </span>
+                                                                                )}
+
+                                                                                <span>
+                                                                                    <span className="font-semibold">
+                                                                                        {tool.label}
+                                                                                    </span>
+                                                                                    <span className="ml-2 text-xs text-slate-500">
+                                                                                        {interactionToolTypeLabel(
+                                                                                            tool.tool_type,
+                                                                                        )}
+                                                                                    </span>
+                                                                                </span>
+                                                                            </div>
+                                                                        ),
+                                                                    )}
+                                                                </div>
+
+                                                                <p className="mt-3 text-xs leading-5 text-slate-500">
+                                                                    These candidate-facing tools were inferred from the question paper and will be preserved when the review is saved and imported.
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    )}
 
                                                     {questionTypeUsesOptions(
                                                         question.questionType,

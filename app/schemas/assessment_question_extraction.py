@@ -19,6 +19,7 @@ from app.models.assessment_question import (
 from app.models.assessment_question_extraction import (
     AssessmentQuestionExtractionStatus,
 )
+from app.schemas.assessment import AssessmentQuestionInteractionConfig
 
 
 class AssessmentQuestionExtractionReviewStatus(StrEnum):
@@ -198,6 +199,8 @@ class AssessmentQuestionExtractionCandidate(BaseModel):
     parent_question_number: str | None = None
 
     question_type: AssessmentQuestionType = AssessmentQuestionType.WRITTEN
+
+    interaction_config: AssessmentQuestionInteractionConfig | None = None
 
     options: list[AssessmentQuestionExtractionOption] = Field(
         default_factory=list,
@@ -458,6 +461,10 @@ class AssessmentQuestionExtractionReviewQuestionUpdate(BaseModel):
     ``candidate_index`` identifies the existing proposal item. Source evidence,
     confidence metadata, and extractor evidence are intentionally absent from
     this request model so the client cannot replace them.
+
+    ``interaction_config`` is teacher-editable because it describes only the
+    learner tools permitted for the question. It does not contain source
+    provenance, correct-answer positions or mark-scheme logic.
     """
 
     model_config = ConfigDict(
@@ -490,6 +497,8 @@ class AssessmentQuestionExtractionReviewQuestionUpdate(BaseModel):
     )
 
     question_type: AssessmentQuestionType | None = None
+
+    interaction_config: AssessmentQuestionInteractionConfig | None = None
 
     options: list[AssessmentQuestionExtractionOption] | None = None
 
@@ -598,15 +607,14 @@ class AssessmentQuestionExtractionReviewUpdate(BaseModel):
                 in {
                     AssessmentQuestionType.WRITTEN,
                     AssessmentQuestionType.NUMERIC,
-                    AssessmentQuestionType.DIAGRAM_ANNOTATION,
                     AssessmentQuestionType.STRUCTURAL,
                 }
                 and option_count > 0
             ):
                 raise ValueError(
-                    f"Question {question.question_number!r}: written, numeric, "
-                    "diagram-annotation and structural questions cannot have "
-                    "multiple-choice options.",
+                    f"Question {question.question_number!r}: written, numeric "
+                    "and structural questions cannot have multiple-choice "
+                    "options.",
                 )
 
             if question_type == AssessmentQuestionType.MULTIPLE_CHOICE_SINGLE:

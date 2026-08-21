@@ -9,6 +9,7 @@ import {
     useRef,
     useState,
     type MouseEvent,
+    type PointerEvent,
 } from "react";
 
 type QuestionType =
@@ -44,6 +45,27 @@ type AssessmentAsset = {
     content_url: string;
 };
 
+type AssessmentInteractionTool = {
+    tool_id: string;
+    tool_type: string;
+    label: string;
+    symbol?: string | null;
+    subject?: string | null;
+};
+
+type AssessmentInteractionConfig = {
+    version: number;
+    mode: string;
+    palette_id: string | null;
+    palette_label: string | null;
+    coordinate_system: string;
+    snap_to_grid: boolean;
+    tools: AssessmentInteractionTool[];
+    max_annotations?: number | null;
+    allow_undo: boolean;
+    allow_clear: boolean;
+};
+
 type AssessmentQuestion = {
     id: number;
     assessment_id: number;
@@ -58,6 +80,7 @@ type AssessmentQuestion = {
     is_markable: boolean;
     options: AssessmentOption[];
     assets: AssessmentAsset[];
+    interaction_config: AssessmentInteractionConfig | null;
 };
 
 type AssessmentSection = {
@@ -578,17 +601,80 @@ function SecureAsset({
 function DiagramEditor({
     asset,
     annotations,
+    interactionConfig,
     disabled,
     onChange,
 }: {
     asset: AssessmentAsset;
     annotations: DiagramAnnotation[];
+    interactionConfig: AssessmentInteractionConfig | null;
     disabled: boolean;
     onChange: (annotations: DiagramAnnotation[]) => void;
 }) {
-    const [symbol, setSymbol] = useState("×");
+    const symbolTools = useMemo(
+        () => (
+            interactionConfig?.tools.filter(
+                tool =>
+                    tool.tool_type === "symbol"
+                    && typeof tool.symbol === "string"
+                    && tool.symbol.trim().length > 0,
+            ) ?? []
+        ),
+        [interactionConfig],
+    );
+
+    const [selectedToolId, setSelectedToolId] = useState<string | null>(
+        symbolTools[0]?.tool_id ?? null,
+    );
+    const [legacySymbol, setLegacySymbol] = useState("×");
+    const [selectedAnnotationId, setSelectedAnnotationId] =
+        useState<string | null>(null);
+    const [draggingAnnotationId, setDraggingAnnotationId] =
+        useState<string | null>(null);
     const [url, setUrl] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+
+    const diagramRef = useRef<HTMLDivElement | null>(null);
+    const dragStartRef = useRef<{
+        annotationId: string;
+        pointerId: number;
+        clientX: number;
+        clientY: number;
+        x: number;
+        y: number;
+        moved: boolean;
+    } | null>(null);
+
+    useEffect(
+        () => {
+            if (symbolTools.length === 0) {
+                setSelectedToolId(null);
+                return;
+            }
+
+            setSelectedToolId(current => (
+                current
+                && symbolTools.some(tool => tool.tool_id === current)
+                    ? current
+                    : symbolTools[0].tool_id
+            ));
+        },
+        [symbolTools],
+    );
+
+    useEffect(
+        () => {
+            if (
+                selectedAnnotationId
+                && !annotations.some(
+                    annotation => annotation.id === selectedAnnotationId,
+                )
+            ) {
+                setSelectedAnnotationId(null);
+            }
+        },
+        [annotations, selectedAnnotationId],
+    );
 
     useEffect(
         () => {
@@ -651,10 +737,36 @@ function DiagramEditor({
         [asset.content_url],
     );
 
+    const selectedTool =
+        symbolTools.find(tool => tool.tool_id === selectedToolId)
+        ?? symbolTools[0]
+        ?? null;
+
+    const selectedAnnotation =
+        annotations.find(
+            annotation => annotation.id === selectedAnnotationId,
+        ) ?? null;
+
+    const symbol =
+        selectedTool?.symbol?.trim()
+        || legacySymbol.trim();
+
+    const configuredPalette = symbolTools.length > 0;
+    const maxAnnotations =
+        interactionConfig?.max_annotations
+        && interactionConfig.max_annotations > 0
+            ? interactionConfig.max_annotations
+            : null;
+
     function place(event: MouseEvent<HTMLDivElement>) {
         if (
             disabled
-            || !symbol.trim()
+            || !symbol
+            || draggingAnnotationId
+            || (
+                maxAnnotations !== null
+                && annotations.length >= maxAnnotations
+            )
         ) {
             return;
         }
@@ -684,38 +796,297 @@ function DiagramEditor({
             ),
         );
 
+        setSelectedAnnotationId(null);
+
         onChange([
             ...annotations,
             {
                 id: `annotation-${Date.now()}-${Math.random()
                     .toString(36)
                     .slice(2, 8)}`,
-                symbol: symbol.trim(),
+                symbol,
                 x,
                 y,
             },
         ]);
     }
 
+    function removeAnnotation(annotationId: string) {
+        if (disabled) {
+            return;
+        }
+
+        setSelectedAnnotationId(null);
+
+        onChange(
+            annotations.filter(
+                item => item.id !== annotationId,
+            ),
+        );
+    }
+
+    function undoLast() {
+        if (
+            disabled
+            || annotations.length === 0
+        ) {
+            return;
+        }
+
+        setSelectedAnnotationId(null);
+        onChange(annotations.slice(0, -1));
+    }
+
+    function beginDrag(
+        event: PointerEvent<HTMLButtonElement>,
+        annotation: DiagramAnnotation,
+    ) {
+        if (disabled) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const diagram = diagramRef.current;
+
+        if (!diagram) {
+            return;
+        }
+
+        try {
+            diagram.setPointerCapture(event.pointerId);
+        } catch {
+            // Pointer capture is best-effort; dragging still works in-bounds.
+        }
+
+        dragStartRef.current = {
+            annotationId: annotation.id,
+            pointerId: event.pointerId,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            x: annotation.x,
+            y: annotation.y,
+            moved: false,
+        };
+
+        setDraggingAnnotationId(annotation.id);
+    }
+
+    function moveDrag(event: PointerEvent<HTMLDivElement>) {
+        const drag = dragStartRef.current;
+        const diagram = diagramRef.current;
+
+        if (
+            disabled
+            || !drag
+            || !diagram
+            || drag.pointerId !== event.pointerId
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+
+        const box = diagram.getBoundingClientRect();
+
+        if (
+            box.width <= 0
+            || box.height <= 0
+        ) {
+            return;
+        }
+
+        const deltaX = event.clientX - drag.clientX;
+        const deltaY = event.clientY - drag.clientY;
+
+        if (
+            !drag.moved
+            && Math.hypot(deltaX, deltaY) >= 6
+        ) {
+            drag.moved = true;
+            setSelectedAnnotationId(null);
+        }
+
+        if (!drag.moved) {
+            return;
+        }
+
+        const nextX = Math.min(
+            1,
+            Math.max(
+                0,
+                drag.x + (deltaX / box.width),
+            ),
+        );
+
+        const nextY = Math.min(
+            1,
+            Math.max(
+                0,
+                drag.y + (deltaY / box.height),
+            ),
+        );
+
+        onChange(
+            annotations.map(annotation => (
+                annotation.id === drag.annotationId
+                    ? {
+                        ...annotation,
+                        x: nextX,
+                        y: nextY,
+                    }
+                    : annotation
+            )),
+        );
+    }
+
+    function endDrag(event: PointerEvent<HTMLDivElement>) {
+        const drag = dragStartRef.current;
+        const diagram = diagramRef.current;
+
+        if (
+            !drag
+            || drag.pointerId !== event.pointerId
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (
+            diagram
+            && diagram.hasPointerCapture(event.pointerId)
+        ) {
+            try {
+                diagram.releasePointerCapture(event.pointerId);
+            } catch {
+                // Ignore a capture already released by the browser.
+            }
+        }
+
+        dragStartRef.current = null;
+        setDraggingAnnotationId(null);
+
+        if (!drag.moved) {
+            setSelectedAnnotationId(current =>
+                current === drag.annotationId
+                    ? null
+                    : drag.annotationId,
+            );
+        }
+    }
+
+    function cancelDrag(event: PointerEvent<HTMLDivElement>) {
+        const drag = dragStartRef.current;
+
+        if (
+            !drag
+            || drag.pointerId !== event.pointerId
+        ) {
+            return;
+        }
+
+        dragStartRef.current = null;
+        setDraggingAnnotationId(null);
+    }
+
     return (
         <div className="space-y-4">
-            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-                <label className="text-sm font-extrabold text-blue-950">
-                    Symbol to place
-                </label>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <input
-                        value={symbol}
-                        onChange={event => setSymbol(event.target.value)}
-                        maxLength={20}
-                        disabled={disabled}
-                        className="w-32 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xl font-black text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100"
-                    />
-                    <p className="text-sm font-semibold text-blue-900">
-                        Enter the symbol required by the question, then click the correct position on the diagram.
-                    </p>
+            {configuredPalette ? (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <p className="text-sm font-extrabold text-blue-950">
+                                {interactionConfig?.palette_label
+                                    ?? "Annotation tools"}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-blue-900">
+                                Select a particle and click the diagram to place it.
+                            </p>
+                        </div>
+
+                        {interactionConfig?.palette_id && (
+                            <span className="rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-bold text-blue-800">
+                                {interactionConfig.palette_id}
+                            </span>
+                        )}
+                    </div>
+
+                    <div
+                        className="mt-4 flex flex-wrap gap-3"
+                        role="toolbar"
+                        aria-label={interactionConfig?.palette_label ?? "Annotation tools"}
+                    >
+                        {symbolTools.map(tool => {
+                            const selected =
+                                tool.tool_id === selectedTool?.tool_id;
+
+                            return (
+                                <button
+                                    key={tool.tool_id}
+                                    type="button"
+                                    disabled={disabled}
+                                    aria-pressed={selected}
+                                    onClick={() => setSelectedToolId(tool.tool_id)}
+                                    className={`flex min-w-32 items-center gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                                        selected
+                                            ? "border-blue-700 bg-blue-700 text-white shadow-sm"
+                                            : "border-blue-200 bg-white text-blue-950 hover:border-blue-400 hover:bg-blue-100"
+                                    } disabled:cursor-not-allowed disabled:opacity-50`}
+                                >
+                                    <span
+                                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-2xl font-black ${
+                                            selected
+                                                ? "bg-white/15 text-white"
+                                                : "bg-blue-50 text-blue-950"
+                                        }`}
+                                        aria-hidden="true"
+                                    >
+                                        {tool.symbol}
+                                    </span>
+                                    <span className="font-extrabold">
+                                        {tool.label}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {annotations.length > 0 && (
+                        <p className="mt-3 text-sm font-semibold text-blue-900">
+                            Drag a placed symbol to reposition it. Tap or click it to show removal controls.
+                        </p>
+                    )}
                 </div>
-            </div>
+            ) : (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                    <label className="text-sm font-extrabold text-blue-950">
+                        Symbol to place
+                    </label>
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <input
+                            value={legacySymbol}
+                            onChange={event => setLegacySymbol(event.target.value)}
+                            maxLength={20}
+                            disabled={disabled}
+                            className="w-32 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xl font-black text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100"
+                        />
+                        <p className="text-sm font-semibold text-blue-900">
+                            Enter the symbol required by the question, then click the correct position on the diagram.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {maxAnnotations !== null
+                && annotations.length >= maxAnnotations
+                && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                        Maximum number of annotations reached.
+                    </div>
+                )}
 
             {error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
@@ -731,18 +1102,24 @@ function DiagramEditor({
 
             {url && (
                 <div
+                    ref={diagramRef}
                     onClick={place}
-                    className={`relative overflow-hidden rounded-xl border border-slate-300 bg-white ${
+                    onPointerMove={moveDrag}
+                    onPointerUp={endDrag}
+                    onPointerCancel={cancelDrag}
+                    onDragStart={event => event.preventDefault()}
+                    className={`relative select-none overflow-hidden rounded-xl border border-slate-300 bg-white ${
                         disabled
                             ? "cursor-not-allowed"
                             : "cursor-crosshair"
                     }`}
+                    style={{ touchAction: "none" }}
                 >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                         src={url}
                         alt={asset.alt_text ?? "Interactive assessment diagram"}
-                        className="block h-auto w-full select-none"
+                        className="pointer-events-none block h-auto w-full select-none"
                         draggable={false}
                     />
 
@@ -750,44 +1127,108 @@ function DiagramEditor({
                         <button
                             key={annotation.id}
                             type="button"
-                            title="Remove annotation"
+                            title="Drag to reposition; tap for options"
                             disabled={disabled}
+                            draggable={false}
+                            onDragStart={event => event.preventDefault()}
+                            onPointerDown={event => beginDrag(event, annotation)}
                             onClick={event => {
+                                event.preventDefault();
                                 event.stopPropagation();
-
-                                if (!disabled) {
-                                    onChange(
-                                        annotations.filter(
-                                            item => item.id !== annotation.id,
-                                        ),
-                                    );
-                                }
                             }}
-                            className="absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-blue-700 bg-white text-lg font-black text-blue-950 shadow-md"
+                            className={`absolute flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 select-none items-center justify-center rounded-full border bg-white text-[13px] font-black shadow-sm ${
+                                draggingAnnotationId === annotation.id
+                                    ? "z-30 cursor-grabbing border-blue-800 text-blue-950 ring-4 ring-blue-200"
+                                    : "z-10 cursor-grab border-blue-600 text-blue-950 hover:border-blue-800 hover:ring-2 hover:ring-blue-100"
+                            } disabled:cursor-not-allowed`}
                             style={{
                                 left: `${annotation.x * 100}%`,
                                 top: `${annotation.y * 100}%`,
+                                touchAction: "none",
+                                WebkitUserSelect: "none",
+                                userSelect: "none",
                             }}
                         >
-                            {annotation.symbol}
+                            <span
+                                className="pointer-events-none select-none"
+                                aria-hidden="true"
+                            >
+                                {annotation.symbol}
+                            </span>
                         </button>
                     ))}
+
+                    {selectedAnnotation && (
+                        <div
+                            className="absolute z-40 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-slate-300 bg-white px-2 py-2 shadow-lg"
+                            style={{
+                                left: `${selectedAnnotation.x * 100}%`,
+                                top: `${selectedAnnotation.y * 100}%`,
+                                transform:
+                                    selectedAnnotation.y < 0.18
+                                        ? "translate(-50%, 16px)"
+                                        : "translate(-50%, calc(-100% - 16px))",
+                            }}
+                            onPointerDown={event => event.stopPropagation()}
+                            onClick={event => event.stopPropagation()}
+                        >
+                            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-base font-black text-slate-900">
+                                {selectedAnnotation.symbol}
+                            </span>
+
+                            <button
+                                type="button"
+                                disabled={disabled}
+                                onClick={() => removeAnnotation(selectedAnnotation.id)}
+                                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-extrabold text-white hover:bg-red-700 disabled:opacity-50"
+                            >
+                                Remove
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => setSelectedAnnotationId(null)}
+                                className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
             {annotations.length > 0 && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                     <span className="text-sm font-semibold text-slate-700">
                         {annotations.length} annotation{annotations.length === 1 ? "" : "s"} placed
                     </span>
-                    <button
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => onChange([])}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-                    >
-                        Clear diagram
-                    </button>
+
+                    <div className="flex flex-wrap gap-2">
+                        {(interactionConfig?.allow_undo ?? true) && (
+                            <button
+                                type="button"
+                                disabled={disabled || annotations.length === 0}
+                                onClick={undoLast}
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                            >
+                                Undo last
+                            </button>
+                        )}
+
+                        {(interactionConfig?.allow_clear ?? true) && (
+                            <button
+                                type="button"
+                                disabled={disabled}
+                                onClick={() => {
+                                    setSelectedAnnotationId(null);
+                                    onChange([]);
+                                }}
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                            >
+                                Clear diagram
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
         </div>
@@ -1562,6 +2003,7 @@ export default function StudentAssessmentAttemptPage() {
                                         ? (
                                             <DiagramEditor
                                                 asset={currentQuestion.assets[0]}
+                                                interactionConfig={currentQuestion.interaction_config}
                                                 disabled={closed}
                                                 annotations={
                                                     currentState?.data?.type === "diagram_annotation"
@@ -1757,3 +2199,4 @@ export default function StudentAssessmentAttemptPage() {
         </main>
     );
 }
+

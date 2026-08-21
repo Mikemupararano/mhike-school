@@ -493,7 +493,7 @@ async def test_teacher_can_create_question_extraction(
     assert data["status"] == (AssessmentQuestionExtractionStatus.COMPLETED.value)
 
     assert data["extractor_name"] == "pypdf"
-    assert data["parser_version"] == "7"
+    assert data["parser_version"] == "8"
 
     assert data["page_count"] == 2
     assert data["text_page_count"] == 2

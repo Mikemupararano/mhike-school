@@ -161,6 +161,7 @@ async def _create_question(
     question_type: AssessmentQuestionType = AssessmentQuestionType.WRITTEN,
     order: int = 1,
     is_markable: bool = True,
+    interaction_config: dict | None = None,
 ) -> AssessmentQuestion:
     question = AssessmentQuestion(
         assessment_id=assessment_id,
@@ -173,6 +174,7 @@ async def _create_question(
         maximum_mark=Decimal("1"),
         order=order,
         is_markable=is_markable,
+        interaction_config=interaction_config,
     )
     db_session.add(question)
     await db_session.commit()
@@ -1549,3 +1551,324 @@ async def test_submitted_assessment_summary_is_read_only(
     assert data["is_submitted"] is True
     assert data["can_start"] is False
     assert data["can_resume"] is False
+
+@pytest.mark.asyncio
+async def test_diagram_palette_accepts_configured_symbol(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+        title="Configured Diagram Palette Allowed Symbol",
+    )
+
+    question = await _create_question(
+        db_session,
+        assessment_id=assessment.id,
+        prompt="Complete the atomic structure diagram.",
+        question_type=AssessmentQuestionType.DIAGRAM_ANNOTATION,
+        interaction_config={
+            "version": 1,
+            "mode": "visual_annotation",
+            "palette_id": "chemistry.atomic_structure",
+            "palette_label": "Atomic structure",
+            "coordinate_system": "normalized",
+            "tools": [
+                {
+                    "tool_id": "electron",
+                    "tool_type": "symbol",
+                    "label": "Electron",
+                    "symbol": "×",
+                },
+                {
+                    "tool_id": "neutron",
+                    "tool_type": "symbol",
+                    "label": "Neutron",
+                    "symbol": "●",
+                },
+                {
+                    "tool_id": "proton",
+                    "tool_type": "symbol",
+                    "label": "Proton",
+                    "symbol": "○",
+                },
+            ],
+        },
+    )
+
+    asset_path = (
+        assessment_upload_root
+        / str(teacher_user.school_id)
+        / str(assessment.id)
+        / "palette-allowed.png"
+    )
+    asset_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    asset_path.write_bytes(b"palette-allowed")
+
+    asset = await _create_asset(
+        db_session,
+        question_id=question.id,
+        storage_path=asset_path,
+    )
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="taking.palette.allowed@example.com",
+    )
+    student_headers = auth_headers(student)
+
+    await _allocate_candidate(
+        db_session,
+        assessment_id=assessment.id,
+        student_id=student.id,
+    )
+    await _start_attempt(
+        client,
+        assessment_id=assessment.id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.put(
+        f"/api/v1/student-assessments/{assessment.id}/responses/{question.id}",
+        json={
+            "response_data": {
+                "type": "diagram_annotation",
+                "version": 1,
+                "asset_id": asset.id,
+                "annotations": [
+                    {
+                        "id": "annotation-electron",
+                        "symbol": "×",
+                        "x": 0.25,
+                        "y": 0.35,
+                    },
+                    {
+                        "id": "annotation-proton",
+                        "symbol": "○",
+                        "x": 0.50,
+                        "y": 0.50,
+                    },
+                ],
+            },
+        },
+        headers=student_headers,
+    )
+
+    assert response.status_code == 200, response.text
+
+    stored = json.loads(
+        response.json()["response_data"],
+    )
+    assert [
+        annotation["symbol"]
+        for annotation in stored["annotations"]
+    ] == ["×", "○"]
+
+
+@pytest.mark.asyncio
+async def test_diagram_palette_rejects_unconfigured_symbol(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+        title="Configured Diagram Palette Rejects Tampering",
+    )
+
+    question = await _create_question(
+        db_session,
+        assessment_id=assessment.id,
+        prompt="Complete the atomic structure diagram.",
+        question_type=AssessmentQuestionType.DIAGRAM_ANNOTATION,
+        interaction_config={
+            "version": 1,
+            "mode": "visual_annotation",
+            "palette_id": "chemistry.atomic_structure",
+            "palette_label": "Atomic structure",
+            "coordinate_system": "normalized",
+            "tools": [
+                {
+                    "tool_id": "electron",
+                    "tool_type": "symbol",
+                    "label": "Electron",
+                    "symbol": "×",
+                },
+                {
+                    "tool_id": "neutron",
+                    "tool_type": "symbol",
+                    "label": "Neutron",
+                    "symbol": "●",
+                },
+                {
+                    "tool_id": "proton",
+                    "tool_type": "symbol",
+                    "label": "Proton",
+                    "symbol": "○",
+                },
+            ],
+        },
+    )
+
+    asset_path = (
+        assessment_upload_root
+        / str(teacher_user.school_id)
+        / str(assessment.id)
+        / "palette-rejected.png"
+    )
+    asset_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    asset_path.write_bytes(b"palette-rejected")
+
+    asset = await _create_asset(
+        db_session,
+        question_id=question.id,
+        storage_path=asset_path,
+    )
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="taking.palette.rejected@example.com",
+    )
+    student_headers = auth_headers(student)
+
+    await _allocate_candidate(
+        db_session,
+        assessment_id=assessment.id,
+        student_id=student.id,
+    )
+    await _start_attempt(
+        client,
+        assessment_id=assessment.id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.put(
+        f"/api/v1/student-assessments/{assessment.id}/responses/{question.id}",
+        json={
+            "response_data": {
+                "type": "diagram_annotation",
+                "version": 1,
+                "asset_id": asset.id,
+                "annotations": [
+                    {
+                        "id": "annotation-tampered",
+                        "symbol": "electron",
+                        "x": 0.25,
+                        "y": 0.35,
+                    }
+                ],
+            },
+        },
+        headers=student_headers,
+    )
+
+    assert response.status_code == 422
+    assert (
+        "Diagram annotation contains a symbol that is not "
+        "permitted for this question."
+    ) in response.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_diagram_without_interaction_config_accepts_existing_symbol(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+        title="Legacy Diagram Palette Compatibility",
+    )
+
+    question = await _create_question(
+        db_session,
+        assessment_id=assessment.id,
+        prompt="Place the required symbol.",
+        question_type=AssessmentQuestionType.DIAGRAM_ANNOTATION,
+        interaction_config=None,
+    )
+
+    asset_path = (
+        assessment_upload_root
+        / str(teacher_user.school_id)
+        / str(assessment.id)
+        / "legacy-diagram.png"
+    )
+    asset_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    asset_path.write_bytes(b"legacy-diagram")
+
+    asset = await _create_asset(
+        db_session,
+        question_id=question.id,
+        storage_path=asset_path,
+    )
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="taking.palette.legacy@example.com",
+    )
+    student_headers = auth_headers(student)
+
+    await _allocate_candidate(
+        db_session,
+        assessment_id=assessment.id,
+        student_id=student.id,
+    )
+    await _start_attempt(
+        client,
+        assessment_id=assessment.id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.put(
+        f"/api/v1/student-assessments/{assessment.id}/responses/{question.id}",
+        json={
+            "response_data": {
+                "type": "diagram_annotation",
+                "version": 1,
+                "asset_id": asset.id,
+                "annotations": [
+                    {
+                        "id": "annotation-legacy",
+                        "symbol": "legacy-custom-symbol",
+                        "x": 0.40,
+                        "y": 0.60,
+                    }
+                ],
+            },
+        },
+        headers=student_headers,
+    )
+
+    assert response.status_code == 200, response.text
+
+    stored = json.loads(
+        response.json()["response_data"],
+    )
+    assert stored["annotations"][0]["symbol"] == "legacy-custom-symbol"
+

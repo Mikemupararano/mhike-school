@@ -21,7 +21,9 @@ from app.models.assessment_question import (
     AssessmentQuestionType,
 )
 from app.models.assessment_response import AssessmentResponseStatus
+from app.schemas.assessment import AssessmentQuestionInteractionConfig
 from app.schemas.assessment_marking import _normalise_response_data
+
 
 # ---------------------------------------------------------------------------
 # Candidate-safe question content
@@ -77,6 +79,11 @@ class AssessmentTakingQuestionOut(BaseModel):
         - mark schemes;
         - marking decisions;
         - asset storage paths and extraction provenance.
+
+    ``interaction_config`` is candidate-visible because it contains only the
+    tools and behaviours the learner is permitted to use. It must never carry
+    correct-answer positions, marking tolerances, mark-scheme logic or other
+    marker-only metadata.
     """
 
     model_config = ConfigDict(
@@ -95,6 +102,8 @@ class AssessmentTakingQuestionOut(BaseModel):
     prompt: str | None = None
 
     question_type: AssessmentQuestionType
+
+    interaction_config: AssessmentQuestionInteractionConfig | None = None
 
     maximum_mark: Decimal
 

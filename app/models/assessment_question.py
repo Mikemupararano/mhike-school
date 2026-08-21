@@ -182,6 +182,12 @@ class AssessmentQuestion(Base):
     Candidate-visible diagrams, graphs, photographs and other figures live in
     ``AssessmentQuestionAsset``.
 
+    ``interaction_config`` stores the question-specific learner interaction
+    configuration. It is intentionally generic so the same visual-response
+    engine can support subject-aware symbol palettes, point plotting, graph
+    labelling, axis labelling, line/curve drawing and other annotation tools
+    without introducing a new database column for each subject or interaction.
+
     ``maximum_mark`` remains authoritative for the total marks available for
     the question. Structural questions should use zero marks and
     ``is_markable=False``.
@@ -258,6 +264,11 @@ class AssessmentQuestion(Base):
         nullable=False,
         default=AssessmentQuestionType.WRITTEN.value,
         index=True,
+    )
+
+    interaction_config: Mapped[dict[str, object] | None] = mapped_column(
+        JSON,
+        nullable=True,
     )
 
     maximum_mark: Mapped[Decimal] = mapped_column(
