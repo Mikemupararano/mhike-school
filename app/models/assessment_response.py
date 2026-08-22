@@ -26,6 +26,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.assessment_candidate import AssessmentScript
     from app.models.assessment_question import AssessmentQuestion
+    from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
     from app.models.mark_scheme_award import MarkSchemeItemAward
     from app.models.user import User
 
@@ -84,10 +85,22 @@ class AssessmentResponse(Base):
     """
     Represent one candidate response to one assessment question.
 
-    A response belongs to one AssessmentScript and one AssessmentQuestion.
+    A response belongs to one AssessmentScript.
 
-    The unique constraint on ``script_id`` and ``question_id`` ensures that
-    one script has at most one active response record for a given question.
+    ``question_snapshot_id`` links a response to the immutable question
+    snapshot that governed the candidate's attempt. New browser-assessment
+    responses should use this immutable linkage whenever snapshots exist.
+
+    ``question_id`` is retained for canonical-question provenance and backward
+    compatibility with historical responses created before question snapshots
+    were introduced.
+
+    The legacy unique constraint on ``script_id`` and ``question_id`` remains
+    in place during the compatibility phase.
+
+    The additional unique constraint on ``script_id`` and
+    ``question_snapshot_id`` ensures that one script has at most one response
+    for a particular immutable question snapshot.
 
     The response may contain typed text, structured answer data, a reference
     to uploaded/scanned work, or a combination of these.
@@ -100,6 +113,11 @@ class AssessmentResponse(Base):
             "script_id",
             "question_id",
             name="uq_assessment_response_script_question",
+        ),
+        UniqueConstraint(
+            "script_id",
+            "question_snapshot_id",
+            name="uq_assessment_response_script_question_snapshot",
         ),
     )
 
@@ -130,6 +148,15 @@ class AssessmentResponse(Base):
             ondelete="CASCADE",
         ),
         nullable=False,
+        index=True,
+    )
+
+    question_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "assessment_question_snapshots.id",
+            ondelete="CASCADE",
+        ),
+        nullable=True,
         index=True,
     )
 
@@ -211,6 +238,12 @@ class AssessmentResponse(Base):
         lazy="selectin",
     )
 
+    question_snapshot: Mapped["AssessmentQuestionSnapshot | None"] = relationship(
+        "AssessmentQuestionSnapshot",
+        foreign_keys=[question_snapshot_id],
+        lazy="selectin",
+    )
+
     marking_decision: Mapped["MarkingDecision | None"] = relationship(
         "MarkingDecision",
         back_populates="response",
@@ -229,6 +262,7 @@ class AssessmentResponse(Base):
             f"id={self.id!r} "
             f"script_id={self.script_id!r} "
             f"question_id={self.question_id!r} "
+            f"question_snapshot_id={self.question_snapshot_id!r} "
             f"status={self.status!r}>"
         )
 

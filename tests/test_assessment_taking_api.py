@@ -1436,6 +1436,198 @@ async def test_asset_delivery_rejects_hidden_or_outside_asset(
 
 
 @pytest.mark.asyncio
+async def test_started_attempt_responses_link_to_snapshots_and_ignore_later_questions(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+        title="Immutable Response Linkage Assessment",
+    )
+
+    original_question = await _create_question(
+        db_session,
+        assessment_id=assessment.id,
+        question_number="1",
+        prompt="Original snapshotted question.",
+        order=1,
+    )
+
+    assessment_id = assessment.id
+    original_question_id = original_question.id
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="taking.snapshot.response.linkage@example.com",
+    )
+
+    candidate = await _allocate_candidate(
+        db_session,
+        assessment_id=assessment_id,
+        student_id=student.id,
+    )
+
+    candidate_id = candidate.id
+
+    first_start = await _start_attempt(
+        client,
+        assessment_id=assessment_id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    assert first_start.status_code == 200, first_start.text
+
+    await db_session.refresh(student)
+    student_headers = auth_headers(student)
+
+    script_result = await db_session.execute(
+        select(AssessmentScript).where(
+            AssessmentScript.candidate_id == candidate_id,
+        )
+    )
+    script = script_result.scalar_one()
+
+    script_id = script.id
+
+    snapshot_result = await db_session.execute(
+        select(AssessmentQuestionSnapshot).where(
+            AssessmentQuestionSnapshot.script_id == script_id,
+        )
+    )
+    snapshots = list(
+        snapshot_result.scalars().all(),
+    )
+
+    assert len(snapshots) == 1
+
+    snapshot = snapshots[0]
+
+    assert snapshot.question_id == original_question_id
+    assert snapshot.is_markable is True
+
+    response_result = await db_session.execute(
+        select(AssessmentResponse).where(
+            AssessmentResponse.script_id == script_id,
+        )
+    )
+    responses = list(
+        response_result.scalars().all(),
+    )
+
+    assert len(responses) == 1
+
+    response = responses[0]
+
+    assert response.question_id == original_question_id
+    assert response.question_snapshot_id == snapshot.id
+    assert response.status == AssessmentResponseStatus.NOT_STARTED
+
+    # Add a new live canonical question after the candidate has already
+    # started. It must never become part of this immutable attempt.
+    later_question = await _create_question(
+        db_session,
+        assessment_id=assessment_id,
+        question_number="2",
+        prompt="Added after the candidate started.",
+        order=2,
+    )
+
+    later_question_id = later_question.id
+
+    # Resume the attempt. Snapshot creation must not append the later
+    # canonical question, and response creation must remain snapshot-based.
+    resumed = await _start_attempt(
+        client,
+        assessment_id=assessment_id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["message"] == "Assessment resumed."
+
+    snapshot_result = await db_session.execute(
+        select(AssessmentQuestionSnapshot).where(
+            AssessmentQuestionSnapshot.script_id == script_id,
+        )
+    )
+    snapshots_after_resume = list(
+        snapshot_result.scalars().all(),
+    )
+
+    assert len(snapshots_after_resume) == 1
+    assert {
+        item.question_id
+        for item in snapshots_after_resume
+    } == {
+        original_question_id,
+    }
+
+    response_result = await db_session.execute(
+        select(AssessmentResponse).where(
+            AssessmentResponse.script_id == script_id,
+        )
+    )
+    responses_after_resume = list(
+        response_result.scalars().all(),
+    )
+
+    assert len(responses_after_resume) == 1
+    assert {
+        item.question_id
+        for item in responses_after_resume
+    } == {
+        original_question_id,
+    }
+
+    assert all(
+        item.question_snapshot_id is not None
+        for item in responses_after_resume
+    )
+
+    assert later_question_id not in {
+        item.question_id
+        for item in responses_after_resume
+    }
+
+    # Submission must compare against the immutable snapshot set, not the
+    # now-expanded live canonical assessment.
+    submit = await client.post(
+        f"/api/v1/student-assessments/{assessment_id}/submit",
+        headers=student_headers,
+    )
+
+    assert submit.status_code == 200, submit.text
+    assert (
+        submit.json()["candidate_status"]
+        == AssessmentCandidateStatus.SUBMITTED.value
+    )
+    assert (
+        submit.json()["script_status"]
+        == AssessmentScriptStatus.SUBMITTED.value
+    )
+
+    final_response_result = await db_session.execute(
+        select(AssessmentResponse).where(
+            AssessmentResponse.script_id == script_id,
+        )
+    )
+    final_responses = list(
+        final_response_result.scalars().all(),
+    )
+
+    assert len(final_responses) == 1
+    assert final_responses[0].question_id == original_question_id
+    assert final_responses[0].question_snapshot_id == snapshot.id
+    assert final_responses[0].status == AssessmentResponseStatus.SUBMITTED
+
+
+@pytest.mark.asyncio
 async def test_submit_closes_candidate_script_responses_and_blocks_later_writes(
     client: AsyncClient,
     db_session: AsyncSession,

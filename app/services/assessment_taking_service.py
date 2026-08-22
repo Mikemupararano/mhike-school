@@ -561,6 +561,7 @@ async def _list_script_responses_safe(
                 AssessmentResponse.id,
                 AssessmentResponse.script_id,
                 AssessmentResponse.question_id,
+                AssessmentResponse.question_snapshot_id,
                 AssessmentResponse.status,
                 AssessmentResponse.response_text,
                 AssessmentResponse.response_data,
@@ -608,6 +609,7 @@ async def _get_script_response_safe(
                 AssessmentResponse.id,
                 AssessmentResponse.script_id,
                 AssessmentResponse.question_id,
+                AssessmentResponse.question_snapshot_id,
                 AssessmentResponse.status,
                 AssessmentResponse.response_text,
                 AssessmentResponse.response_data,
@@ -683,6 +685,15 @@ async def _ensure_question_snapshots(
     existing_question_ids = set(
         existing_result.scalars().all(),
     )
+
+    # Snapshot creation is all-or-nothing for a script/version.
+    #
+    # Once any snapshot exists, the attempt question set is frozen. Later
+    # canonical additions must never be appended to an already-started
+    # attempt. First-time legacy backfill remains supported when a script has
+    # no snapshots yet.
+    if existing_question_ids:
+        return
 
     missing_questions = [
         question
@@ -843,12 +854,126 @@ async def _ensure_response_rows(
     questions: list[AssessmentQuestion],
 ) -> None:
     """
-    Ensure every markable question has one response row.
+    Ensure every markable attempt question has one response row.
 
-    Rows are initialised as NOT_STARTED. The database unique constraint on
-    ``(script_id, question_id)`` remains the final concurrency safeguard.
+    For scripts with immutable question snapshots, snapshots are authoritative.
+    Existing legacy response rows are linked to their matching snapshots when
+    possible, and new response rows are created with both canonical provenance
+    and immutable snapshot identity.
+
+    Scripts without snapshots retain the legacy canonical-question behaviour.
     """
 
+    snapshots = await _list_question_snapshots_safe(
+        db,
+        script_id=script.id,
+    )
+
+    if snapshots:
+        existing_result = await db.execute(
+            select(
+                AssessmentResponse,
+            )
+            .where(
+                AssessmentResponse.script_id == script.id,
+            )
+            .options(
+                raiseload("*"),
+                load_only(
+                    AssessmentResponse.id,
+                    AssessmentResponse.script_id,
+                    AssessmentResponse.question_id,
+                    AssessmentResponse.question_snapshot_id,
+                ),
+            )
+        )
+
+        existing_responses = list(
+            existing_result.scalars().all(),
+        )
+
+        existing_by_question_id = {
+            response.question_id: response
+            for response in existing_responses
+        }
+
+        markable_snapshots = [
+            snapshot
+            for snapshot in snapshots
+            if snapshot.is_markable
+        ]
+
+        markable_question_ids = {
+            snapshot.question_id
+            for snapshot in markable_snapshots
+        }
+
+        unexpected_response_question_ids = {
+            response.question_id
+            for response in existing_responses
+            if response.question_id not in markable_question_ids
+        }
+
+        if unexpected_response_question_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Assessment response set is inconsistent with the "
+                    "immutable attempt question set."
+                ),
+            )
+
+        missing_responses: list[AssessmentResponse] = []
+
+        for snapshot in markable_snapshots:
+            response = existing_by_question_id.get(
+                snapshot.question_id,
+            )
+
+            if response is None:
+                missing_responses.append(
+                    AssessmentResponse(
+                        script_id=script.id,
+                        question_id=snapshot.question_id,
+                        question_snapshot_id=snapshot.id,
+                        status=AssessmentResponseStatus.NOT_STARTED,
+                        response_text=None,
+                        response_data=None,
+                        source_reference=None,
+                    )
+                )
+                continue
+
+            if response.question_snapshot_id is None:
+                response.question_snapshot_id = snapshot.id
+                db.add(
+                    response,
+                )
+                continue
+
+            if response.question_snapshot_id != snapshot.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Assessment response is linked to an inconsistent "
+                        "question snapshot."
+                    ),
+                )
+
+        if missing_responses:
+            db.add_all(
+                missing_responses,
+            )
+
+        if missing_responses or any(
+            response.question_snapshot_id is not None
+            for response in existing_responses
+        ):
+            await db.flush()
+
+        return
+
+    # Legacy compatibility for scripts that genuinely have no snapshots.
     existing_result = await db.execute(
         select(
             AssessmentResponse.question_id,
@@ -865,6 +990,7 @@ async def _ensure_response_rows(
         AssessmentResponse(
             script_id=script.id,
             question_id=question.id,
+            question_snapshot_id=None,
             status=AssessmentResponseStatus.NOT_STARTED,
             response_text=None,
             response_data=None,
@@ -2354,6 +2480,11 @@ async def save_student_assessment_response(
             response = AssessmentResponse(
                 script_id=script.id,
                 question_id=response_question_id,
+                question_snapshot_id=(
+                    question_snapshot.id
+                    if question_snapshot is not None
+                    else None
+                ),
                 status=AssessmentResponseStatus.NOT_STARTED,
                 response_text=None,
                 response_data=None,
@@ -2478,37 +2609,101 @@ async def submit_student_assessment(
             )
         )
 
-        questions = await _list_candidate_questions(
-            db,
-            assessment=assessment,
-        )
-
-        await _ensure_response_rows(
-            db,
-            script=script,
-            questions=questions,
-        )
-
-        responses = await _list_script_responses_safe(
+        snapshots = await _list_question_snapshots_safe(
             db,
             script_id=script.id,
-            for_update=True,
         )
 
-        markable_question_ids = {
-            question.id for question in questions if question.is_markable
-        }
+        if snapshots:
+            questions: list[AssessmentQuestion] = []
 
-        response_question_ids = {response.question_id for response in responses}
-
-        if markable_question_ids != response_question_ids:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Assessment response set is inconsistent with the "
-                    "published question set."
-                ),
+            await _ensure_response_rows(
+                db,
+                script=script,
+                questions=questions,
             )
+
+            responses = await _list_script_responses_safe(
+                db,
+                script_id=script.id,
+                for_update=True,
+            )
+
+            markable_snapshots = [
+                snapshot
+                for snapshot in snapshots
+                if snapshot.is_markable
+            ]
+
+            markable_question_ids = {
+                snapshot.question_id
+                for snapshot in markable_snapshots
+            }
+
+            expected_snapshot_ids = {
+                snapshot.id
+                for snapshot in markable_snapshots
+            }
+
+            response_question_ids = {
+                response.question_id
+                for response in responses
+            }
+
+            response_snapshot_ids = {
+                response.question_snapshot_id
+                for response in responses
+            }
+
+            if (
+                markable_question_ids != response_question_ids
+                or expected_snapshot_ids != response_snapshot_ids
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Assessment response set is inconsistent with the "
+                        "immutable attempt question set."
+                    ),
+                )
+
+        else:
+            questions = await _list_candidate_questions(
+                db,
+                assessment=assessment,
+            )
+
+            await _ensure_response_rows(
+                db,
+                script=script,
+                questions=questions,
+            )
+
+            responses = await _list_script_responses_safe(
+                db,
+                script_id=script.id,
+                for_update=True,
+            )
+
+            markable_question_ids = {
+                question.id
+                for question in questions
+                if question.is_markable
+            }
+
+            response_question_ids = {
+                response.question_id
+                for response in responses
+            }
+
+            if markable_question_ids != response_question_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Assessment response set is inconsistent with the "
+                        "published question set."
+                    ),
+                )
 
         for response in responses:
             if response.status == AssessmentResponseStatus.VOID:
