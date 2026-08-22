@@ -25,6 +25,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.assessment import Assessment
     from app.models.assessment_document import AssessmentDocument
+    from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
     from app.models.assessment_response import AssessmentResponse
     from app.models.mark_scheme import MarkScheme
 
@@ -351,6 +352,13 @@ class AssessmentQuestion(Base):
         back_populates="question",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+
+    snapshots: Mapped[list["AssessmentQuestionSnapshot"]] = relationship(
+        "AssessmentQuestionSnapshot",
+        back_populates="question",
+        lazy="selectin",
+        passive_deletes=True,
     )
 
     def __repr__(self) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -21,8 +22,11 @@ from app.models.assessment_question import (
     AssessmentQuestion,
     AssessmentQuestionAsset,
     AssessmentQuestionAssetType,
+    AssessmentQuestionOption,
     AssessmentQuestionType,
+    AssessmentSection,
 )
+from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -458,6 +462,385 @@ async def test_student_start_is_idempotent_and_reuses_browser_script(
 
 
 @pytest.mark.asyncio
+async def test_student_start_creates_immutable_question_snapshot(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+        title="Immutable Snapshot Assessment",
+    )
+
+    section = AssessmentSection(
+        assessment_id=assessment.id,
+        title="Section A",
+        description="Answer all questions.",
+        order=1,
+        is_optional=False,
+    )
+    db_session.add(section)
+    await db_session.commit()
+    await db_session.refresh(section)
+
+    interaction_config = {
+        "version": 1,
+        "mode": "visual_annotation",
+        "palette_id": "chemistry.atomic_structure",
+        "palette_label": "Atomic structure",
+        "coordinate_system": "normalized",
+        "snap_to_grid": False,
+        "tools": [
+            {
+                "tool_id": "electron",
+                "tool_type": "symbol",
+                "symbol": "×",
+                "label": "electron",
+            },
+        ],
+        "allow_undo": True,
+        "allow_clear": True,
+    }
+
+    question = AssessmentQuestion(
+        assessment_id=assessment.id,
+        section_id=section.id,
+        parent_question_id=None,
+        question_number="2(e)",
+        title="Atomic structure",
+        prompt="Place one electron on the diagram.",
+        question_type=AssessmentQuestionType.DIAGRAM_ANNOTATION.value,
+        interaction_config=interaction_config,
+        maximum_mark=Decimal("1"),
+        order=1,
+        is_markable=True,
+    )
+    db_session.add(question)
+    await db_session.commit()
+    await db_session.refresh(question)
+
+    option = AssessmentQuestionOption(
+        question_id=question.id,
+        text="Learner-visible option",
+        order=1,
+        is_correct=True,
+        feedback="Internal marking feedback.",
+    )
+    db_session.add(option)
+    await db_session.commit()
+    await db_session.refresh(option)
+
+    asset_bytes = b"immutable-snapshot-asset"
+    asset_path = (
+        assessment_upload_root
+        / str(teacher_user.school_id)
+        / str(assessment.id)
+        / "question-extraction-assets"
+        / "document-1"
+        / "v1"
+        / "snapshot.png"
+    )
+    asset_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    asset_path.write_bytes(
+        asset_bytes,
+    )
+
+    asset = await _create_asset(
+        db_session,
+        question_id=question.id,
+        storage_path=asset_path,
+    )
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="taking.snapshot.immutable@example.com",
+    )
+    candidate = await _allocate_candidate(
+        db_session,
+        assessment_id=assessment.id,
+        student_id=student.id,
+    )
+
+    first = await _start_attempt(
+        client,
+        assessment_id=assessment.id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    assert first.json()["message"] == "Assessment started."
+
+    script_result = await db_session.execute(
+        select(AssessmentScript).where(
+            AssessmentScript.candidate_id == candidate.id,
+            AssessmentScript.source_type == "browser",
+        )
+    )
+    script = script_result.scalar_one()
+
+    snapshot_result = await db_session.execute(
+        select(AssessmentQuestionSnapshot).where(
+            AssessmentQuestionSnapshot.script_id == script.id,
+            AssessmentQuestionSnapshot.question_id == question.id,
+        )
+    )
+    snapshot = snapshot_result.scalar_one()
+
+    assert snapshot.question_number == "2(e)"
+    assert snapshot.title == "Atomic structure"
+    assert snapshot.prompt == "Place one electron on the diagram."
+    assert snapshot.question_type == AssessmentQuestionType.DIAGRAM_ANNOTATION.value
+    assert snapshot.interaction_config_snapshot == interaction_config
+    assert snapshot.maximum_mark == Decimal("1.00")
+    assert snapshot.order == 1
+    assert snapshot.is_markable is True
+
+    assert snapshot.section_snapshot == {
+        "id": section.id,
+        "title": "Section A",
+        "description": "Answer all questions.",
+        "order": 1,
+        "is_optional": False,
+    }
+
+    assert snapshot.options_snapshot == [
+        {
+            "id": option.id,
+            "text": "Learner-visible option",
+            "order": 1,
+        }
+    ]
+
+    assert len(snapshot.assets_snapshot) == 1
+
+    asset_snapshot = snapshot.assets_snapshot[0]
+
+    assert asset_snapshot["id"] == asset.id
+    assert asset_snapshot["asset_type"] == AssessmentQuestionAssetType.FIGURE.value
+    assert asset_snapshot["storage_path"] == str(asset_path)
+    assert asset_snapshot["sha256"] == hashlib.sha256(asset_bytes).hexdigest()
+    assert asset_snapshot["original_filename"] == "snapshot.png"
+    assert asset_snapshot["mime_type"] == "image/png"
+    assert asset_snapshot["file_size_bytes"] == len(asset_bytes)
+    assert asset_snapshot["alt_text"] == "Assessment diagram."
+    assert asset_snapshot["caption"] is None
+    assert asset_snapshot["order"] == 1
+
+    # Marking-only option data must never enter the learner-facing snapshot.
+    assert "is_correct" not in snapshot.options_snapshot[0]
+    assert "feedback" not in snapshot.options_snapshot[0]
+
+    # Change the live canonical content after the attempt has started.
+    question.prompt = "CHANGED LIVE PROMPT"
+    question.interaction_config = {
+        "version": 1,
+        "mode": "visual_annotation",
+        "palette_id": "chemistry.atomic_structure",
+        "palette_label": "CHANGED LIVE PALETTE",
+        "coordinate_system": "normalized",
+        "snap_to_grid": False,
+        "tools": [
+            {
+                "tool_id": "electron",
+                "tool_type": "symbol",
+                "symbol": "×",
+                "label": "CHANGED LIVE ELECTRON",
+            },
+        ],
+        "allow_undo": True,
+        "allow_clear": True,
+    }
+    option.text = "CHANGED LIVE OPTION"
+    section.title = "CHANGED LIVE SECTION"
+
+    db_session.add_all(
+        [
+            question,
+            option,
+            section,
+        ]
+    )
+    await db_session.commit()
+
+    second = await _start_attempt(
+        client,
+        assessment_id=assessment.id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    assert second.json()["message"] == "Assessment resumed."
+    assert second.json()["script"]["id"] == script.id
+
+    snapshots_result = await db_session.execute(
+        select(AssessmentQuestionSnapshot).where(
+            AssessmentQuestionSnapshot.script_id == script.id,
+        )
+    )
+    snapshots = list(
+        snapshots_result.scalars().all(),
+    )
+
+    assert len(snapshots) == 1
+
+    persisted = snapshots[0]
+
+    assert persisted.prompt == "Place one electron on the diagram."
+    assert persisted.interaction_config_snapshot == interaction_config
+    assert persisted.section_snapshot["title"] == "Section A"
+    assert persisted.options_snapshot[0]["text"] == "Learner-visible option"
+    assert persisted.assets_snapshot[0]["sha256"] == hashlib.sha256(
+        asset_bytes,
+    ).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_started_attempt_asset_delivery_uses_snapshot_and_detects_file_drift(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+        title="Immutable Asset Delivery Assessment",
+    )
+
+    question = await _create_question(
+        db_session,
+        assessment_id=assessment.id,
+        prompt="Use the immutable diagram.",
+    )
+
+    original_bytes = b"original-snapshotted-asset"
+
+    original_path = (
+        assessment_upload_root
+        / str(teacher_user.school_id)
+        / str(assessment.id)
+        / "question-extraction-assets"
+        / "document-1"
+        / "v1"
+        / "original.png"
+    )
+    original_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    original_path.write_bytes(
+        original_bytes,
+    )
+
+    asset = await _create_asset(
+        db_session,
+        question_id=question.id,
+        storage_path=original_path,
+    )
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="taking.snapshot.asset.integrity@example.com",
+    )
+
+    await _allocate_candidate(
+        db_session,
+        assessment_id=assessment.id,
+        student_id=student.id,
+    )
+
+    await _start_attempt(
+        client,
+        assessment_id=assessment.id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    # Confirm the original snapshotted asset is delivered.
+    first_delivery = await client.get(
+        (
+            f"/api/v1/student-assessments/{assessment.id}"
+            f"/questions/{question.id}/assets/{asset.id}/content"
+        ),
+        headers=auth_headers(student),
+    )
+
+    assert first_delivery.status_code == 200, first_delivery.text
+    assert first_delivery.content == original_bytes
+
+    # Change the mutable canonical asset row to point at another valid file.
+    replacement_bytes = b"replacement-live-canonical-asset"
+
+    replacement_path = (
+        assessment_upload_root
+        / str(teacher_user.school_id)
+        / str(assessment.id)
+        / "question-extraction-assets"
+        / "document-1"
+        / "v2"
+        / "replacement.png"
+    )
+    replacement_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    replacement_path.write_bytes(
+        replacement_bytes,
+    )
+
+    asset.storage_path = str(replacement_path)
+    asset.original_filename = "replacement.png"
+    asset.mime_type = "image/png"
+    asset.file_size_bytes = len(replacement_bytes)
+
+    db_session.add(asset)
+    await db_session.commit()
+
+    # Delivery must still use the immutable path/checksum captured at start,
+    # not the newly edited canonical asset row.
+    second_delivery = await client.get(
+        (
+            f"/api/v1/student-assessments/{assessment.id}"
+            f"/questions/{question.id}/assets/{asset.id}/content"
+        ),
+        headers=auth_headers(student),
+    )
+
+    assert second_delivery.status_code == 200, second_delivery.text
+    assert second_delivery.content == original_bytes
+    assert second_delivery.content != replacement_bytes
+
+    # Now alter the actual file referenced by the immutable snapshot.
+    # The stored SHA-256 must detect this historical-content drift.
+    original_path.write_bytes(
+        b"tampered-after-start",
+    )
+
+    drifted_delivery = await client.get(
+        (
+            f"/api/v1/student-assessments/{assessment.id}"
+            f"/questions/{question.id}/assets/{asset.id}/content"
+        ),
+        headers=auth_headers(student),
+    )
+
+    assert drifted_delivery.status_code == 409
+    assert (
+        "no longer matches the immutable attempt snapshot"
+        in drifted_delivery.text
+    )
+
+
+@pytest.mark.asyncio
 async def test_attempt_exposes_safe_asset_metadata_only(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -594,6 +977,185 @@ async def test_student_can_autosave_written_response(
     assert "script_id" not in data
     assert "source_reference" not in data
     assert "marking_decision" not in data
+
+
+@pytest.mark.asyncio
+async def test_started_attempt_response_validation_uses_immutable_snapshot(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_upload_root: Path,
+):
+    assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+        title="Immutable Response Validation Assessment",
+    )
+
+    original_interaction_config = {
+        "version": 1,
+        "mode": "visual_annotation",
+        "palette_id": "chemistry.atomic_structure",
+        "palette_label": "Atomic structure",
+        "coordinate_system": "normalized",
+        "snap_to_grid": False,
+        "tools": [
+            {
+                "tool_id": "electron",
+                "tool_type": "symbol",
+                "symbol": "×",
+                "label": "electron",
+            },
+        ],
+        "allow_undo": True,
+        "allow_clear": True,
+    }
+
+    question = await _create_question(
+        db_session,
+        assessment_id=assessment.id,
+        question_number="1",
+        prompt="Place the electron.",
+        question_type=AssessmentQuestionType.DIAGRAM_ANNOTATION,
+        interaction_config=original_interaction_config,
+    )
+
+    asset_path = (
+        assessment_upload_root
+        / str(teacher_user.school_id)
+        / str(assessment.id)
+        / "question-extraction-assets"
+        / "document-1"
+        / "v1"
+        / "immutable-response.png"
+    )
+    asset_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    asset_path.write_bytes(
+        b"immutable-response-asset",
+    )
+
+    asset = await _create_asset(
+        db_session,
+        question_id=question.id,
+        storage_path=asset_path,
+    )
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="taking.snapshot.response.validation@example.com",
+    )
+
+    await _allocate_candidate(
+        db_session,
+        assessment_id=assessment.id,
+        student_id=student.id,
+    )
+
+    await _start_attempt(
+        client,
+        assessment_id=assessment.id,
+        student=student,
+        auth_headers=auth_headers,
+    )
+
+    # Mutate the live canonical state after the immutable snapshot exists.
+    #
+    # If autosave were still validating against the live question:
+    # - diagram data would now be invalid because the type is written;
+    # - × would no longer be in the configured palette;
+    # - the original asset would no longer be candidate-visible.
+    question.question_type = AssessmentQuestionType.WRITTEN.value
+    question.interaction_config = {
+        "version": 1,
+        "mode": "visual_annotation",
+        "palette_id": "chemistry.atomic_structure",
+        "palette_label": "Changed live palette",
+        "coordinate_system": "normalized",
+        "snap_to_grid": False,
+        "tools": [
+            {
+                "tool_id": "proton",
+                "tool_type": "symbol",
+                "symbol": "○",
+                "label": "proton",
+            },
+        ],
+        "allow_undo": True,
+        "allow_clear": True,
+    }
+    asset.candidate_visible = False
+
+    db_session.add_all(
+        [
+            question,
+            asset,
+        ]
+    )
+    await db_session.commit()
+
+    # The original snapshotted interaction remains authoritative.
+    original_snapshot_response = await client.put(
+        f"/api/v1/student-assessments/{assessment.id}/responses/{question.id}",
+        json={
+            "response_data": {
+                "type": "diagram_annotation",
+                "version": 1,
+                "asset_id": asset.id,
+                "annotations": [
+                    {
+                        "id": "annotation-electron",
+                        "symbol": "×",
+                        "x": 0.35,
+                        "y": 0.45,
+                    }
+                ],
+            },
+        },
+        headers=auth_headers(student),
+    )
+
+    assert original_snapshot_response.status_code == 200, (
+        original_snapshot_response.text
+    )
+
+    stored = json.loads(
+        original_snapshot_response.json()["response_data"],
+    )
+
+    assert stored["asset_id"] == asset.id
+    assert stored["annotations"][0]["symbol"] == "×"
+
+    # The newly edited canonical palette must NOT become authoritative.
+    changed_live_palette_response = await client.put(
+        f"/api/v1/student-assessments/{assessment.id}/responses/{question.id}",
+        json={
+            "response_data": {
+                "type": "diagram_annotation",
+                "version": 1,
+                "asset_id": asset.id,
+                "annotations": [
+                    {
+                        "id": "annotation-proton",
+                        "symbol": "○",
+                        "x": 0.50,
+                        "y": 0.50,
+                    }
+                ],
+            },
+        },
+        headers=auth_headers(student),
+    )
+
+    assert changed_live_palette_response.status_code == 422
+    assert (
+        "symbol that is not permitted"
+        in changed_live_palette_response.text
+    )
 
 
 @pytest.mark.asyncio

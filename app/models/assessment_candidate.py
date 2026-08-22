@@ -23,6 +23,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.assessment import Assessment
+    from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
     from app.models.assessment_response import AssessmentResponse
     from app.models.user import User
 
@@ -383,6 +384,14 @@ class AssessmentScript(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
         order_by="AssessmentResponse.question_id",
+    )
+
+    question_snapshots: Mapped[list["AssessmentQuestionSnapshot"]] = relationship(
+        "AssessmentQuestionSnapshot",
+        back_populates="script",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="AssessmentQuestionSnapshot.order",
     )
 
     # ------------------------------------------------------------------

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from app.models.assessment_question import (
     AssessmentQuestion,
     AssessmentQuestionType,
 )
+from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -626,6 +628,214 @@ async def _get_script_response_safe(
     return result.scalar_one_or_none()
 
 
+def _sha256_file(
+    path: Path,
+) -> str:
+    """
+    Return the SHA-256 digest for one immutable attempt asset.
+
+    Files are read incrementally so large diagrams/resources do not need to be
+    loaded into memory in one operation.
+    """
+
+    digest = hashlib.sha256()
+
+    with path.open("rb") as file_handle:
+        for chunk in iter(
+            lambda: file_handle.read(1024 * 1024),
+            b"",
+        ):
+            digest.update(
+                chunk,
+            )
+
+    return digest.hexdigest()
+
+
+async def _ensure_question_snapshots(
+    db: AsyncSession,
+    *,
+    script: AssessmentScript,
+    assessment: Assessment,
+    questions: list[AssessmentQuestion],
+) -> None:
+    """
+    Ensure one immutable learner-facing question snapshot exists per script.
+
+    Snapshot creation is idempotent and occurs inside the caller's transaction.
+
+    Candidate-visible question, section and option content comes from the
+    restrictive learner-safe question query. Server-only asset storage metadata
+    is loaded separately so internal storage paths are never introduced into
+    candidate-facing ORM loading.
+
+    Existing snapshot rows are never updated.
+    """
+
+    existing_result = await db.execute(
+        select(
+            AssessmentQuestionSnapshot.question_id,
+        ).where(
+            AssessmentQuestionSnapshot.script_id == script.id,
+        )
+    )
+
+    existing_question_ids = set(
+        existing_result.scalars().all(),
+    )
+
+    missing_questions = [
+        question
+        for question in questions
+        if question.id not in existing_question_ids
+    ]
+
+    if not missing_questions:
+        return
+
+    internal_assets = await AssessmentQuestionRepository(
+        db,
+    ).list_candidate_visible_assets_by_assessment_and_school(
+        assessment_id=assessment.id,
+        school_id=assessment.school_id,
+    )
+
+    assets_by_question_id: dict[int, list[object]] = {}
+
+    for asset in internal_assets:
+        assets_by_question_id.setdefault(
+            asset.question_id,
+            [],
+        ).append(
+            asset,
+        )
+
+    expected_root = (
+        Path(
+            assessment_document_service.ASSESSMENT_UPLOAD_ROOT,
+        )
+        / str(assessment.school_id)
+        / str(assessment.id)
+    ).resolve()
+
+    snapshots: list[AssessmentQuestionSnapshot] = []
+
+    for question in missing_questions:
+        section_snapshot = None
+
+        if question.section is not None:
+            section_snapshot = {
+                "id": question.section.id,
+                "title": question.section.title,
+                "description": question.section.description,
+                "order": question.section.order,
+                "is_optional": question.section.is_optional,
+            }
+
+        options_snapshot = [
+            {
+                "id": option.id,
+                "text": option.text,
+                "order": option.order,
+            }
+            for option in sorted(
+                question.options,
+                key=lambda option: (
+                    option.order,
+                    option.id,
+                ),
+            )
+        ]
+
+        assets_snapshot: list[dict[str, object]] = []
+
+        for asset in assets_by_question_id.get(
+            question.id,
+            [],
+        ):
+            storage_path = asset.storage_path
+
+            if not isinstance(storage_path, str) or not storage_path.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Assessment question asset cannot be snapshotted "
+                        "because its storage path is unavailable."
+                    ),
+                )
+
+            asset_path = Path(
+                storage_path,
+            ).resolve()
+
+            asset_is_authorised = True
+
+            try:
+                asset_path.relative_to(
+                    expected_root,
+                )
+            except ValueError:
+                asset_is_authorised = False
+
+            asset_is_available = (
+                asset_is_authorised
+                and asset_path.exists()
+                and asset_path.is_file()
+            )
+
+            asset_sha256 = (
+                _sha256_file(asset_path)
+                if asset_is_available
+                else None
+            )
+
+            actual_file_size = (
+                asset_path.stat().st_size
+                if asset_is_available
+                else asset.file_size_bytes
+            )
+
+            assets_snapshot.append(
+                {
+                    "id": asset.id,
+                    "asset_type": asset.asset_type,
+                    "storage_path": storage_path,
+                    "sha256": asset_sha256,
+                    "original_filename": asset.original_filename,
+                    "mime_type": asset.mime_type,
+                    "file_size_bytes": actual_file_size,
+                    "alt_text": asset.alt_text,
+                    "caption": asset.caption,
+                    "order": asset.order,
+                }
+            )
+
+        snapshots.append(
+            AssessmentQuestionSnapshot(
+                script_id=script.id,
+                question_id=question.id,
+                parent_question_id_snapshot=question.parent_question_id,
+                question_number=question.question_number,
+                title=question.title,
+                prompt=question.prompt,
+                question_type=question.question_type,
+                interaction_config_snapshot=question.interaction_config,
+                maximum_mark=question.maximum_mark,
+                order=question.order,
+                is_markable=question.is_markable,
+                section_snapshot=section_snapshot,
+                options_snapshot=options_snapshot,
+                assets_snapshot=assets_snapshot,
+            )
+        )
+
+    if snapshots:
+        db.add_all(
+            snapshots,
+        )
+        await db.flush()
+
+
 async def _ensure_response_rows(
     db: AsyncSession,
     *,
@@ -705,22 +915,89 @@ def _parse_json_object(
     return decoded
 
 
+async def _get_question_snapshot_safe(
+    db: AsyncSession,
+    *,
+    script_id: int,
+    question_id: int,
+) -> AssessmentQuestionSnapshot | None:
+    """
+    Return one immutable question snapshot for one script/question pair.
+
+    Relationships remain unavailable because response validation requires only
+    fields stored directly on the snapshot row.
+    """
+
+    statement = (
+        select(
+            AssessmentQuestionSnapshot,
+        )
+        .where(
+            AssessmentQuestionSnapshot.script_id == script_id,
+            AssessmentQuestionSnapshot.question_id == question_id,
+        )
+        .options(
+            raiseload("*"),
+            load_only(
+                AssessmentQuestionSnapshot.id,
+                AssessmentQuestionSnapshot.script_id,
+                AssessmentQuestionSnapshot.question_id,
+                AssessmentQuestionSnapshot.question_type,
+                AssessmentQuestionSnapshot.interaction_config_snapshot,
+                AssessmentQuestionSnapshot.is_markable,
+                AssessmentQuestionSnapshot.assets_snapshot,
+            ),
+        )
+    )
+
+    result = await db.execute(
+        statement,
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def _script_has_question_snapshots(
+    db: AsyncSession,
+    *,
+    script_id: int,
+) -> bool:
+    """
+    Return True when immutable question snapshots exist for this script.
+    """
+
+    result = await db.execute(
+        select(
+            AssessmentQuestionSnapshot.id,
+        )
+        .where(
+            AssessmentQuestionSnapshot.script_id == script_id,
+        )
+        .limit(1)
+    )
+
+    return result.scalar_one_or_none() is not None
+
+
 def _validate_response_for_question(
     *,
-    question: AssessmentQuestion,
+    question: AssessmentQuestion | AssessmentQuestionSnapshot,
     response_text: str | None,
     response_data: str | None,
 ) -> tuple[str | None, str | None]:
     """
-    Validate learner response content against the canonical question type.
+    Validate learner response content against immutable attempt state.
+
+    New browser attempts use ``AssessmentQuestionSnapshot`` as the authoritative
+    validation source. Canonical ``AssessmentQuestion`` support remains only for
+    legacy scripts created before snapshot support was introduced.
 
     Diagram annotations receive additional integrity checks:
 
     - pure diagram responses may not carry response_text;
     - response_data must be the versioned diagram-annotation object;
-    - the referenced asset must belong to this exact question;
-    - the asset must be candidate-visible, which is guaranteed by the
-      candidate-safe question query.
+    - the referenced asset must belong to this exact candidate-visible question;
+    - configured symbol palettes remain authoritative for permitted annotations.
     """
 
     clean_text = _clean_optional_text(
@@ -730,8 +1007,37 @@ def _validate_response_for_question(
         response_data,
     )
 
+    if isinstance(
+        question,
+        AssessmentQuestionSnapshot,
+    ):
+        question_type_value = question.question_type
+        interaction_config = question.interaction_config_snapshot
+
+        assets_snapshot = (
+            question.assets_snapshot
+            if isinstance(question.assets_snapshot, list)
+            else []
+        )
+
+        visible_asset_ids = {
+            asset_id
+            for item in assets_snapshot
+            if isinstance(item, dict)
+            and isinstance((asset_id := item.get("id")), int)
+            and not isinstance(asset_id, bool)
+        }
+
+    else:
+        question_type_value = question.question_type
+        interaction_config = question.interaction_config
+        visible_asset_ids = {
+            asset.id
+            for asset in question.assets
+        }
+
     question_type = AssessmentQuestionType(
-        question.question_type,
+        question_type_value,
     )
 
     if question_type == AssessmentQuestionType.DIAGRAM_ANNOTATION:
@@ -760,8 +1066,6 @@ def _validate_response_for_question(
                 detail="Invalid diagram-annotation response data.",
             ) from exc
 
-        visible_asset_ids = {asset.id for asset in question.assets}
-
         if payload.asset_id not in visible_asset_ids:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -770,8 +1074,6 @@ def _validate_response_for_question(
                     "belong to this candidate-visible question."
                 ),
             )
-
-        interaction_config = question.interaction_config
 
         if interaction_config is not None:
             if not isinstance(interaction_config, dict):
@@ -1023,6 +1325,263 @@ def _build_script_out(
     )
 
 
+async def _list_question_snapshots_safe(
+    db: AsyncSession,
+    *,
+    script_id: int,
+) -> list[AssessmentQuestionSnapshot]:
+    """
+    Return immutable learner-facing question snapshots for one script.
+
+    Snapshot relationships are deliberately unavailable. All learner-visible
+    section, option and asset metadata required for rendering is already frozen
+    directly on the snapshot row.
+    """
+
+    statement = (
+        select(
+            AssessmentQuestionSnapshot,
+        )
+        .where(
+            AssessmentQuestionSnapshot.script_id == script_id,
+        )
+        .order_by(
+            AssessmentQuestionSnapshot.order.asc(),
+            AssessmentQuestionSnapshot.id.asc(),
+        )
+        .options(
+            raiseload("*"),
+            load_only(
+                AssessmentQuestionSnapshot.id,
+                AssessmentQuestionSnapshot.script_id,
+                AssessmentQuestionSnapshot.question_id,
+                AssessmentQuestionSnapshot.parent_question_id_snapshot,
+                AssessmentQuestionSnapshot.question_number,
+                AssessmentQuestionSnapshot.title,
+                AssessmentQuestionSnapshot.prompt,
+                AssessmentQuestionSnapshot.question_type,
+                AssessmentQuestionSnapshot.interaction_config_snapshot,
+                AssessmentQuestionSnapshot.maximum_mark,
+                AssessmentQuestionSnapshot.order,
+                AssessmentQuestionSnapshot.is_markable,
+                AssessmentQuestionSnapshot.section_snapshot,
+                AssessmentQuestionSnapshot.options_snapshot,
+                AssessmentQuestionSnapshot.assets_snapshot,
+                AssessmentQuestionSnapshot.created_at,
+            ),
+        )
+    )
+
+    result = await db.execute(
+        statement,
+    )
+
+    return list(
+        result.scalars().all(),
+    )
+
+
+def _build_snapshot_asset_out(
+    *,
+    assessment_id: int,
+    question_id: int,
+    asset_snapshot: dict[str, object],
+) -> AssessmentTakingAssetOut:
+    """
+    Build learner-safe asset metadata from immutable snapshot data.
+
+    Internal storage paths and checksums remain server-only and are never
+    included in the candidate response.
+    """
+
+    asset_id = asset_snapshot.get("id")
+    asset_type = asset_snapshot.get("asset_type")
+    order = asset_snapshot.get("order")
+
+    if not isinstance(asset_id, int) or isinstance(asset_id, bool):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment question snapshot contains an invalid asset id.",
+        )
+
+    if not isinstance(asset_type, str) or not asset_type.strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment question snapshot contains an invalid asset type.",
+        )
+
+    if not isinstance(order, int) or isinstance(order, bool):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment question snapshot contains an invalid asset order.",
+        )
+
+    alt_text = asset_snapshot.get("alt_text")
+    caption = asset_snapshot.get("caption")
+
+    return AssessmentTakingAssetOut(
+        id=asset_id,
+        asset_type=asset_type,
+        alt_text=alt_text if isinstance(alt_text, str) else None,
+        caption=caption if isinstance(caption, str) else None,
+        order=order,
+        content_url=(
+            f"/api/v1/student-assessments/{assessment_id}"
+            f"/questions/{question_id}/assets/{asset_id}/content"
+        ),
+    )
+
+
+def _build_snapshot_question_out(
+    *,
+    assessment_id: int,
+    snapshot: AssessmentQuestionSnapshot,
+) -> AssessmentTakingQuestionOut:
+    """
+    Convert one immutable question snapshot into the existing learner schema.
+    """
+
+    section_id = None
+
+    if isinstance(snapshot.section_snapshot, dict):
+        raw_section_id = snapshot.section_snapshot.get("id")
+
+        if isinstance(raw_section_id, int) and not isinstance(
+            raw_section_id,
+            bool,
+        ):
+            section_id = raw_section_id
+
+    options_snapshot = (
+        snapshot.options_snapshot
+        if isinstance(snapshot.options_snapshot, list)
+        else []
+    )
+
+    assets_snapshot = (
+        snapshot.assets_snapshot
+        if isinstance(snapshot.assets_snapshot, list)
+        else []
+    )
+
+    safe_options: list[dict[str, object]] = [
+        item
+        for item in options_snapshot
+        if isinstance(item, dict)
+    ]
+
+    safe_assets: list[dict[str, object]] = [
+        item
+        for item in assets_snapshot
+        if isinstance(item, dict)
+    ]
+
+    return AssessmentTakingQuestionOut(
+        id=snapshot.question_id,
+        assessment_id=assessment_id,
+        section_id=section_id,
+        parent_question_id=snapshot.parent_question_id_snapshot,
+        question_number=snapshot.question_number,
+        title=snapshot.title,
+        prompt=snapshot.prompt,
+        question_type=snapshot.question_type,
+        interaction_config=snapshot.interaction_config_snapshot,
+        maximum_mark=snapshot.maximum_mark,
+        order=snapshot.order,
+        is_markable=snapshot.is_markable,
+        options=[
+            AssessmentTakingOptionOut(
+                id=int(option["id"]),
+                text=str(option["text"]),
+                order=int(option["order"]),
+            )
+            for option in sorted(
+                safe_options,
+                key=lambda item: (
+                    int(item.get("order", 0)),
+                    int(item.get("id", 0)),
+                ),
+            )
+        ],
+        assets=[
+            _build_snapshot_asset_out(
+                assessment_id=assessment_id,
+                question_id=snapshot.question_id,
+                asset_snapshot=asset_snapshot,
+            )
+            for asset_snapshot in sorted(
+                safe_assets,
+                key=lambda item: (
+                    int(item.get("order", 0)),
+                    int(item.get("id", 0)),
+                ),
+            )
+        ],
+    )
+
+
+def _build_snapshot_sections_out(
+    *,
+    assessment_id: int,
+    snapshots: list[AssessmentQuestionSnapshot],
+) -> list[AssessmentTakingSectionOut]:
+    """
+    Reconstruct learner-visible sections entirely from immutable snapshots.
+    """
+
+    by_id: dict[int, AssessmentTakingSectionOut] = {}
+
+    for snapshot in snapshots:
+        section = snapshot.section_snapshot
+
+        if not isinstance(section, dict):
+            continue
+
+        section_id = section.get("id")
+        title = section.get("title")
+        order = section.get("order")
+        is_optional = section.get("is_optional")
+
+        if (
+            not isinstance(section_id, int)
+            or isinstance(section_id, bool)
+            or not isinstance(title, str)
+            or not isinstance(order, int)
+            or isinstance(order, bool)
+            or not isinstance(is_optional, bool)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Assessment question snapshot contains invalid section metadata.",
+            )
+
+        if section_id in by_id:
+            continue
+
+        description = section.get("description")
+
+        by_id[section_id] = AssessmentTakingSectionOut(
+            id=section_id,
+            assessment_id=assessment_id,
+            title=title,
+            description=(
+                description
+                if isinstance(description, str)
+                else None
+            ),
+            order=order,
+            is_optional=is_optional,
+        )
+
+    return sorted(
+        by_id.values(),
+        key=lambda section: (
+            section.order,
+            section.id,
+        ),
+    )
+
+
 async def _build_attempt(
     db: AsyncSession,
     *,
@@ -1031,18 +1590,54 @@ async def _build_attempt(
     script: AssessmentScript,
 ) -> StudentAssessmentAttemptOut:
     """
-    Assemble a complete candidate-safe attempt from restricted queries.
+    Assemble a complete candidate-safe attempt.
+
+    Immutable question snapshots are authoritative whenever they exist for the
+    script. Canonical-question rendering remains only as a compatibility
+    fallback for browser scripts created before snapshot support was introduced.
     """
 
-    questions = await _list_candidate_questions(
+    snapshots = await _list_question_snapshots_safe(
         db,
-        assessment=assessment,
+        script_id=script.id,
     )
 
     responses = await _list_script_responses_safe(
         db,
         script_id=script.id,
     )
+
+    if snapshots:
+        sections = _build_snapshot_sections_out(
+            assessment_id=assessment.id,
+            snapshots=snapshots,
+        )
+
+        question_outputs = [
+            _build_snapshot_question_out(
+                assessment_id=assessment.id,
+                snapshot=snapshot,
+            )
+            for snapshot in snapshots
+        ]
+
+    else:
+        questions = await _list_candidate_questions(
+            db,
+            assessment=assessment,
+        )
+
+        sections = _build_sections_out(
+            questions,
+        )
+
+        question_outputs = [
+            _build_question_out(
+                assessment_id=assessment.id,
+                question=question,
+            )
+            for question in questions
+        ]
 
     return StudentAssessmentAttemptOut(
         assessment_id=assessment.id,
@@ -1060,16 +1655,8 @@ async def _build_attempt(
         script=_build_script_out(
             script,
         ),
-        sections=_build_sections_out(
-            questions,
-        ),
-        questions=[
-            _build_question_out(
-                assessment_id=assessment.id,
-                question=question,
-            )
-            for question in questions
-        ],
+        sections=sections,
+        questions=question_outputs,
         responses=[
             _build_response_out(
                 response,
@@ -1127,35 +1714,133 @@ async def resolve_student_assessment_asset_path(
             detail="Assessment asset is available only during an active attempt.",
         )
 
-    _ensure_active_browser_script(
+    script = _ensure_active_browser_script(
         await _get_latest_browser_script(
             db,
             candidate_id=candidate.id,
         )
     )
 
-    asset = await AssessmentQuestionRepository(
+    snapshots = await _list_question_snapshots_safe(
         db,
-    ).get_candidate_visible_asset_by_question_assessment_and_school(
-        asset_id=asset_id,
-        question_id=question_id,
-        assessment_id=assessment.id,
-        school_id=assessment.school_id,
+        script_id=script.id,
     )
 
-    if asset is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Assessment question asset not found.",
+    storage_path: str
+    mime_type_value: object
+    original_filename_value: object
+    expected_sha256: str | None = None
+
+    if snapshots:
+        question_snapshot = next(
+            (
+                snapshot
+                for snapshot in snapshots
+                if snapshot.question_id == question_id
+            ),
+            None,
         )
 
-    storage_path = asset.storage_path
+        if question_snapshot is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment question asset not found.",
+            )
 
-    if not isinstance(storage_path, str) or not storage_path.strip():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Assessment question asset file is not available.",
+        assets_snapshot = (
+            question_snapshot.assets_snapshot
+            if isinstance(question_snapshot.assets_snapshot, list)
+            else []
         )
+
+        asset_snapshot = next(
+            (
+                item
+                for item in assets_snapshot
+                if (
+                    isinstance(item, dict)
+                    and item.get("id") == asset_id
+                )
+            ),
+            None,
+        )
+
+        if asset_snapshot is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment question asset not found.",
+            )
+
+        snapshot_storage_path = asset_snapshot.get(
+            "storage_path",
+        )
+
+        if (
+            not isinstance(snapshot_storage_path, str)
+            or not snapshot_storage_path.strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment question asset file is not available.",
+            )
+
+        storage_path = snapshot_storage_path
+        mime_type_value = asset_snapshot.get(
+            "mime_type",
+        )
+        original_filename_value = asset_snapshot.get(
+            "original_filename",
+        )
+
+        raw_sha256 = asset_snapshot.get(
+            "sha256",
+        )
+
+        if raw_sha256 is not None:
+            if (
+                not isinstance(raw_sha256, str)
+                or len(raw_sha256) != 64
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Assessment question snapshot contains an invalid "
+                        "asset checksum."
+                    ),
+                )
+
+            expected_sha256 = raw_sha256.lower()
+
+    else:
+        # Compatibility path for browser scripts created before immutable
+        # question snapshots were introduced.
+        asset = await AssessmentQuestionRepository(
+            db,
+        ).get_candidate_visible_asset_by_question_assessment_and_school(
+            asset_id=asset_id,
+            question_id=question_id,
+            assessment_id=assessment.id,
+            school_id=assessment.school_id,
+        )
+
+        if asset is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment question asset not found.",
+            )
+
+        if (
+            not isinstance(asset.storage_path, str)
+            or not asset.storage_path.strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment question asset file is not available.",
+            )
+
+        storage_path = asset.storage_path
+        mime_type_value = asset.mime_type
+        original_filename_value = asset.original_filename
 
     expected_root = (
         Path(
@@ -1188,17 +1873,34 @@ async def resolve_student_assessment_asset_path(
             detail="Assessment question asset file was not found.",
         )
 
+    if expected_sha256 is not None:
+        actual_sha256 = _sha256_file(
+            asset_path,
+        )
+
+        if actual_sha256.lower() != expected_sha256:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Assessment question asset no longer matches the "
+                    "immutable attempt snapshot."
+                ),
+            )
+
     mime_type = (
-        asset.mime_type.strip()
-        if isinstance(asset.mime_type, str) and asset.mime_type.strip()
+        mime_type_value.strip()
+        if (
+            isinstance(mime_type_value, str)
+            and mime_type_value.strip()
+        )
         else "application/octet-stream"
     )
 
     download_name = (
-        asset.original_filename.strip()
+        original_filename_value.strip()
         if (
-            isinstance(asset.original_filename, str)
-            and asset.original_filename.strip()
+            isinstance(original_filename_value, str)
+            and original_filename_value.strip()
         )
         else None
     )
@@ -1457,6 +2159,13 @@ async def start_student_assessment(
             assessment=assessment,
         )
 
+        await _ensure_question_snapshots(
+            db,
+            script=script,
+            assessment=assessment,
+            questions=questions,
+        )
+
         await _ensure_response_rows(
             db,
             script=script,
@@ -1587,14 +2296,49 @@ async def save_student_assessment_response(
             )
         )
 
-        question = await _get_candidate_question(
+        question_snapshot = await _get_question_snapshot_safe(
             db,
-            assessment=assessment,
+            script_id=script.id,
             question_id=question_id,
         )
 
+        if question_snapshot is not None:
+            if not question_snapshot.is_markable:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This assessment item does not accept a student response.",
+                )
+
+            validation_question: AssessmentQuestion | AssessmentQuestionSnapshot = (
+                question_snapshot
+            )
+            response_question_id = question_snapshot.question_id
+
+        else:
+            if await _script_has_question_snapshots(
+                db,
+                script_id=script.id,
+            ):
+                # A snapshotted script must never fall through to newly added,
+                # removed, or otherwise changed canonical question state.
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Assessment question not found.",
+                )
+
+            # Compatibility path for browser scripts created before immutable
+            # question snapshots were introduced.
+            canonical_question = await _get_candidate_question(
+                db,
+                assessment=assessment,
+                question_id=question_id,
+            )
+
+            validation_question = canonical_question
+            response_question_id = canonical_question.id
+
         response_text, response_data = _validate_response_for_question(
-            question=question,
+            question=validation_question,
             response_text=payload.response_text,
             response_data=payload.response_data,
         )
@@ -1602,14 +2346,14 @@ async def save_student_assessment_response(
         response = await _get_script_response_safe(
             db,
             script_id=script.id,
-            question_id=question.id,
+            question_id=response_question_id,
             for_update=True,
         )
 
         if response is None:
             response = AssessmentResponse(
                 script_id=script.id,
-                question_id=question.id,
+                question_id=response_question_id,
                 status=AssessmentResponseStatus.NOT_STARTED,
                 response_text=None,
                 response_data=None,

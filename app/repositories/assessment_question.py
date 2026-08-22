@@ -941,6 +941,84 @@ class AssessmentQuestionRepository:
 
         return result.scalar_one_or_none()
 
+    async def list_candidate_visible_assets_by_assessment_and_school(
+        self,
+        *,
+        assessment_id: int,
+        school_id: int,
+    ) -> list[AssessmentQuestionAsset]:
+        """
+        Return server-side metadata for every candidate-visible asset in one
+        assessment and school.
+
+        This bulk lookup exists for trusted server workflows such as immutable
+        attempt snapshot creation. Unlike learner-facing question loaders, it
+        deliberately includes storage metadata required to identify and verify
+        the underlying files.
+
+        Storage paths and related internal fields returned here must never be
+        serialised directly into candidate-facing API responses.
+
+        ORM relationships remain unavailable through ``raiseload("*")``.
+        """
+
+        self._validate_positive_integer(
+            assessment_id,
+            "assessment_id",
+        )
+        self._validate_positive_integer(
+            school_id,
+            "school_id",
+        )
+
+        statement = (
+            select(
+                AssessmentQuestionAsset,
+            )
+            .join(
+                AssessmentQuestion,
+                AssessmentQuestion.id == AssessmentQuestionAsset.question_id,
+            )
+            .join(
+                Assessment,
+                Assessment.id == AssessmentQuestion.assessment_id,
+            )
+            .where(
+                AssessmentQuestion.assessment_id == assessment_id,
+                Assessment.school_id == school_id,
+                AssessmentQuestionAsset.candidate_visible.is_(True),
+            )
+            .order_by(
+                AssessmentQuestionAsset.question_id.asc(),
+                AssessmentQuestionAsset.order.asc(),
+                AssessmentQuestionAsset.id.asc(),
+            )
+            .options(
+                raiseload("*"),
+                load_only(
+                    AssessmentQuestionAsset.id,
+                    AssessmentQuestionAsset.question_id,
+                    AssessmentQuestionAsset.asset_type,
+                    AssessmentQuestionAsset.storage_path,
+                    AssessmentQuestionAsset.original_filename,
+                    AssessmentQuestionAsset.mime_type,
+                    AssessmentQuestionAsset.file_size_bytes,
+                    AssessmentQuestionAsset.alt_text,
+                    AssessmentQuestionAsset.caption,
+                    AssessmentQuestionAsset.order,
+                    AssessmentQuestionAsset.candidate_visible,
+                ),
+            )
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return list(
+            result.scalars().all(),
+        )
+
     async def list_candidate_visible_questions_by_assessment_and_school(
         self,
         *,

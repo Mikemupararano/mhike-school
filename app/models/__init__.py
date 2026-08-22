@@ -32,6 +32,7 @@ from app.models.assessment_question_extraction import (
     AssessmentQuestionExtraction,
     AssessmentQuestionExtractionStatus,
 )
+from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -102,6 +103,7 @@ __all__ = [
     "AssessmentQuestionExtraction",
     "AssessmentQuestionExtractionStatus",
     "AssessmentQuestionFeedback",
+    "AssessmentQuestionSnapshot",
     "AssessmentResponse",
     "AssessmentResponseStatus",
     "AssessmentResultChangeType",
