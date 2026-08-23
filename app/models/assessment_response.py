@@ -25,6 +25,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.assessment_candidate import AssessmentScript
+    from app.models.assessment_marking_annotation import AssessmentMarkingAnnotation
     from app.models.assessment_question import AssessmentQuestion
     from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
     from app.models.mark_scheme_award import MarkSchemeItemAward
@@ -242,6 +243,15 @@ class AssessmentResponse(Base):
         "AssessmentQuestionSnapshot",
         foreign_keys=[question_snapshot_id],
         lazy="selectin",
+    )
+
+    marking_annotations: Mapped[list["AssessmentMarkingAnnotation"]] = relationship(
+        "AssessmentMarkingAnnotation",
+        back_populates="response",
+        foreign_keys="AssessmentMarkingAnnotation.response_id",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="AssessmentMarkingAnnotation.id",
     )
 
     marking_decision: Mapped["MarkingDecision | None"] = relationship(

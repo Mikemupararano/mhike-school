@@ -33,6 +33,11 @@ from app.models.assessment_question_extraction import (
     AssessmentQuestionExtractionStatus,
 )
 from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
+from app.models.assessment_marking_annotation import (
+    AssessmentMarkingAnnotation,
+    MarkingAnnotationSurfaceType,
+    MarkingAnnotationType,
+)
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -69,6 +74,11 @@ from app.models.mark_scheme import (
     MarkSchemeItemType,
 )
 from app.models.mark_scheme_award import MarkSchemeItemAward
+from app.models.marking_palette import (
+    MarkingPalette,
+    MarkingPaletteTool,
+    MarkingPaletteToolType,
+)
 from app.models.message_attachment import MessageAttachment
 from app.models.module import Module
 from app.models.notification import Notification
