@@ -1635,6 +1635,92 @@ async def transition_marking_decision_status(
         raise
 
 
+async def instant_mark_decision(
+    db: AsyncSession,
+    current_user: User,
+    decision_id: int,
+    *,
+    mark_awarded: Decimal | int | float | str,
+) -> MarkingDecision:
+    """
+    Award the authoritative question-level mark and complete primary marking
+    in one atomic operation.
+
+    This supports examiner-style one-click or keyboard marking without a
+    separate save/complete request.
+    """
+
+    decision = await _get_decision_or_404(
+        db,
+        decision_id,
+        include_relationships=True,
+    )
+
+    response = await _ensure_decision_marking_access(
+        db,
+        current_user,
+        decision,
+    )
+
+    _ensure_decision_editable(
+        decision,
+    )
+    _ensure_marker_or_admin(
+        current_user,
+        decision,
+    )
+
+    if decision.status == MarkingDecisionStatus.REVIEWED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Reviewed marking decisions cannot be instant-marked",
+        )
+
+    normalised_mark = _normalise_decimal(
+        mark_awarded,
+        field_name="mark_awarded",
+    )
+
+    maximum_mark = await _get_authoritative_response_maximum_mark(
+        db,
+        response,
+    )
+
+    if normalised_mark > maximum_mark:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Awarded mark cannot exceed the question maximum "
+                f"of {maximum_mark}"
+            ),
+        )
+
+    decision.mark_awarded = normalised_mark
+    decision.status = MarkingDecisionStatus.MARKED
+    decision.marked_at = decision.marked_at or _utc_now()
+
+    repository = AssessmentMarkingRepository(
+        db,
+    )
+
+    try:
+        decision = await repository.save_decision(
+            decision,
+        )
+
+        await db.commit()
+
+        return await _get_decision_or_404(
+            db,
+            decision.id,
+            include_relationships=True,
+        )
+
+    except Exception:
+        await db.rollback()
+        raise
+
+
 async def start_marking(
     db: AsyncSession,
     current_user: User,

@@ -22,6 +22,7 @@ from app.schemas.assessment_marking import (
     AssessmentResponseOut,
     AssessmentResponseStatusUpdate,
     AssessmentResponseUpdate,
+    InstantMarkRequest,
     MarkingAnnotationCreate,
     MarkingAnnotationOut,
     MarkingAnnotationUpdate,
@@ -51,6 +52,7 @@ from app.services.assessment_marking_service import (
     finalise_marking,
     get_marking_decision,
     get_response,
+    instant_mark_decision,
     list_script_marking_decisions,
     list_script_responses,
     review_marking,
@@ -663,6 +665,36 @@ async def update_response_marking_decision(
         decision_id=decision_id,
         mark_awarded=payload.mark_awarded,
         marker_comment=payload.marker_comment,
+    )
+
+    return MarkingDecisionOut.model_validate(
+        decision,
+    )
+
+
+@router.post(
+    "/decisions/{decision_id}/instant-mark",
+    response_model=MarkingDecisionOut,
+)
+async def instant_mark_response_decision(
+    decision_id: int,
+    payload: InstantMarkRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkingDecisionOut:
+    """
+    Award a question-level mark and complete primary marking atomically.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    decision = await instant_mark_decision(
+        db=db,
+        current_user=current_user,
+        decision_id=decision_id,
+        mark_awarded=payload.mark_awarded,
     )
 
     return MarkingDecisionOut.model_validate(

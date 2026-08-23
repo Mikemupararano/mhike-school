@@ -257,6 +257,16 @@ class MarkingDecisionCreate(BaseModel):
     marker_comment: str | None = None
 
 
+class InstantMarkRequest(BaseModel):
+    """
+    Payload for examiner-style one-click or keyboard marking.
+    """
+
+    mark_awarded: Decimal = Field(
+        ge=0,
+    )
+
+
 class MarkingDecisionUpdate(BaseModel):
     """
     Payload for updating the authoritative question-level result.

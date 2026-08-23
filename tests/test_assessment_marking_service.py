@@ -37,6 +37,7 @@ from app.services.assessment_marking_service import (
     finalise_marking,
     get_marking_decision,
     get_response,
+    instant_mark_decision,
     list_script_marking_decisions,
     list_script_responses,
     review_marking,
@@ -1990,3 +1991,286 @@ async def test_legacy_response_without_snapshot_uses_canonical_maximum(
 
     assert exc.value.status_code == 422
     assert "5.00" in str(exc.value.detail)
+
+# ----------------------------------------------------------------------
+# Instant marking
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_awards_mark_and_completes_decision(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    marked = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("4.00"),
+    )
+
+    assert marked.mark_awarded == Decimal("4.00")
+    assert marked.status == MarkingDecisionStatus.MARKED
+    assert marked.marked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_enforces_snapshot_maximum(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("10.00"),
+    )
+
+    snapshot = await _create_question_snapshot(
+        db_session,
+        script_id=context["script"].id,
+        question=context["question"],
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    response.question_snapshot_id = snapshot.id
+    await db_session.commit()
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await instant_mark_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision.id,
+            mark_awarded=Decimal("6.00"),
+        )
+
+    assert exc.value.status_code == 422
+    assert "5.00" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_can_correct_marked_decision_before_finalisation(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    first = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("3.00"),
+    )
+
+    first_marked_at = first.marked_at
+
+    corrected = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("4.00"),
+    )
+
+    assert corrected.mark_awarded == Decimal("4.00")
+    assert corrected.status == MarkingDecisionStatus.MARKED
+    assert corrected.marked_at == first_marked_at
+
+
+@pytest.mark.asyncio
+async def test_reviewed_decision_cannot_be_instant_marked(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    school_admin = await create_test_user(
+        db_session,
+        email=f"instant.review.admin.{context['assessment'].id}@example.com",
+        roles=[UserRole.SCHOOL_ADMIN],
+        school_id=teacher_user.school_id,
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("3.00"),
+    )
+
+    reviewed = await review_marking(
+        db=db_session,
+        current_user=school_admin,
+        decision_id=decision.id,
+        moderation_comment="Reviewed.",
+    )
+
+    assert reviewed.status == MarkingDecisionStatus.REVIEWED
+
+    with pytest.raises(HTTPException) as exc:
+        await instant_mark_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision.id,
+            mark_awarded=Decimal("4.00"),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Reviewed marking decisions cannot be instant-marked"
+
+
+@pytest.mark.asyncio
+async def test_finalised_decision_cannot_be_instant_marked(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    school_admin = await create_test_user(
+        db_session,
+        email=f"instant.finalise.admin.{context['assessment'].id}@example.com",
+        roles=[UserRole.SCHOOL_ADMIN],
+        school_id=teacher_user.school_id,
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("3.00"),
+    )
+
+    finalised = await finalise_marking(
+        db=db_session,
+        current_user=school_admin,
+        decision_id=decision.id,
+    )
+
+    assert finalised.status == MarkingDecisionStatus.FINALISED
+
+    with pytest.raises(HTTPException) as exc:
+        await instant_mark_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision.id,
+            mark_awarded=Decimal("4.00"),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Finalised marking decisions cannot be changed"

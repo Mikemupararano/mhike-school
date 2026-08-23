@@ -14,7 +14,9 @@ from app.models.assessment_candidate import (
     AssessmentScriptStatus,
 )
 from app.models.assessment_question import AssessmentQuestion
+from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
 from app.models.assessment_response import (
+    AssessmentResponse,
     AssessmentResponseStatus,
     MarkingDecision,
     MarkingDecisionStatus,
@@ -2410,3 +2412,414 @@ async def test_finalised_decision_blocks_annotation_mutation_via_api(
     )
 
     assert delete_after_finalise.status_code == 409
+
+# ---------------------------------------------------------------------------
+# Instant-mark API
+# ---------------------------------------------------------------------------
+
+
+async def _create_api_question_snapshot(
+    db_session: AsyncSession,
+    *,
+    script_id: int,
+    question: AssessmentQuestion,
+    maximum_mark: Decimal,
+) -> AssessmentQuestionSnapshot:
+    """
+    Create an immutable question snapshot for an API marking test.
+    """
+
+    snapshot = AssessmentQuestionSnapshot(
+        script_id=script_id,
+        question_id=question.id,
+        parent_question_id_snapshot=None,
+        question_number=question.question_number,
+        title=None,
+        prompt=question.prompt,
+        question_type="written",
+        interaction_config_snapshot=None,
+        maximum_mark=maximum_mark,
+        order=question.order,
+        is_markable=question.is_markable,
+        section_snapshot=None,
+        options_snapshot=[],
+        assets_snapshot=[],
+    )
+
+    db_session.add(snapshot)
+    await db_session.commit()
+    await db_session.refresh(snapshot)
+
+    return snapshot
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_instant_mark_via_api(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "4.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    assert Decimal(data["mark_awarded"]) == Decimal("4.00")
+    assert data["status"] == MarkingDecisionStatus.MARKED.value
+    assert data["marked_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_api_enforces_snapshot_maximum(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("10.00"),
+    )
+
+    snapshot = await _create_api_question_snapshot(
+        db_session,
+        script_id=context["script"].id,
+        question=context["question"],
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    response_row = await db_session.get(
+        AssessmentResponse,
+        response_data["id"],
+    )
+
+    assert response_row is not None
+
+    response_row.question_snapshot_id = snapshot.id
+    await db_session.commit()
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "6.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 422
+    assert "5.00" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_api_can_correct_marked_decision(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    first_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "3.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert first_response.status_code == 200, first_response.text
+
+    first_data = first_response.json()
+
+    corrected_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "4.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert corrected_response.status_code == 200, corrected_response.text
+
+    corrected_data = corrected_response.json()
+
+    assert Decimal(corrected_data["mark_awarded"]) == Decimal("4.00")
+    assert corrected_data["status"] == MarkingDecisionStatus.MARKED.value
+    assert corrected_data["marked_at"] == first_data["marked_at"]
+
+
+@pytest.mark.asyncio
+async def test_reviewed_decision_cannot_be_instant_marked_via_api(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    school_admin = await create_test_user(
+        db_session,
+        email=f"instant.api.review.admin.{context['assessment'].id}@example.com",
+        roles=[UserRole.SCHOOL_ADMIN],
+        school_id=teacher_user.school_id,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    marked_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "3.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert marked_response.status_code == 200, marked_response.text
+
+    review_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/review",
+        json={
+            "moderation_comment": "Reviewed.",
+        },
+        headers=auth_headers(school_admin),
+    )
+
+    assert review_response.status_code == 200, review_response.text
+    assert review_response.json()["status"] == MarkingDecisionStatus.REVIEWED.value
+
+    response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "4.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["message"] == (
+        "Reviewed marking decisions cannot be instant-marked"
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalised_decision_cannot_be_instant_marked_via_api(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    school_admin = await create_test_user(
+        db_session,
+        email=f"instant.api.finalise.admin.{context['assessment'].id}@example.com",
+        roles=[UserRole.SCHOOL_ADMIN],
+        school_id=teacher_user.school_id,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    marked_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "3.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert marked_response.status_code == 200, marked_response.text
+
+    finalise_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/finalise",
+        headers=auth_headers(school_admin),
+    )
+
+    assert finalise_response.status_code == 200, finalise_response.text
+    assert finalise_response.json()["status"] == MarkingDecisionStatus.FINALISED.value
+
+    response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "4.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["message"] == (
+        "Finalised marking decisions cannot be changed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_api_rejects_negative_mark(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "-1.00",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 422
