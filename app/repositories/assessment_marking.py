@@ -328,6 +328,11 @@ class AssessmentMarkingRepository:
                 MarkScheme.items,
             ),
             selectinload(
+                MarkingDecision.response,
+            ).selectinload(
+                AssessmentResponse.question_snapshot,
+            ),
+            selectinload(
                 MarkingDecision.marker,
             ),
             selectinload(

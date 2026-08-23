@@ -14,6 +14,7 @@ from app.models.assessment_candidate import (
     AssessmentScriptStatus,
 )
 from app.models.assessment_question import AssessmentQuestion
+from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
 from app.models.assessment_response import (
     AssessmentResponseStatus,
     MarkingDecisionStatus,
@@ -205,6 +206,41 @@ async def _create_candidate_and_script(
     await db_session.refresh(script)
 
     return candidate, script
+
+
+async def _create_question_snapshot(
+    db_session: AsyncSession,
+    *,
+    script_id: int,
+    question: AssessmentQuestion,
+    maximum_mark: Decimal,
+) -> AssessmentQuestionSnapshot:
+    """
+    Create the immutable question snapshot governing one script response.
+    """
+
+    snapshot = AssessmentQuestionSnapshot(
+        script_id=script_id,
+        question_id=question.id,
+        parent_question_id_snapshot=None,
+        question_number=question.question_number,
+        title=None,
+        prompt=question.prompt,
+        question_type="written",
+        interaction_config_snapshot=None,
+        maximum_mark=maximum_mark,
+        order=question.order,
+        is_markable=question.is_markable,
+        section_snapshot=None,
+        options_snapshot=[],
+        assets_snapshot=[],
+    )
+
+    db_session.add(snapshot)
+    await db_session.commit()
+    await db_session.refresh(snapshot)
+
+    return snapshot
 
 
 async def _build_marking_context(
@@ -1730,3 +1766,227 @@ async def test_started_marking_decision_cannot_be_deleted(
         )
 
     assert exc.value.status_code == 409
+
+# ----------------------------------------------------------------------
+# Immutable question-snapshot marking integrity
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_snapshot_maximum_mark_remains_authoritative_after_canonical_lowered(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    snapshot = await _create_question_snapshot(
+        db_session,
+        script_id=context["script"].id,
+        question=context["question"],
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    response.question_snapshot_id = snapshot.id
+    await db_session.commit()
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    # Later editing the canonical question must not change the frozen attempt.
+    context["question"].maximum_mark = Decimal("2.00")
+    await db_session.commit()
+
+    updated = await update_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("5.00"),
+    )
+
+    assert updated.mark_awarded == Decimal("5.00")
+
+
+@pytest.mark.asyncio
+async def test_mark_above_snapshot_maximum_is_rejected_even_if_canonical_increased(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    snapshot = await _create_question_snapshot(
+        db_session,
+        script_id=context["script"].id,
+        question=context["question"],
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    response.question_snapshot_id = snapshot.id
+    await db_session.commit()
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    # Increasing the mutable canonical maximum must not expand the frozen attempt.
+    context["question"].maximum_mark = Decimal("10.00")
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await update_marking_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision.id,
+            mark_awarded=Decimal("6.00"),
+        )
+
+    assert exc.value.status_code == 422
+    assert "5.00" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_complete_marking_validates_against_snapshot_maximum(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("10.00"),
+    )
+
+    snapshot = await _create_question_snapshot(
+        db_session,
+        script_id=context["script"].id,
+        question=context["question"],
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    response.question_snapshot_id = snapshot.id
+    await db_session.commit()
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    started = await start_marking(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+    )
+
+    # Simulate historical/imported inconsistent data so the lifecycle
+    # transition itself must enforce the immutable maximum.
+    started.mark_awarded = Decimal("6.00")
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await complete_marking(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision.id,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Awarded mark exceeds the question maximum"
+
+
+@pytest.mark.asyncio
+async def test_legacy_response_without_snapshot_uses_canonical_maximum(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Legacy answer",
+    )
+
+    assert response.question_snapshot_id is None
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await update_marking_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision.id,
+            mark_awarded=Decimal("6.00"),
+        )
+
+    assert exc.value.status_code == 422
+    assert "5.00" in str(exc.value.detail)

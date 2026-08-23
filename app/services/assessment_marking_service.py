@@ -1185,6 +1185,44 @@ def _ensure_marker_or_admin(
     )
 
 
+async def _get_authoritative_response_maximum_mark(
+    db: AsyncSession,
+    response: AssessmentResponse,
+) -> Decimal:
+    """
+    Return the maximum mark that governed this candidate response.
+
+    Snapshot-linked responses must use the immutable question snapshot.
+    Historical responses created before snapshot support fall back to the
+    canonical question.
+
+    A response that claims a snapshot linkage but cannot resolve that snapshot
+    is treated as an integrity failure rather than silently falling back to a
+    mutable canonical question.
+    """
+
+    if response.question_snapshot_id is not None:
+        snapshot = response.question_snapshot
+
+        if snapshot is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "The immutable question snapshot for this response "
+                    "could not be resolved"
+                ),
+            )
+
+        return snapshot.maximum_mark
+
+    question = await _get_question_or_404(
+        db,
+        response.question_id,
+    )
+
+    return question.maximum_mark
+
+
 async def update_marking_decision(
     db: AsyncSession,
     current_user: User,
@@ -1217,23 +1255,23 @@ async def update_marking_decision(
         decision,
     )
 
-    question = await _get_question_or_404(
-        db,
-        response.question_id,
-    )
-
     if mark_awarded is not None:
         normalised_mark = _normalise_decimal(
             mark_awarded,
             field_name="mark_awarded",
         )
 
-        if normalised_mark > question.maximum_mark:
+        maximum_mark = await _get_authoritative_response_maximum_mark(
+            db,
+            response,
+        )
+
+        if normalised_mark > maximum_mark:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     "Awarded mark cannot exceed the question maximum "
-                    f"of {question.maximum_mark}"
+                    f"of {maximum_mark}"
                 ),
             )
 
@@ -1535,12 +1573,12 @@ async def transition_marking_decision_status(
                 detail="A question-level mark is required before marking can complete",
             )
 
-        question = await _get_question_or_404(
+        maximum_mark = await _get_authoritative_response_maximum_mark(
             db,
-            response.question_id,
+            response,
         )
 
-        if decision.mark_awarded > question.maximum_mark:
+        if decision.mark_awarded > maximum_mark:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Awarded mark exceeds the question maximum",
