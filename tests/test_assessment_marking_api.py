@@ -16,6 +16,7 @@ from app.models.assessment_candidate import (
 from app.models.assessment_question import AssessmentQuestion
 from app.models.assessment_response import (
     AssessmentResponseStatus,
+    MarkingDecision,
     MarkingDecisionStatus,
 )
 from app.models.course import Course
@@ -25,6 +26,9 @@ from app.models.mark_scheme import (
     MarkSchemeItemType,
 )
 from app.models.user import UserRole
+from app.services.assessment_marking_palette_service import (
+    ensure_default_marking_palette,
+)
 from tests.conftest import create_test_user
 
 # ---------------------------------------------------------------------------
@@ -1978,3 +1982,431 @@ async def test_started_marking_decision_cannot_be_deleted_via_api(
     )
 
     assert response.status_code == 409
+
+# ---------------------------------------------------------------------------
+# Examiner annotation API
+# ---------------------------------------------------------------------------
+
+
+async def _build_annotation_api_context(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+) -> dict:
+    """
+    Build one submitted response with a marking decision and default palette.
+    """
+
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    create_response = await client.post(
+        f"/api/v1/assessment-marking/scripts/{context['script'].id}/responses",
+        json={
+            "question_id": context["question"].id,
+            "response_text": "Candidate response for annotation marking.",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    response_data = create_response.json()
+
+    submit_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{response_data['id']}/submit",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert submit_response.status_code == 200, submit_response.text
+
+    decision_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{response_data['id']}/decision",
+        json={},
+        headers=auth_headers(teacher_user),
+    )
+
+    assert decision_response.status_code == 201, decision_response.text
+
+    palette = await ensure_default_marking_palette(
+        db_session,
+        teacher_user.school_id,
+    )
+
+    tick_tool = next(
+        tool
+        for tool in palette.tools
+        if tool.value == "✓"
+    )
+
+    return {
+        **context,
+        "response": response_data,
+        "decision": decision_response.json(),
+        "palette": palette,
+        "tick_tool": tick_tool,
+    }
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_create_list_and_get_marking_annotation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_annotation_api_context(
+        client,
+        db_session,
+        teacher_user,
+        auth_headers,
+    )
+
+    create_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "0.25",
+            "y": "0.75",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    annotation = create_response.json()
+
+    assert annotation["response_id"] == context["response"]["id"]
+    assert annotation["marker_id"] == teacher_user.id
+    assert annotation["palette_tool_id"] == context["tick_tool"].id
+    assert annotation["annotation_type"] == "symbol"
+    assert annotation["value"] == "✓"
+    assert annotation["label_snapshot"] == "Correct / credit"
+    assert annotation["surface_type"] == "response"
+    assert annotation["revision"] == 1
+    assert annotation["deleted_at"] is None
+
+    list_response = await client.get(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert list_response.status_code == 200, list_response.text
+    assert [item["id"] for item in list_response.json()] == [
+        annotation["id"],
+    ]
+
+    get_response = await client.get(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert get_response.status_code == 200, get_response.text
+    assert get_response.json()["id"] == annotation["id"]
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_update_marking_annotation_with_revision(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_annotation_api_context(
+        client,
+        db_session,
+        teacher_user,
+        auth_headers,
+    )
+
+    create_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "0.10",
+            "y": "0.20",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    annotation = create_response.json()
+
+    update_response = await client.patch(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        json={
+            "revision": annotation["revision"],
+            "x": "0.60",
+            "y": "0.70",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert update_response.status_code == 200, update_response.text
+
+    updated = update_response.json()
+
+    assert updated["revision"] == 2
+    assert Decimal(updated["x"]) == Decimal("0.600000")
+    assert Decimal(updated["y"]) == Decimal("0.700000")
+
+
+@pytest.mark.asyncio
+async def test_stale_marking_annotation_revision_returns_409(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_annotation_api_context(
+        client,
+        db_session,
+        teacher_user,
+        auth_headers,
+    )
+
+    create_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "0.10",
+            "y": "0.20",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    annotation = create_response.json()
+
+    first_update = await client.patch(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        json={
+            "revision": 1,
+            "x": "0.30",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert first_update.status_code == 200, first_update.text
+
+    stale_update = await client.patch(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        json={
+            "revision": 1,
+            "x": "0.40",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert stale_update.status_code == 409, stale_update.text
+
+
+@pytest.mark.asyncio
+async def test_marking_annotation_can_be_soft_deleted_via_api(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_annotation_api_context(
+        client,
+        db_session,
+        teacher_user,
+        auth_headers,
+    )
+
+    create_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "0.10",
+            "y": "0.20",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    annotation = create_response.json()
+
+    delete_response = await client.delete(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        params={
+            "revision": annotation["revision"],
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert delete_response.status_code == 200, delete_response.text
+
+    deleted = delete_response.json()
+
+    assert deleted["revision"] == 2
+    assert deleted["deleted_at"] is not None
+    assert deleted["deleted_by_id"] == teacher_user.id
+
+    default_list = await client.get(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert default_list.status_code == 200, default_list.text
+    assert default_list.json() == []
+
+    audit_list = await client.get(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        params={
+            "include_deleted": True,
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert audit_list.status_code == 200, audit_list.text
+    assert len(audit_list.json()) == 1
+    assert audit_list.json()[0]["id"] == annotation["id"]
+    assert audit_list.json()[0]["deleted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_marking_annotation_schema_rejects_invalid_coordinate(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_annotation_api_context(
+        client,
+        db_session,
+        teacher_user,
+        auth_headers,
+    )
+
+    response = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "1.01",
+            "y": "0.50",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_marking_annotation_update_rejects_surface_mutation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_annotation_api_context(
+        client,
+        db_session,
+        teacher_user,
+        auth_headers,
+    )
+
+    create_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "0.10",
+            "y": "0.20",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    annotation = create_response.json()
+
+    response = await client.patch(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        json={
+            "revision": annotation["revision"],
+            "surface_type": "script_page",
+            "page_number": 2,
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_finalised_decision_blocks_annotation_mutation_via_api(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_annotation_api_context(
+        client,
+        db_session,
+        teacher_user,
+        auth_headers,
+    )
+
+    create_response = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "0.10",
+            "y": "0.20",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    annotation = create_response.json()
+
+    decision = await db_session.get(
+        MarkingDecision,
+        context["decision"]["id"],
+    )
+
+    assert decision is not None
+
+    decision.status = MarkingDecisionStatus.FINALISED
+    await db_session.commit()
+
+    create_after_finalise = await client.post(
+        f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
+        json={
+            "palette_tool_id": context["tick_tool"].id,
+            "x": "0.30",
+            "y": "0.40",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert create_after_finalise.status_code == 409
+
+    update_after_finalise = await client.patch(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        json={
+            "revision": annotation["revision"],
+            "x": "0.50",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert update_after_finalise.status_code == 409
+
+    delete_after_finalise = await client.delete(
+        f"/api/v1/assessment-marking/annotations/{annotation['id']}",
+        params={
+            "revision": annotation["revision"],
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert delete_after_finalise.status_code == 409

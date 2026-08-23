@@ -12,6 +12,10 @@ from pydantic import (
     field_validator,
 )
 
+from app.models.assessment_marking_annotation import (
+    MarkingAnnotationSurfaceType,
+    MarkingAnnotationType,
+)
 from app.models.assessment_response import (
     AssessmentResponseStatus,
     MarkingDecisionStatus,
@@ -338,6 +342,182 @@ class MarkSchemeItemSummaryOut(BaseModel):
 
     alternative_group: str | None = None
     examiner_notes: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Examiner marking annotation payloads
+# ---------------------------------------------------------------------------
+
+
+class MarkingAnnotationCreate(BaseModel):
+    """
+    Payload for placing one examiner annotation on a submitted response.
+
+    The palette tool determines the annotation type, value and label snapshot.
+    Surface identity is fixed when the annotation is created.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    palette_tool_id: int = Field(
+        gt=0,
+    )
+
+    surface_type: MarkingAnnotationSurfaceType = (
+        MarkingAnnotationSurfaceType.RESPONSE
+    )
+
+    surface_reference: str | None = Field(
+        default=None,
+        max_length=255,
+    )
+
+    page_number: int | None = Field(
+        default=None,
+        gt=0,
+    )
+
+    x: Decimal = Field(
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    y: Decimal = Field(
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    end_x: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    end_y: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    width: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    height: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    text: str | None = None
+
+
+class MarkingAnnotationUpdate(BaseModel):
+    """
+    Payload for changing mutable annotation presentation.
+
+    ``revision`` is required for optimistic concurrency.
+
+    Surface identity is intentionally absent. Moving an annotation to a
+    different response surface, question asset or script page requires
+    deleting it and creating a new annotation.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    revision: int = Field(
+        gt=0,
+    )
+
+    x: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    y: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    end_x: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    end_y: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    width: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    height: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0"),
+        le=Decimal("1"),
+    )
+
+    text: str | None = None
+
+
+class MarkingAnnotationOut(BaseModel):
+    """
+    Examiner annotation response model.
+
+    Palette value and label are snapshots so later palette customisation does
+    not rewrite historical marking evidence.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+
+    response_id: int
+    marker_id: int | None = None
+    palette_tool_id: int | None = None
+
+    annotation_type: MarkingAnnotationType
+
+    value: str | None = None
+    label_snapshot: str | None = None
+    text: str | None = None
+
+    surface_type: MarkingAnnotationSurfaceType
+    surface_reference: str | None = None
+    page_number: int | None = None
+
+    x: Decimal
+    y: Decimal
+
+    end_x: Decimal | None = None
+    end_y: Decimal | None = None
+
+    width: Decimal | None = None
+    height: Decimal | None = None
+
+    revision: int
+
+    created_at: datetime
+    updated_at: datetime
+
+    deleted_at: datetime | None = None
+    deleted_by_id: int | None = None
 
 
 class MarkSchemeItemAwardOut(BaseModel):

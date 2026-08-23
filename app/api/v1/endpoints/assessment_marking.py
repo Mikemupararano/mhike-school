@@ -22,6 +22,9 @@ from app.schemas.assessment_marking import (
     AssessmentResponseOut,
     AssessmentResponseStatusUpdate,
     AssessmentResponseUpdate,
+    MarkingAnnotationCreate,
+    MarkingAnnotationOut,
+    MarkingAnnotationUpdate,
     MarkingDecisionCreate,
     MarkingDecisionOut,
     MarkingDecisionStatusUpdate,
@@ -29,6 +32,13 @@ from app.schemas.assessment_marking import (
     MarkingReviewRequest,
     MarkSchemeItemAwardCreate,
     MarkSchemeItemAwardOut,
+)
+from app.services.assessment_marking_annotation_service import (
+    create_marking_annotation,
+    delete_marking_annotation,
+    get_marking_annotation,
+    list_marking_annotations,
+    update_marking_annotation,
 )
 from app.services.assessment_marking_service import (
     award_mark_scheme_item,
@@ -402,6 +412,197 @@ async def create_response_marking_decision(
 
     return MarkingDecisionOut.model_validate(
         decision,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Examiner annotation routes
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/responses/{response_id}/annotations",
+    response_model=list[MarkingAnnotationOut],
+)
+async def get_response_marking_annotations(
+    response_id: int,
+    include_deleted: bool = Query(
+        default=False,
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[MarkingAnnotationOut]:
+    """
+    Return examiner annotations for one assessment response.
+
+    Deleted annotations are hidden by default but may be included for
+    authorised audit/review workflows.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    annotations = await list_marking_annotations(
+        db=db,
+        current_user=current_user,
+        response_id=response_id,
+        include_deleted=include_deleted,
+    )
+
+    return [
+        MarkingAnnotationOut.model_validate(
+            annotation,
+        )
+        for annotation in annotations
+    ]
+
+
+@router.get(
+    "/annotations/{annotation_id}",
+    response_model=MarkingAnnotationOut,
+)
+async def get_response_marking_annotation(
+    annotation_id: int,
+    include_deleted: bool = Query(
+        default=False,
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkingAnnotationOut:
+    """
+    Return one examiner annotation.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    annotation = await get_marking_annotation(
+        db=db,
+        current_user=current_user,
+        annotation_id=annotation_id,
+        include_deleted=include_deleted,
+    )
+
+    return MarkingAnnotationOut.model_validate(
+        annotation,
+    )
+
+
+@router.post(
+    "/responses/{response_id}/annotations",
+    response_model=MarkingAnnotationOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_response_marking_annotation(
+    response_id: int,
+    payload: MarkingAnnotationCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkingAnnotationOut:
+    """
+    Place one examiner annotation on a submitted response.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    annotation = await create_marking_annotation(
+        db=db,
+        current_user=current_user,
+        response_id=response_id,
+        palette_tool_id=payload.palette_tool_id,
+        x=payload.x,
+        y=payload.y,
+        surface_type=payload.surface_type,
+        surface_reference=payload.surface_reference,
+        page_number=payload.page_number,
+        end_x=payload.end_x,
+        end_y=payload.end_y,
+        width=payload.width,
+        height=payload.height,
+        text=payload.text,
+    )
+
+    return MarkingAnnotationOut.model_validate(
+        annotation,
+    )
+
+
+@router.patch(
+    "/annotations/{annotation_id}",
+    response_model=MarkingAnnotationOut,
+)
+async def update_response_marking_annotation(
+    annotation_id: int,
+    payload: MarkingAnnotationUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkingAnnotationOut:
+    """
+    Update mutable examiner annotation state using optimistic concurrency.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    values = payload.model_dump(
+        exclude_unset=True,
+    )
+
+    revision = values.pop(
+        "revision",
+    )
+
+    annotation = await update_marking_annotation(
+        db=db,
+        current_user=current_user,
+        annotation_id=annotation_id,
+        revision=revision,
+        **values,
+    )
+
+    return MarkingAnnotationOut.model_validate(
+        annotation,
+    )
+
+
+@router.delete(
+    "/annotations/{annotation_id}",
+    response_model=MarkingAnnotationOut,
+)
+async def delete_response_marking_annotation(
+    annotation_id: int,
+    revision: int = Query(
+        ...,
+        gt=0,
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkingAnnotationOut:
+    """
+    Soft-delete one examiner annotation using optimistic concurrency.
+
+    The returned representation includes the new revision and deletion
+    metadata so clients can reconcile local autosave state.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    annotation = await delete_marking_annotation(
+        db=db,
+        current_user=current_user,
+        annotation_id=annotation_id,
+        revision=revision,
+    )
+
+    return MarkingAnnotationOut.model_validate(
+        annotation,
     )
 
 
