@@ -29,10 +29,15 @@ from app.models.assessment_response import (
     MarkingDecision,
     MarkingDecisionStatus,
 )
+from app.models.marking_decision_revision import (
+    MarkingDecisionRevisionChangeType,
+    MarkingDecisionRevisionSource,
+)
 from app.models.course import Course
 from app.models.user import User, UserRole
 from app.repositories.assessment import AssessmentRepository
 from app.repositories.assessment_candidate import AssessmentCandidateRepository
+from app.repositories.assessment_marking import AssessmentMarkingRepository
 from app.repositories.assessment_moderation import AssessmentModerationRepository
 from app.repositories.course import CourseRepository
 from app.services.assessment_notification_service import (
@@ -995,6 +1000,7 @@ async def add_moderation_item(
     *,
     response_id: int,
     marking_decision_id: int,
+    expected_revision: int,
     outcome: AssessmentModerationItemOutcome | str,
     mark_after: Decimal | int | float | str | None = None,
     moderator_comment: str | None = None,
@@ -1005,9 +1011,14 @@ async def add_moderation_item(
 
     The moderation item is immutable audit evidence.
 
-    For CONFIRMED and ADJUSTED outcomes, a MARKED decision becomes REVIEWED.
-    A previously FINALISED decision remains FINALISED; formal moderation is
-    the controlled exception that may change its current operational mark.
+    Authoritative MarkingDecision changes use optimistic concurrency and
+    append immutable MarkingDecisionRevision history. A finalised marking
+    decision cannot be changed by moderation; reopening finalised marking
+    requires a separate explicit workflow.
+
+    For snapshot-backed responses, the immutable question snapshot supplies
+    the authoritative maximum mark. Legacy responses without a snapshot fall
+    back to the canonical question maximum.
 
     This does not alter an authoritative AssessmentResultOutcome.
     """
@@ -1046,114 +1057,222 @@ async def add_moderation_item(
     if response.script_id != review.script_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Assessment response does not belong to the moderated script",
+            detail=(
+                "Assessment response does not belong to the moderated script"
+            ),
         )
 
-    decision = await _get_decision_or_404(
+    marking_repository = AssessmentMarkingRepository(
         db,
-        marking_decision_id,
     )
 
-    if decision.response_id != response.id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Marking decision does not belong to the supplied response",
-        )
-
-    if decision.status not in {
-        MarkingDecisionStatus.MARKED,
-        MarkingDecisionStatus.REVIEWED,
-        MarkingDecisionStatus.FINALISED,
-    }:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only completed marking decisions can be moderated",
-        )
-
-    if decision.mark_awarded is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A marking decision must have a mark before moderation",
-        )
-
-    question = await _get_question_or_404(
-        db,
-        response.question_id,
-    )
-
-    if question.assessment_id != review.assessment_id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Assessment response question does not belong to the moderated assessment",
-        )
-
-    mark_before = Decimal(
-        decision.mark_awarded,
-    )
-
-    if mark_after is None:
-        normalised_mark_after = mark_before
-    else:
-        normalised_mark_after = _normalise_decimal(
-            mark_after,
-            field_name="mark_after",
-        )
-
-    if normalised_mark_after < Decimal("0"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Moderated mark cannot be negative",
-        )
-
-    if normalised_mark_after > question.maximum_mark:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Moderated mark cannot exceed the question maximum",
-        )
-
-    mark_changed = normalised_mark_after != mark_before
-
-    if (
-        requested_outcome == AssessmentModerationItemOutcome.ADJUSTED
-        and not mark_changed
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="An adjusted moderation outcome requires a changed mark",
-        )
-
-    if requested_outcome == AssessmentModerationItemOutcome.CONFIRMED and mark_changed:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="A confirmed moderation outcome cannot change the mark",
-        )
-
-    status_before = decision.status
-
-    if requested_outcome == AssessmentModerationItemOutcome.ADJUSTED:
-        decision.mark_awarded = normalised_mark_after
-
-    if requested_outcome in {
-        AssessmentModerationItemOutcome.CONFIRMED,
-        AssessmentModerationItemOutcome.ADJUSTED,
-    }:
-        if decision.status == MarkingDecisionStatus.MARKED:
-            decision.status = MarkingDecisionStatus.REVIEWED
-            decision.reviewed_at = decision.reviewed_at or _utc_now()
-
-        if moderator_comment is not None:
-            decision.moderation_comment = _clean_optional_text(
-                moderator_comment,
-            )
-
-    status_after = decision.status
-
-    repository = AssessmentModerationRepository(
+    moderation_repository = AssessmentModerationRepository(
         db,
     )
 
     try:
-        item = await repository.create_item(
+        decision = await marking_repository.get_decision_by_id_for_update(
+            marking_decision_id,
+        )
+
+        if decision is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Marking decision not found",
+            )
+
+        if decision.response_id != response.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision does not belong to the supplied response"
+                ),
+            )
+
+        question = await _get_question_or_404(
+            db,
+            response.question_id,
+        )
+
+        if question.assessment_id != review.assessment_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Assessment response question does not belong to the "
+                    "moderated assessment"
+                ),
+            )
+
+        if decision.revision != expected_revision:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
+
+        if decision.status == MarkingDecisionStatus.FINALISED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Finalised marking decisions cannot be moderated",
+            )
+
+        if decision.status not in {
+            MarkingDecisionStatus.MARKED,
+            MarkingDecisionStatus.REVIEWED,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Only completed marking decisions can be moderated",
+            )
+
+        if decision.mark_awarded is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A marking decision must have a mark before moderation"
+                ),
+            )
+
+        question_snapshot_id = getattr(
+            response,
+            "question_snapshot_id",
+            None,
+        )
+
+        question_snapshot = getattr(
+            response,
+            "question_snapshot",
+            None,
+        )
+
+        if question_snapshot_id is not None:
+            if question_snapshot is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Assessment response question snapshot is unavailable"
+                    ),
+                )
+
+            maximum_mark = Decimal(
+                str(
+                    question_snapshot.maximum_mark,
+                ),
+            )
+
+        else:
+            maximum_mark = Decimal(
+                str(
+                    question.maximum_mark,
+                ),
+            )
+
+        mark_before = Decimal(
+            decision.mark_awarded,
+        )
+
+        if mark_after is None:
+            normalised_mark_after = mark_before
+
+        else:
+            normalised_mark_after = _normalise_decimal(
+                mark_after,
+                field_name="mark_after",
+            )
+
+        if normalised_mark_after < Decimal("0"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Moderated mark cannot be negative",
+            )
+
+        if normalised_mark_after > maximum_mark:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Moderated mark cannot exceed the question maximum",
+            )
+
+        mark_changed = normalised_mark_after != mark_before
+
+        if (
+            requested_outcome == AssessmentModerationItemOutcome.ADJUSTED
+            and not mark_changed
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "An adjusted moderation outcome requires a changed mark"
+                ),
+            )
+
+        if (
+            requested_outcome == AssessmentModerationItemOutcome.CONFIRMED
+            and mark_changed
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "A confirmed moderation outcome cannot change the mark"
+                ),
+            )
+
+        status_before = decision.status
+        status_after = status_before
+
+        cleaned_moderator_comment = _clean_optional_text(
+            moderator_comment,
+        )
+
+        decision_values: dict = {}
+
+        if requested_outcome == AssessmentModerationItemOutcome.ADJUSTED:
+            decision_values["mark_awarded"] = normalised_mark_after
+
+        if requested_outcome in {
+            AssessmentModerationItemOutcome.CONFIRMED,
+            AssessmentModerationItemOutcome.ADJUSTED,
+        }:
+            if decision.status == MarkingDecisionStatus.MARKED:
+                status_after = MarkingDecisionStatus.REVIEWED
+
+                decision_values["status"] = status_after
+                decision_values["reviewed_at"] = (
+                    decision.reviewed_at or _utc_now()
+                )
+
+            if moderator_comment is not None:
+                decision_values["moderation_comment"] = (
+                    cleaned_moderator_comment
+                )
+
+        if decision_values:
+            revision = (
+                await marking_repository.update_decision_with_revision(
+                    decision.id,
+                    expected_revision,
+                    values=decision_values,
+                    changed_by_id=current_user.id,
+                    change_type=(
+                        MarkingDecisionRevisionChangeType.MODERATED
+                    ),
+                    source=MarkingDecisionRevisionSource.MODERATION,
+                )
+            )
+
+            if revision is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Marking decision has changed since it was loaded. "
+                        "Refresh the decision and try again."
+                    ),
+                )
+
+            status_after = revision.status
+
+        item = await moderation_repository.create_item(
             review_id=review.id,
             response_id=response.id,
             marking_decision_id=decision.id,
@@ -1161,23 +1280,16 @@ async def add_moderation_item(
             reviewed_by_id=current_user.id,
             mark_before_snapshot=mark_before,
             mark_after_snapshot=normalised_mark_after,
-            maximum_mark_snapshot=question.maximum_mark,
+            maximum_mark_snapshot=maximum_mark,
             mark_changed=mark_changed,
             decision_status_before_snapshot=status_before.value,
             decision_status_after_snapshot=status_after.value,
-            moderator_comment=_clean_optional_text(
-                moderator_comment,
-            ),
+            moderator_comment=cleaned_moderator_comment,
             evidence_notes=_clean_optional_text(
                 evidence_notes,
             ),
         )
 
-        db.add(
-            decision,
-        )
-
-        await db.flush()
         await db.commit()
 
         return item
@@ -1195,7 +1307,10 @@ async def add_moderation_item(
 
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This response has already been recorded in the moderation review",
+            detail=(
+                "This response has already been recorded in the "
+                "moderation review"
+            ),
         ) from exc
 
     except Exception:

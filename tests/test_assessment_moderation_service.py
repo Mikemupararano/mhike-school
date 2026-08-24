@@ -53,6 +53,103 @@ class _FakeDB:
         self.rollbacks += 1
 
 
+class _FakeMarkingRepository:
+    """
+    Minimal test double for authoritative marking-decision mutations.
+
+    Existing moderation tests already monkeypatch _get_decision_or_404
+    with their local decision object. Reuse that lookup so the tests keep
+    exercising their existing fixtures while the production service uses
+    the new locking/revision repository boundary.
+    """
+
+    def __init__(self, db) -> None:
+        self.db = db
+        self.update_calls: list[dict[str, Any]] = []
+
+    async def get_decision_by_id_for_update(
+        self,
+        decision_id: int,
+    ):
+        decision = await service._get_decision_or_404(
+            self.db,
+            decision_id,
+        )
+
+        if not hasattr(decision, "revision"):
+            decision.revision = 0
+
+        return decision
+
+    async def update_decision_with_revision(
+        self,
+        decision_id: int,
+        expected_revision: int,
+        *,
+        values: dict,
+        changed_by_id: int,
+        change_type,
+        source,
+    ):
+        decision = await self.get_decision_by_id_for_update(
+            decision_id,
+        )
+
+        if decision.revision != expected_revision:
+            return None
+
+        self.update_calls.append(
+            {
+                "decision_id": decision_id,
+                "expected_revision": expected_revision,
+                "values": dict(values),
+                "changed_by_id": changed_by_id,
+                "change_type": change_type,
+                "source": source,
+            },
+        )
+
+        for field_name, value in values.items():
+            setattr(
+                decision,
+                field_name,
+                value,
+            )
+
+        decision.revision += 1
+
+        return SimpleNamespace(
+            revision=decision.revision,
+            status=decision.status,
+            mark_awarded=decision.mark_awarded,
+            marker_comment=getattr(
+                decision,
+                "marker_comment",
+                None,
+            ),
+            moderation_comment=getattr(
+                decision,
+                "moderation_comment",
+                None,
+            ),
+            marked_at=getattr(
+                decision,
+                "marked_at",
+                None,
+            ),
+            reviewed_at=getattr(
+                decision,
+                "reviewed_at",
+                None,
+            ),
+            finalised_at=getattr(
+                decision,
+                "finalised_at",
+                None,
+            ),
+        )
+
+
 class _FakeModerationRepository:
     def __init__(self) -> None:
         self.reviews: dict[int, AssessmentModerationReview] = {}
@@ -311,6 +408,12 @@ def _install_repository(
         service,
         "AssessmentModerationRepository",
         lambda db: repository,
+    )
+
+    monkeypatch.setattr(
+        service,
+        "AssessmentMarkingRepository",
+        lambda db: _FakeMarkingRepository(db),
     )
 
 
@@ -1305,6 +1408,7 @@ async def test_confirmed_item_records_snapshot_and_reviews_marked_decision(
         review.id,
         response_id=200,
         marking_decision_id=300,
+        expected_revision=0,
         outcome=AssessmentModerationItemOutcome.CONFIRMED,
         moderator_comment="Mark confirmed.",
     )
@@ -1445,6 +1549,7 @@ async def test_adjusted_item_changes_current_operational_mark(
         review.id,
         response_id=200,
         marking_decision_id=300,
+        expected_revision=0,
         outcome=AssessmentModerationItemOutcome.ADJUSTED,
         mark_after=Decimal("6.00"),
     )
@@ -1548,6 +1653,7 @@ async def test_adjusted_outcome_requires_mark_change(
             review.id,
             response_id=200,
             marking_decision_id=300,
+        expected_revision=0,
             outcome=AssessmentModerationItemOutcome.ADJUSTED,
             mark_after=Decimal("5.00"),
         )
@@ -1646,6 +1752,7 @@ async def test_confirmed_outcome_cannot_change_mark(
             review.id,
             response_id=200,
             marking_decision_id=300,
+        expected_revision=0,
             outcome=AssessmentModerationItemOutcome.CONFIRMED,
             mark_after=Decimal("6.00"),
         )
@@ -1707,6 +1814,7 @@ async def test_response_must_belong_to_review_script(
             review.id,
             response_id=200,
             marking_decision_id=300,
+        expected_revision=0,
             outcome=AssessmentModerationItemOutcome.CONFIRMED,
         )
 
@@ -1718,6 +1826,12 @@ async def test_marking_decision_must_belong_to_response(
     monkeypatch,
 ) -> None:
     db = _FakeDB()
+    repository = _FakeModerationRepository()
+
+    _install_repository(
+        monkeypatch,
+        repository,
+    )
 
     review = _review(
         review_status=AssessmentModerationReviewStatus.IN_PROGRESS,
@@ -1780,6 +1894,7 @@ async def test_marking_decision_must_belong_to_response(
             review.id,
             response_id=200,
             marking_decision_id=300,
+        expected_revision=0,
             outcome=AssessmentModerationItemOutcome.CONFIRMED,
         )
 
@@ -1791,6 +1906,12 @@ async def test_moderated_mark_cannot_exceed_question_maximum(
     monkeypatch,
 ) -> None:
     db = _FakeDB()
+    repository = _FakeModerationRepository()
+
+    _install_repository(
+        monkeypatch,
+        repository,
+    )
 
     review = _review(
         review_status=AssessmentModerationReviewStatus.IN_PROGRESS,
@@ -1869,6 +1990,7 @@ async def test_moderated_mark_cannot_exceed_question_maximum(
             review.id,
             response_id=200,
             marking_decision_id=300,
+        expected_revision=0,
             outcome=AssessmentModerationItemOutcome.ADJUSTED,
             mark_after=Decimal("11.00"),
         )
@@ -1877,7 +1999,239 @@ async def test_moderated_mark_cannot_exceed_question_maximum(
 
 
 @pytest.mark.asyncio
-async def test_finalised_decision_can_be_adjusted_only_through_moderation(
+async def test_stale_decision_revision_rejects_moderation_item(
+    monkeypatch,
+) -> None:
+    db = _FakeDB()
+    repository = _FakeModerationRepository()
+
+    review = _review(
+        review_status=AssessmentModerationReviewStatus.IN_PROGRESS,
+    )
+
+    repository.reviews[review.id] = review
+
+    _install_repository(
+        monkeypatch,
+        repository,
+    )
+
+    response = SimpleNamespace(
+        id=200,
+        script_id=40,
+        question_id=500,
+    )
+
+    decision = SimpleNamespace(
+        id=300,
+        response_id=200,
+        revision=2,
+        status=MarkingDecisionStatus.MARKED,
+        mark_awarded=Decimal("5.00"),
+        reviewed_at=None,
+        moderation_comment=None,
+    )
+
+    question = SimpleNamespace(
+        id=500,
+        assessment_id=20,
+        maximum_mark=Decimal("10.00"),
+    )
+
+    async def fake_review_lookup(*args, **kwargs):
+        return review
+
+    async def fake_access(*args, **kwargs):
+        return _script(
+            script_status=AssessmentScriptStatus.MODERATION,
+        )
+
+    async def fake_response(*args, **kwargs):
+        return response
+
+    async def fake_decision(*args, **kwargs):
+        return decision
+
+    async def fake_question(*args, **kwargs):
+        return question
+
+    monkeypatch.setattr(
+        service,
+        "_get_review_or_404",
+        fake_review_lookup,
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_review_access",
+        fake_access,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_response_or_404",
+        fake_response,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_decision_or_404",
+        fake_decision,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_question_or_404",
+        fake_question,
+    )
+
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        await service.add_moderation_item(
+            db,
+            _user(),
+            review.id,
+            response_id=200,
+            marking_decision_id=300,
+            expected_revision=1,
+            outcome=AssessmentModerationItemOutcome.ADJUSTED,
+            mark_after=Decimal("6.00"),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == (
+        "Marking decision has changed since it was loaded. "
+        "Refresh the decision and try again."
+    )
+
+    assert decision.revision == 2
+    assert decision.mark_awarded == Decimal("5.00")
+    assert decision.status == MarkingDecisionStatus.MARKED
+
+    assert repository.create_item_calls == []
+    assert db.commits == 0
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_moderation_uses_immutable_snapshot_maximum_mark(
+    monkeypatch,
+) -> None:
+    db = _FakeDB()
+    repository = _FakeModerationRepository()
+
+    review = _review(
+        review_status=AssessmentModerationReviewStatus.IN_PROGRESS,
+    )
+
+    repository.reviews[review.id] = review
+
+    _install_repository(
+        monkeypatch,
+        repository,
+    )
+
+    response = SimpleNamespace(
+        id=200,
+        script_id=40,
+        question_id=500,
+        question_snapshot_id=700,
+        question_snapshot=SimpleNamespace(
+            id=700,
+            maximum_mark=Decimal("10.00"),
+        ),
+    )
+
+    decision = SimpleNamespace(
+        id=300,
+        response_id=200,
+        revision=0,
+        status=MarkingDecisionStatus.MARKED,
+        mark_awarded=Decimal("5.00"),
+        reviewed_at=None,
+        moderation_comment=None,
+    )
+
+    # The live question has drifted down to 6 marks after the attempt.
+    # The immutable attempt snapshot remains authoritative at 10 marks.
+    question = SimpleNamespace(
+        id=500,
+        assessment_id=20,
+        maximum_mark=Decimal("6.00"),
+    )
+
+    async def fake_review_lookup(*args, **kwargs):
+        return review
+
+    async def fake_access(*args, **kwargs):
+        return _script(
+            script_status=AssessmentScriptStatus.MODERATION,
+        )
+
+    async def fake_response(*args, **kwargs):
+        return response
+
+    async def fake_decision(*args, **kwargs):
+        return decision
+
+    async def fake_question(*args, **kwargs):
+        return question
+
+    monkeypatch.setattr(
+        service,
+        "_get_review_or_404",
+        fake_review_lookup,
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_review_access",
+        fake_access,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_response_or_404",
+        fake_response,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_decision_or_404",
+        fake_decision,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_question_or_404",
+        fake_question,
+    )
+
+    result = await service.add_moderation_item(
+        db,
+        _user(),
+        review.id,
+        response_id=200,
+        marking_decision_id=300,
+        expected_revision=0,
+        outcome=AssessmentModerationItemOutcome.ADJUSTED,
+        mark_after=Decimal("8.00"),
+    )
+
+    assert result.mark_before_snapshot == Decimal("5.00")
+    assert result.mark_after_snapshot == Decimal("8.00")
+    assert result.maximum_mark_snapshot == Decimal("10.00")
+    assert result.mark_changed is True
+
+    assert decision.mark_awarded == Decimal("8.00")
+    assert decision.status == MarkingDecisionStatus.REVIEWED
+    assert decision.revision == 1
+
+    assert len(repository.create_item_calls) == 1
+    assert (
+        repository.create_item_calls[0]["maximum_mark_snapshot"]
+        == Decimal("10.00")
+    )
+
+    assert db.commits == 1
+    assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_finalised_decision_cannot_be_adjusted_through_moderation(
     monkeypatch,
 ) -> None:
     db = _FakeDB()
@@ -1958,20 +2312,26 @@ async def test_finalised_decision_can_be_adjusted_only_through_moderation(
         fake_question,
     )
 
-    result = await service.add_moderation_item(
-        db,
-        _user(),
-        review.id,
-        response_id=200,
-        marking_decision_id=300,
-        outcome=AssessmentModerationItemOutcome.ADJUSTED,
-        mark_after=Decimal("8.00"),
+    with pytest.raises(
+        HTTPException,
+    ) as exc:
+        await service.add_moderation_item(
+            db,
+            _user(),
+            review.id,
+            response_id=200,
+            marking_decision_id=300,
+            expected_revision=0,
+            outcome=AssessmentModerationItemOutcome.ADJUSTED,
+            mark_after=Decimal("8.00"),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == (
+        "Finalised marking decisions cannot be moderated"
     )
 
-    assert result.mark_changed is True
-    assert decision.mark_awarded == Decimal("8.00")
-
-    # A finalised decision remains finalised.
+    assert decision.mark_awarded == Decimal("7.00")
     assert decision.status == MarkingDecisionStatus.FINALISED
 
 

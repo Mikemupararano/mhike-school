@@ -74,6 +74,11 @@ from app.models.mark_scheme import (
     MarkSchemeItemType,
 )
 from app.models.mark_scheme_award import MarkSchemeItemAward
+from app.models.marking_decision_revision import (
+    MarkingDecisionRevision,
+    MarkingDecisionRevisionChangeType,
+    MarkingDecisionRevisionSource,
+)
 from app.models.marking_palette import (
     MarkingPalette,
     MarkingPaletteTool,
@@ -139,6 +144,9 @@ __all__ = [
     "ImportStatus",
     "Lesson",
     "MarkingDecision",
+    "MarkingDecisionRevision",
+    "MarkingDecisionRevisionChangeType",
+    "MarkingDecisionRevisionSource",
     "MarkingDecisionStatus",
     "MarkScheme",
     "MarkSchemeItem",

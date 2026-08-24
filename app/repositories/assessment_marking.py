@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +23,11 @@ from app.models.mark_scheme import (
     MarkSchemeItem,
 )
 from app.models.mark_scheme_award import MarkSchemeItemAward
+from app.models.marking_decision_revision import (
+    MarkingDecisionRevision,
+    MarkingDecisionRevisionChangeType,
+    MarkingDecisionRevisionSource,
+)
 
 
 class AssessmentMarkingRepository:
@@ -67,6 +72,27 @@ class AssessmentMarkingRepository:
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError(
                 f"{field_name} must be a positive integer.",
+            )
+
+    @staticmethod
+    def _validate_non_negative_integer(
+        value: int,
+        field_name: str,
+    ) -> None:
+        """
+        Require a non-negative integer.
+
+        MarkingDecision revision zero represents a decision that has not yet
+        acquired meaningful immutable marking history.
+        """
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+        ):
+            raise ValueError(
+                f"{field_name} must be a non-negative integer.",
             )
 
     @staticmethod
@@ -875,6 +901,46 @@ class AssessmentMarkingRepository:
 
         return response
 
+    async def get_response_by_id_for_update(
+        self,
+        response_id: int,
+    ) -> AssessmentResponse | None:
+        """
+        Return one assessment response while locking its database row.
+
+        The lock is held until the surrounding transaction commits or
+        rolls back. ``populate_existing`` refreshes any response already
+        present in the session identity map so callers make retention
+        and workflow decisions from the authoritative current state.
+
+        Relationships are intentionally not eager-loaded here. The lock
+        protects the authoritative AssessmentResponse row.
+        """
+
+        self._validate_positive_integer(
+            response_id,
+            "response_id",
+        )
+
+        statement = (
+            select(
+                AssessmentResponse,
+            )
+            .where(
+                AssessmentResponse.id == response_id,
+            )
+            .with_for_update()
+            .execution_options(
+                populate_existing=True,
+            )
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return result.scalar_one_or_none()
+
     async def delete_response(
         self,
         response: AssessmentResponse,
@@ -927,6 +993,46 @@ class AssessmentMarkingRepository:
         statement = self._apply_decision_relationship_loading(
             statement,
             include_relationships=include_relationships,
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return result.scalar_one_or_none()
+
+    async def get_decision_by_id_for_update(
+        self,
+        decision_id: int,
+    ) -> MarkingDecision | None:
+        """
+        Return one marking decision while locking its database row.
+
+        The lock is held until the surrounding transaction commits or
+        rolls back. ``populate_existing`` refreshes any decision already
+        present in the session identity map so callers compare against
+        the authoritative current revision and status.
+
+        Relationships are intentionally not eager-loaded here. This lock
+        protects the authoritative MarkingDecision row only.
+        """
+
+        self._validate_positive_integer(
+            decision_id,
+            "decision_id",
+        )
+
+        statement = (
+            select(
+                MarkingDecision,
+            )
+            .where(
+                MarkingDecision.id == decision_id,
+            )
+            .with_for_update()
+            .execution_options(
+                populate_existing=True,
+            )
         )
 
         result = await self.db.execute(
@@ -1216,64 +1322,227 @@ class AssessmentMarkingRepository:
 
         return decision
 
-    async def save_decision(
+    async def list_decision_revisions(
         self,
-        decision: MarkingDecision,
-    ) -> MarkingDecision:
+        decision_id: int,
+    ) -> list[MarkingDecisionRevision]:
         """
-        Persist and flush an existing marking decision.
+        Return immutable history for one marking decision.
+
+        Revisions are returned oldest first so callers receive the
+        authoritative marking history in chronological revision order.
         """
 
-        if decision.id is None:
+        self._validate_positive_integer(
+            decision_id,
+            "decision_id",
+        )
+
+        statement = (
+            select(
+                MarkingDecisionRevision,
+            )
+            .where(
+                MarkingDecisionRevision.marking_decision_id == decision_id,
+            )
+            .order_by(
+                MarkingDecisionRevision.revision.asc(),
+            )
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return list(
+            result.scalars().all(),
+        )
+
+    async def update_decision_with_revision(
+        self,
+        decision_id: int,
+        expected_revision: int,
+        *,
+        values: dict,
+        changed_by_id: int,
+        change_type: MarkingDecisionRevisionChangeType | str,
+        source: MarkingDecisionRevisionSource | str,
+    ) -> MarkingDecisionRevision | None:
+        """
+        Atomically update a marking decision and append immutable history.
+
+        The update succeeds only when ``expected_revision`` still matches the
+        authoritative live decision. A ``None`` result means the decision did
+        not exist or another request changed it first.
+
+        The revision snapshot is built from the values returned by PostgreSQL
+        after the successful update, so history reflects the exact persisted
+        authoritative state.
+
+        This method flushes but does not commit. Transaction ownership remains
+        with the calling service.
+        """
+
+        self._validate_positive_integer(
+            decision_id,
+            "decision_id",
+        )
+        self._validate_non_negative_integer(
+            expected_revision,
+            "expected_revision",
+        )
+        self._validate_positive_integer(
+            changed_by_id,
+            "changed_by_id",
+        )
+
+        try:
+            normalised_change_type = MarkingDecisionRevisionChangeType(
+                change_type,
+            )
+        except (TypeError, ValueError) as exc:
             raise ValueError(
-                "Cannot save a marking decision without an ID.",
+                "change_type is not a valid marking decision revision "
+                "change type.",
+            ) from exc
+
+        try:
+            normalised_source = MarkingDecisionRevisionSource(
+                source,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "source is not a valid marking decision revision source.",
+            ) from exc
+
+        allowed_fields = {
+            "marker_id",
+            "status",
+            "mark_awarded",
+            "marker_comment",
+            "moderation_comment",
+            "marked_at",
+            "reviewed_at",
+            "finalised_at",
+        }
+
+        unexpected_fields = set(values) - allowed_fields
+
+        if unexpected_fields:
+            raise ValueError(
+                "Unsupported marking decision update fields: "
+                + ", ".join(
+                    sorted(unexpected_fields),
+                ),
             )
 
-        self._validate_positive_integer(
-            decision.id,
-            "decision.id",
-        )
-        self._validate_positive_integer(
-            decision.response_id,
-            "response_id",
+        safe_values = dict(
+            values,
         )
 
-        if decision.marker_id is not None:
-            self._validate_positive_integer(
-                decision.marker_id,
-                "marker_id",
+        if "marker_id" in safe_values:
+            marker_id = safe_values["marker_id"]
+
+            if marker_id is not None:
+                self._validate_positive_integer(
+                    marker_id,
+                    "marker_id",
+                )
+
+        if "status" in safe_values:
+            safe_values["status"] = self._normalise_decision_status(
+                safe_values["status"],
             )
 
-        decision.status = self._normalise_decision_status(
-            decision.status,
-        )
-
-        if decision.mark_awarded is not None:
-            decision.mark_awarded = self._normalise_decimal(
-                decision.mark_awarded,
+        if (
+            "mark_awarded" in safe_values
+            and safe_values["mark_awarded"] is not None
+        ):
+            safe_values["mark_awarded"] = self._normalise_decimal(
+                safe_values["mark_awarded"],
                 field_name="mark_awarded",
             )
 
-        decision.marker_comment = self._normalise_optional_text(
-            decision.marker_comment,
-            field_name="marker_comment",
+        if "marker_comment" in safe_values:
+            safe_values["marker_comment"] = self._normalise_optional_text(
+                safe_values["marker_comment"],
+                field_name="marker_comment",
+            )
+
+        if "moderation_comment" in safe_values:
+            safe_values["moderation_comment"] = (
+                self._normalise_optional_text(
+                    safe_values["moderation_comment"],
+                    field_name="moderation_comment",
+                )
+            )
+
+        next_revision = expected_revision + 1
+
+        safe_values["revision"] = next_revision
+
+        statement = (
+            update(
+                MarkingDecision,
+            )
+            .where(
+                MarkingDecision.id == decision_id,
+                MarkingDecision.revision == expected_revision,
+            )
+            .values(
+                **safe_values,
+            )
+            .returning(
+                MarkingDecision.id,
+                MarkingDecision.response_id,
+                MarkingDecision.marker_id,
+                MarkingDecision.status,
+                MarkingDecision.mark_awarded,
+                MarkingDecision.marker_comment,
+                MarkingDecision.moderation_comment,
+                MarkingDecision.marked_at,
+                MarkingDecision.reviewed_at,
+                MarkingDecision.finalised_at,
+                MarkingDecision.revision,
+            )
         )
 
-        decision.moderation_comment = self._normalise_optional_text(
-            decision.moderation_comment,
-            field_name="moderation_comment",
+        result = await self.db.execute(
+            statement,
+        )
+
+        updated = result.mappings().one_or_none()
+
+        if updated is None:
+            return None
+
+        revision = MarkingDecisionRevision(
+            marking_decision_id=updated["id"],
+            response_id=updated["response_id"],
+            revision=updated["revision"],
+            changed_by_id=changed_by_id,
+            change_type=normalised_change_type,
+            source=normalised_source,
+            marker_id=updated["marker_id"],
+            status=updated["status"],
+            mark_awarded=updated["mark_awarded"],
+            marker_comment=updated["marker_comment"],
+            moderation_comment=updated["moderation_comment"],
+            marked_at=updated["marked_at"],
+            reviewed_at=updated["reviewed_at"],
+            finalised_at=updated["finalised_at"],
         )
 
         self.db.add(
-            decision,
+            revision,
         )
 
         await self.db.flush()
         await self.db.refresh(
-            decision,
+            revision,
         )
 
-        return decision
+        return revision
 
     async def delete_decision(
         self,

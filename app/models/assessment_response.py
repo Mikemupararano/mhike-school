@@ -6,9 +6,11 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     from app.models.assessment_question import AssessmentQuestion
     from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
     from app.models.mark_scheme_award import MarkSchemeItemAward
+    from app.models.marking_decision_revision import MarkingDecisionRevision
     from app.models.user import User
 
 
@@ -298,6 +301,10 @@ class MarkingDecision(Base):
             "response_id",
             name="uq_marking_decision_response",
         ),
+        CheckConstraint(
+            "revision >= 0",
+            name="ck_marking_decision_revision_non_negative",
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -365,6 +372,13 @@ class MarkingDecision(Base):
         nullable=True,
     )
 
+    revision: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+
     # ------------------------------------------------------------------
     # Audit timestamps
     # ------------------------------------------------------------------
@@ -430,6 +444,14 @@ class MarkingDecision(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
         order_by="MarkSchemeItemAward.id",
+    )
+
+    revisions: Mapped[list["MarkingDecisionRevision"]] = relationship(
+        "MarkingDecisionRevision",
+        back_populates="marking_decision",
+        lazy="selectin",
+        order_by="MarkingDecisionRevision.revision",
+        passive_deletes=True,
     )
 
     # ------------------------------------------------------------------

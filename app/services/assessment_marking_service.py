@@ -21,6 +21,11 @@ from app.models.assessment_response import (
     MarkingDecisionStatus,
 )
 from app.models.mark_scheme import MarkSchemeItem
+from app.models.marking_decision_revision import (
+    MarkingDecisionRevision,
+    MarkingDecisionRevisionChangeType,
+    MarkingDecisionRevisionSource,
+)
 from app.models.mark_scheme_award import MarkSchemeItemAward
 from app.models.user import User, UserRole
 from app.repositories.assessment_candidate import AssessmentCandidateRepository
@@ -969,6 +974,10 @@ async def delete_response(
 
     Once response content exists, submission occurs, or marking history
     exists, the response is retained.
+
+    The authoritative response row is locked before the final retention
+    checks so deletion cannot race with another workflow changing the
+    response state.
     """
 
     response = await _get_response_or_404(
@@ -983,25 +992,40 @@ async def delete_response(
         response,
     )
 
-    if response.status != AssessmentResponseStatus.NOT_STARTED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only untouched responses can be deleted",
-        )
-
-    if response.marking_decision is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Response cannot be deleted after marking has started",
-        )
-
     repository = AssessmentMarkingRepository(
         db,
     )
 
     try:
+        locked_response = await repository.get_response_by_id_for_update(
+            response.id,
+        )
+
+        if locked_response is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment response not found",
+            )
+
+        if locked_response.status != AssessmentResponseStatus.NOT_STARTED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Only untouched responses can be deleted",
+            )
+
+        decision = await repository.get_decision_by_response(
+            locked_response.id,
+            include_relationships=False,
+        )
+
+        if decision is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Response cannot be deleted after marking has started",
+            )
+
         await repository.delete_response(
-            response,
+            locked_response,
         )
 
         await db.commit()
@@ -1020,11 +1044,13 @@ async def create_marking_decision(
     db: AsyncSession,
     current_user: User,
     response_id: int,
-    *,
-    marker_comment: str | None = None,
 ) -> MarkingDecision:
     """
     Start marking one submitted response.
+
+    The authoritative response row is locked before final workflow and
+    uniqueness checks so marking-decision creation serialises with
+    response deletion and other response-level state changes.
     """
 
     response = await _get_response_or_404(
@@ -1039,37 +1065,47 @@ async def create_marking_decision(
         response,
     )
 
-    if response.status != AssessmentResponseStatus.SUBMITTED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only submitted responses can be marked",
-        )
-
     repository = AssessmentMarkingRepository(
         db,
     )
 
-    existing = await repository.get_decision_by_response(
-        response.id,
-        include_relationships=False,
-    )
-
-    if existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A marking decision already exists for this response",
+    try:
+        locked_response = await repository.get_response_by_id_for_update(
+            response.id,
         )
 
-    decision = MarkingDecision(
-        response_id=response.id,
-        marker_id=current_user.id,
-        status=MarkingDecisionStatus.UNMARKED,
-        mark_awarded=None,
-        marker_comment=marker_comment,
-        moderation_comment=None,
-    )
+        if locked_response is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment response not found",
+            )
 
-    try:
+        if locked_response.status != AssessmentResponseStatus.SUBMITTED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Only submitted responses can be marked",
+            )
+
+        existing = await repository.get_decision_by_response(
+            locked_response.id,
+            include_relationships=False,
+        )
+
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A marking decision already exists for this response",
+            )
+
+        decision = MarkingDecision(
+            response_id=locked_response.id,
+            marker_id=current_user.id,
+            status=MarkingDecisionStatus.UNMARKED,
+            mark_awarded=None,
+            marker_comment=None,
+            moderation_comment=None,
+        )
+
         decision = await repository.create_decision(
             decision,
         )
@@ -1117,6 +1153,43 @@ async def get_marking_decision(
     )
 
     return decision
+
+
+async def list_marking_decision_revisions(
+    db: AsyncSession,
+    current_user: User,
+    decision_id: int,
+) -> list[MarkingDecisionRevision]:
+    """
+    Return immutable revision history for one marking decision.
+
+    Access is derived from the live decision so school isolation,
+    course access and marker ownership remain consistent with the
+    authoritative marking workflow.
+    """
+
+    decision = await _get_decision_or_404(
+        db,
+        decision_id,
+        include_relationships=True,
+    )
+
+    await _ensure_decision_marking_access(
+        db,
+        current_user,
+        decision,
+    )
+
+    _ensure_marker_or_admin(
+        current_user,
+        decision,
+    )
+
+    return await AssessmentMarkingRepository(
+        db,
+    ).list_decision_revisions(
+        decision.id,
+    )
 
 
 async def list_script_marking_decisions(
@@ -1230,6 +1303,7 @@ async def update_marking_decision(
     *,
     mark_awarded: Decimal | int | float | str | None = None,
     marker_comment: str | None = None,
+    expected_revision: int,
 ) -> MarkingDecision:
     """
     Update the authoritative question-level mark and marker comment.
@@ -1255,6 +1329,10 @@ async def update_marking_decision(
         decision,
     )
 
+    values: dict = {
+        "marker_comment": marker_comment,
+    }
+
     if mark_awarded is not None:
         normalised_mark = _normalise_decimal(
             mark_awarded,
@@ -1275,21 +1353,33 @@ async def update_marking_decision(
                 ),
             )
 
-        decision.mark_awarded = normalised_mark
-
-    decision.marker_comment = marker_comment
+        values["mark_awarded"] = normalised_mark
 
     if decision.status == MarkingDecisionStatus.UNMARKED:
-        decision.status = MarkingDecisionStatus.IN_PROGRESS
+        values["status"] = MarkingDecisionStatus.IN_PROGRESS
 
     repository = AssessmentMarkingRepository(
         db,
     )
 
     try:
-        decision = await repository.save_decision(
-            decision,
+        revision = await repository.update_decision_with_revision(
+            decision.id,
+            expected_revision,
+            values=values,
+            changed_by_id=current_user.id,
+            change_type=MarkingDecisionRevisionChangeType.UPDATED,
+            source=MarkingDecisionRevisionSource.MANUAL,
         )
+
+        if revision is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
 
         await db.commit()
 
@@ -1317,12 +1407,17 @@ async def award_mark_scheme_item(
     *,
     marks_awarded: Decimal | int | float | str,
     marker_note: str | None = None,
+    expected_revision: int,
 ) -> MarkSchemeItemAward:
     """
     Create or update one criterion-level mark award.
 
     The criterion must belong to the response question's mark scheme and the
     awarded value may not exceed the criterion maximum.
+
+    Criterion evidence is protected by the authoritative marking-decision
+    revision. The decision row is locked until commit or rollback so marking
+    lifecycle changes cannot race with criterion persistence.
     """
 
     decision = await _get_decision_or_404(
@@ -1359,7 +1454,7 @@ async def award_mark_scheme_item(
     if item.mark_scheme.question_id != response.question_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=("Mark-scheme item does not belong to the response question"),
+            detail="Mark-scheme item does not belong to the response question",
         )
 
     normalised_marks = _normalise_decimal(
@@ -1380,16 +1475,45 @@ async def award_mark_scheme_item(
         db,
     )
 
-    existing = await repository.get_award_by_decision_and_item(
-        decision_id=decision.id,
-        mark_scheme_item_id=item.id,
-        include_relationships=False,
-    )
-
     try:
+        locked_decision = await repository.get_decision_by_id_for_update(
+            decision.id,
+        )
+
+        if locked_decision is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Marking decision not found",
+            )
+
+        if locked_decision.revision != expected_revision:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
+
+        # Repeat state-dependent guards after acquiring the row lock.
+        # The decision may have changed while this request waited.
+        _ensure_decision_editable(
+            locked_decision,
+        )
+        _ensure_marker_or_admin(
+            current_user,
+            locked_decision,
+        )
+
+        existing = await repository.get_award_by_decision_and_item(
+            decision_id=locked_decision.id,
+            mark_scheme_item_id=item.id,
+            include_relationships=False,
+        )
+
         if existing is None:
             award = MarkSchemeItemAward(
-                marking_decision_id=decision.id,
+                marking_decision_id=locked_decision.id,
                 mark_scheme_item_id=item.id,
                 marks_awarded=normalised_marks,
                 marker_note=marker_note,
@@ -1409,12 +1533,26 @@ async def award_mark_scheme_item(
                 existing,
             )
 
-        if decision.status == MarkingDecisionStatus.UNMARKED:
-            decision.status = MarkingDecisionStatus.IN_PROGRESS
-
-            await repository.save_decision(
-                decision,
+        if locked_decision.status == MarkingDecisionStatus.UNMARKED:
+            revision = await repository.update_decision_with_revision(
+                locked_decision.id,
+                expected_revision,
+                values={
+                    "status": MarkingDecisionStatus.IN_PROGRESS,
+                },
+                changed_by_id=current_user.id,
+                change_type=MarkingDecisionRevisionChangeType.STARTED,
+                source=MarkingDecisionRevisionSource.MANUAL,
             )
+
+            if revision is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Marking decision has changed since it was loaded. "
+                        "Refresh the decision and try again."
+                    ),
+                )
 
         await db.commit()
 
@@ -1440,9 +1578,14 @@ async def delete_mark_scheme_item_award(
     db: AsyncSession,
     current_user: User,
     award_id: int,
+    *,
+    expected_revision: int,
 ) -> None:
     """
     Delete a criterion award while the decision remains editable.
+
+    The authoritative marking-decision row is locked so stale criterion
+    clients cannot delete evidence after a concurrent marking change.
     """
 
     award = await _get_award_or_404(
@@ -1475,6 +1618,34 @@ async def delete_mark_scheme_item_award(
     )
 
     try:
+        locked_decision = await repository.get_decision_by_id_for_update(
+            decision.id,
+        )
+
+        if locked_decision is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Marking decision not found",
+            )
+
+        if locked_decision.revision != expected_revision:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
+
+        # Repeat state-dependent guards after acquiring the row lock.
+        _ensure_decision_editable(
+            locked_decision,
+        )
+        _ensure_marker_or_admin(
+            current_user,
+            locked_decision,
+        )
+
         await repository.delete_award(
             award,
         )
@@ -1519,6 +1690,7 @@ async def transition_marking_decision_status(
     new_status: MarkingDecisionStatus | str,
     *,
     moderation_comment: str | None = None,
+    expected_revision: int,
 ) -> MarkingDecision:
     """
     Move a marking decision through its controlled lifecycle.
@@ -1539,6 +1711,15 @@ async def transition_marking_decision_status(
     requested_status = _normalise_decision_status(
         new_status,
     )
+
+    if decision.revision != expected_revision:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Marking decision has changed since it was loaded. "
+                "Refresh the decision and try again."
+            ),
+        )
 
     if requested_status == decision.status:
         return decision
@@ -1566,6 +1747,12 @@ async def transition_marking_decision_status(
             decision,
         )
 
+    values: dict = {
+        "status": requested_status,
+    }
+
+    change_type = MarkingDecisionRevisionChangeType.STARTED
+
     if requested_status == MarkingDecisionStatus.MARKED:
         if decision.mark_awarded is None:
             raise HTTPException(
@@ -1584,7 +1771,8 @@ async def transition_marking_decision_status(
                 detail="Awarded mark exceeds the question maximum",
             )
 
-        decision.marked_at = decision.marked_at or _utc_now()
+        values["marked_at"] = decision.marked_at or _utc_now()
+        change_type = MarkingDecisionRevisionChangeType.MARKED
 
     elif requested_status == MarkingDecisionStatus.REVIEWED:
         if not (is_school_admin(current_user) or is_platform_admin(current_user)):
@@ -1593,8 +1781,9 @@ async def transition_marking_decision_status(
                 detail="Only administrators may review marking decisions",
             )
 
-        decision.moderation_comment = moderation_comment
-        decision.reviewed_at = decision.reviewed_at or _utc_now()
+        values["moderation_comment"] = moderation_comment
+        values["reviewed_at"] = decision.reviewed_at or _utc_now()
+        change_type = MarkingDecisionRevisionChangeType.REVIEWED
 
     elif requested_status == MarkingDecisionStatus.FINALISED:
         if not (is_school_admin(current_user) or is_platform_admin(current_user)):
@@ -1609,18 +1798,31 @@ async def transition_marking_decision_status(
                 detail="A question-level mark is required before finalisation",
             )
 
-        decision.finalised_at = decision.finalised_at or _utc_now()
-
-    decision.status = requested_status
+        values["finalised_at"] = decision.finalised_at or _utc_now()
+        change_type = MarkingDecisionRevisionChangeType.FINALISED
 
     repository = AssessmentMarkingRepository(
         db,
     )
 
     try:
-        decision = await repository.save_decision(
-            decision,
+        revision = await repository.update_decision_with_revision(
+            decision.id,
+            expected_revision,
+            values=values,
+            changed_by_id=current_user.id,
+            change_type=change_type,
+            source=MarkingDecisionRevisionSource.MANUAL,
         )
+
+        if revision is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
 
         await db.commit()
 
@@ -1641,6 +1843,7 @@ async def instant_mark_decision(
     decision_id: int,
     *,
     mark_awarded: Decimal | int | float | str,
+    expected_revision: int,
 ) -> MarkingDecision:
     """
     Award the authoritative question-level mark and complete primary marking
@@ -1695,18 +1898,34 @@ async def instant_mark_decision(
             ),
         )
 
-    decision.mark_awarded = normalised_mark
-    decision.status = MarkingDecisionStatus.MARKED
-    decision.marked_at = decision.marked_at or _utc_now()
-
     repository = AssessmentMarkingRepository(
         db,
     )
 
     try:
-        decision = await repository.save_decision(
-            decision,
+        revision = await repository.update_decision_with_revision(
+            decision.id,
+            expected_revision,
+            values={
+                "mark_awarded": normalised_mark,
+                "status": MarkingDecisionStatus.MARKED,
+                "marked_at": decision.marked_at or _utc_now(),
+            },
+            changed_by_id=current_user.id,
+            change_type=(
+                MarkingDecisionRevisionChangeType.INSTANT_MARKED
+            ),
+            source=MarkingDecisionRevisionSource.QUICK_MARK,
         )
+
+        if revision is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
 
         await db.commit()
 
@@ -1725,6 +1944,8 @@ async def start_marking(
     db: AsyncSession,
     current_user: User,
     decision_id: int,
+    *,
+    expected_revision: int,
 ) -> MarkingDecision:
     """
     Move an unmarked decision into active marking.
@@ -1735,6 +1956,7 @@ async def start_marking(
         current_user,
         decision_id,
         MarkingDecisionStatus.IN_PROGRESS,
+        expected_revision=expected_revision,
     )
 
 
@@ -1742,6 +1964,8 @@ async def complete_marking(
     db: AsyncSession,
     current_user: User,
     decision_id: int,
+    *,
+    expected_revision: int,
 ) -> MarkingDecision:
     """
     Complete primary marking.
@@ -1752,6 +1976,7 @@ async def complete_marking(
         current_user,
         decision_id,
         MarkingDecisionStatus.MARKED,
+        expected_revision=expected_revision,
     )
 
 
@@ -1761,6 +1986,7 @@ async def review_marking(
     decision_id: int,
     *,
     moderation_comment: str | None = None,
+    expected_revision: int,
 ) -> MarkingDecision:
     """
     Review or moderate a completed marking decision.
@@ -1772,6 +1998,7 @@ async def review_marking(
         decision_id,
         MarkingDecisionStatus.REVIEWED,
         moderation_comment=moderation_comment,
+        expected_revision=expected_revision,
     )
 
 
@@ -1779,6 +2006,8 @@ async def finalise_marking(
     db: AsyncSession,
     current_user: User,
     decision_id: int,
+    *,
+    expected_revision: int,
 ) -> MarkingDecision:
     """
     Finalise a marked or reviewed decision.
@@ -1789,6 +2018,7 @@ async def finalise_marking(
         current_user,
         decision_id,
         MarkingDecisionStatus.FINALISED,
+        expected_revision=expected_revision,
     )
 
 
@@ -1805,8 +2035,8 @@ async def delete_marking_decision(
     """
     Delete only an untouched marking decision.
 
-    Once marking activity or criterion evidence exists, the decision is
-    retained for audit history.
+    Once a decision has any immutable marking history, it is retained
+    permanently for audit purposes.
     """
 
     decision = await _get_decision_or_404(
@@ -1826,31 +2056,67 @@ async def delete_marking_decision(
         decision,
     )
 
-    if decision.status != MarkingDecisionStatus.UNMARKED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only untouched marking decisions can be deleted",
-        )
-
-    if decision.mark_awarded is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Marking decision cannot be deleted after a mark is awarded",
-        )
-
-    if decision.item_awards:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Marking decision cannot be deleted after criterion marking",
-        )
-
     repository = AssessmentMarkingRepository(
         db,
     )
 
     try:
+        locked_decision = await repository.get_decision_by_id_for_update(
+            decision.id,
+        )
+
+        if locked_decision is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Marking decision not found",
+            )
+
+        # Repeat ownership/role protection after acquiring the row lock.
+        _ensure_marker_or_admin(
+            current_user,
+            locked_decision,
+        )
+
+        # Revision history is immutable. Once any authoritative marking
+        # mutation has occurred, the parent decision must also be retained.
+        if locked_decision.revision > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision cannot be deleted after "
+                    "marking history exists"
+                ),
+            )
+
+        if locked_decision.status != MarkingDecisionStatus.UNMARKED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Only untouched marking decisions can be deleted",
+            )
+
+        if locked_decision.mark_awarded is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision cannot be deleted after "
+                    "a mark is awarded"
+                ),
+            )
+
+        # Retain the legacy evidence guard as a defensive invariant.
+        # Criterion mutations also lock this same decision row, so once
+        # this lock is held no concurrent criterion write can race deletion.
+        if decision.item_awards:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision cannot be deleted after "
+                    "criterion marking"
+                ),
+            )
+
         await repository.delete_decision(
-            decision,
+            locked_decision,
         )
 
         await db.commit()

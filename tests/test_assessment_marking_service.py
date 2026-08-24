@@ -17,7 +17,13 @@ from app.models.assessment_question import AssessmentQuestion
 from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
 from app.models.assessment_response import (
     AssessmentResponseStatus,
+    MarkingDecision,
     MarkingDecisionStatus,
+)
+from app.models.marking_decision_revision import (
+    MarkingDecisionRevision,
+    MarkingDecisionRevisionChangeType,
+    MarkingDecisionRevisionSource,
 )
 from app.models.course import Course
 from app.models.mark_scheme import (
@@ -26,6 +32,9 @@ from app.models.mark_scheme import (
     MarkSchemeItemType,
 )
 from app.models.user import UserRole
+from app.repositories.assessment_marking import (
+    AssessmentMarkingRepository,
+)
 from app.services.assessment_marking_service import (
     award_mark_scheme_item,
     complete_marking,
@@ -292,6 +301,192 @@ async def _build_marking_context(
         "candidate": candidate,
         "script": script,
     }
+
+
+# ----------------------------------------------------------------------
+# Marking decision revision persistence
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repository_appends_first_marking_decision_revision(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = MarkingDecision(
+        response_id=response.id,
+        marker_id=teacher_user.id,
+        status=MarkingDecisionStatus.UNMARKED,
+        revision=0,
+    )
+
+    repository = AssessmentMarkingRepository(
+        db_session,
+    )
+
+    decision = await repository.create_decision(
+        decision,
+    )
+    await db_session.commit()
+
+    revision = await repository.update_decision_with_revision(
+        decision.id,
+        0,
+        values={
+            "status": MarkingDecisionStatus.MARKED,
+            "mark_awarded": Decimal("3.00"),
+        },
+        changed_by_id=teacher_user.id,
+        change_type=MarkingDecisionRevisionChangeType.INSTANT_MARKED,
+        source=MarkingDecisionRevisionSource.QUICK_MARK,
+    )
+
+    assert revision is not None
+
+    await db_session.commit()
+
+    await db_session.refresh(
+        decision,
+    )
+
+    assert decision.revision == 1
+    assert decision.status == MarkingDecisionStatus.MARKED
+    assert decision.mark_awarded == Decimal("3.00")
+
+    stored_revision = await db_session.get(
+        MarkingDecisionRevision,
+        revision.id,
+    )
+
+    assert stored_revision is not None
+    assert stored_revision.marking_decision_id == decision.id
+    assert stored_revision.response_id == response.id
+    assert stored_revision.revision == 1
+    assert stored_revision.changed_by_id == teacher_user.id
+    assert (
+        stored_revision.change_type
+        == MarkingDecisionRevisionChangeType.INSTANT_MARKED
+    )
+    assert (
+        stored_revision.source
+        == MarkingDecisionRevisionSource.QUICK_MARK
+    )
+    assert stored_revision.marker_id == teacher_user.id
+    assert stored_revision.status == MarkingDecisionStatus.MARKED
+    assert stored_revision.mark_awarded == Decimal("3.00")
+
+
+@pytest.mark.asyncio
+async def test_repository_rejects_stale_marking_decision_revision(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = MarkingDecision(
+        response_id=response.id,
+        marker_id=teacher_user.id,
+        status=MarkingDecisionStatus.UNMARKED,
+        revision=0,
+    )
+
+    repository = AssessmentMarkingRepository(
+        db_session,
+    )
+
+    decision = await repository.create_decision(
+        decision,
+    )
+    await db_session.commit()
+
+    first_revision = await repository.update_decision_with_revision(
+        decision.id,
+        0,
+        values={
+            "status": MarkingDecisionStatus.MARKED,
+            "mark_awarded": Decimal("3.00"),
+        },
+        changed_by_id=teacher_user.id,
+        change_type=MarkingDecisionRevisionChangeType.INSTANT_MARKED,
+        source=MarkingDecisionRevisionSource.QUICK_MARK,
+    )
+
+    assert first_revision is not None
+
+    await db_session.commit()
+
+    stale_revision = await repository.update_decision_with_revision(
+        decision.id,
+        0,
+        values={
+            "mark_awarded": Decimal("4.00"),
+        },
+        changed_by_id=teacher_user.id,
+        change_type=MarkingDecisionRevisionChangeType.INSTANT_MARKED,
+        source=MarkingDecisionRevisionSource.QUICK_MARK,
+    )
+
+    assert stale_revision is None
+
+    await db_session.commit()
+    await db_session.refresh(
+        decision,
+    )
+
+    assert decision.revision == 1
+    assert decision.mark_awarded == Decimal("3.00")
+
+    from sqlalchemy import select
+
+    result = await db_session.execute(
+        select(
+            MarkingDecisionRevision,
+        ).where(
+            MarkingDecisionRevision.marking_decision_id == decision.id,
+        )
+    )
+
+    revisions = list(
+        result.scalars().all(),
+    )
+
+    assert len(revisions) == 1
+    assert revisions[0].revision == 1
+    assert revisions[0].mark_awarded == Decimal("3.00")
 
 
 # ----------------------------------------------------------------------
@@ -690,7 +885,6 @@ async def test_teacher_can_create_marking_decision_for_submitted_response(
         db=db_session,
         current_user=teacher_user,
         response_id=response.id,
-        marker_comment="Initial marking.",
     )
 
     assert decision.id is not None
@@ -809,11 +1003,102 @@ async def test_teacher_can_update_question_level_mark(
         decision_id=decision.id,
         mark_awarded=Decimal("4.00"),
         marker_comment="Good answer.",
+        expected_revision=decision.revision,
     )
 
     assert updated.mark_awarded == Decimal("4.00")
     assert updated.marker_comment == "Good answer."
     assert updated.status == MarkingDecisionStatus.IN_PROGRESS
+
+
+@pytest.mark.asyncio
+async def test_manual_marking_update_tracks_revision_and_rejects_stale_write(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision_id = decision.id
+
+    first = await update_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+        mark_awarded=Decimal("3.00"),
+        marker_comment="First manual mark.",
+        expected_revision=0,
+    )
+
+    assert first.revision == 1
+    assert first.mark_awarded == Decimal("3.00")
+    assert first.marker_comment == "First manual mark."
+    assert first.status == MarkingDecisionStatus.IN_PROGRESS
+
+    second = await update_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+        mark_awarded=Decimal("4.00"),
+        marker_comment="Corrected manual mark.",
+        expected_revision=first.revision,
+    )
+
+    assert second.revision == 2
+    assert second.mark_awarded == Decimal("4.00")
+    assert second.marker_comment == "Corrected manual mark."
+
+    with pytest.raises(HTTPException) as exc:
+        await update_marking_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision_id,
+            mark_awarded=Decimal("2.00"),
+            marker_comment="Stale overwrite.",
+            expected_revision=0,
+        )
+
+    assert exc.value.status_code == 409
+    assert (
+        exc.value.detail
+        == (
+            "Marking decision has changed since it was loaded. "
+            "Refresh the decision and try again."
+        )
+    )
+
+    current = await get_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+    )
+
+    assert current.revision == 2
+    assert current.mark_awarded == Decimal("4.00")
+    assert current.marker_comment == "Corrected manual mark."
 
 
 @pytest.mark.asyncio
@@ -853,6 +1138,7 @@ async def test_mark_above_question_maximum_is_rejected(
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("6.00"),
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 422
@@ -894,6 +1180,7 @@ async def test_negative_question_mark_is_rejected(
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("-1.00"),
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 422
@@ -943,6 +1230,7 @@ async def test_teacher_can_award_mark_scheme_item(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
         mark_scheme_item_id=first_item.id,
         marks_awarded=Decimal("1.00"),
         marker_note="Method awarded.",
@@ -995,6 +1283,7 @@ async def test_criterion_award_above_item_maximum_is_rejected(
             db=db_session,
             current_user=teacher_user,
             decision_id=decision.id,
+            expected_revision=decision.revision,
             mark_scheme_item_id=first_item.id,
             marks_awarded=Decimal("2.00"),
         )
@@ -1048,6 +1337,7 @@ async def test_criterion_from_other_question_is_rejected(
             db=db_session,
             current_user=teacher_user,
             decision_id=decision.id,
+            expected_revision=decision.revision,
             mark_scheme_item_id=other_item.id,
             marks_awarded=Decimal("1.00"),
         )
@@ -1094,6 +1384,7 @@ async def test_existing_criterion_award_is_updated_not_duplicated(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
         mark_scheme_item_id=first_item.id,
         marks_awarded=Decimal("0.00"),
     )
@@ -1102,6 +1393,7 @@ async def test_existing_criterion_award_is_updated_not_duplicated(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
         mark_scheme_item_id=first_item.id,
         marks_awarded=Decimal("1.00"),
         marker_note="Awarded after review.",
@@ -1151,6 +1443,7 @@ async def test_criterion_award_can_be_deleted_before_finalisation(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
         mark_scheme_item_id=first_item.id,
         marks_awarded=Decimal("1.00"),
     )
@@ -1159,6 +1452,7 @@ async def test_criterion_award_can_be_deleted_before_finalisation(
         db=db_session,
         current_user=teacher_user,
         award_id=award.id,
+        expected_revision=decision.revision,
     )
 
     loaded_decision = await get_marking_decision(
@@ -1209,6 +1503,7 @@ async def test_marking_can_progress_to_marked(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     assert started.status == MarkingDecisionStatus.IN_PROGRESS
@@ -1218,14 +1513,116 @@ async def test_marking_can_progress_to_marked(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("3.00"),
+        expected_revision=decision.revision,
     )
 
     marked = await complete_marking(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
+    assert marked.status == MarkingDecisionStatus.MARKED
+    assert marked.marked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_marking_lifecycle_revisions_and_stale_transition_are_enforced(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision_id = decision.id
+
+    started = await start_marking(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+        expected_revision=0,
+    )
+
+    assert started.revision == 1
+    assert started.status == MarkingDecisionStatus.IN_PROGRESS
+
+    stale_revision = started.revision
+
+    updated = await update_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+        mark_awarded=Decimal("4.00"),
+        marker_comment="Ready to complete.",
+        expected_revision=stale_revision,
+    )
+
+    assert updated.revision == 2
+    assert updated.mark_awarded == Decimal("4.00")
+
+    with pytest.raises(HTTPException) as exc:
+        await complete_marking(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision_id,
+            expected_revision=stale_revision,
+        )
+
+    assert exc.value.status_code == 409
+    assert (
+        exc.value.detail
+        == (
+            "Marking decision has changed since it was loaded. "
+            "Refresh the decision and try again."
+        )
+    )
+
+    current = await db_session.get(
+        type(decision),
+        decision_id,
+    )
+
+    assert current is not None
+    assert current.revision == 2
+    assert current.status == MarkingDecisionStatus.IN_PROGRESS
+    assert current.mark_awarded == Decimal("4.00")
+
+    await db_session.refresh(
+        teacher_user,
+    )
+
+    marked = await complete_marking(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+        expected_revision=current.revision,
+    )
+
+    assert marked.revision == 3
     assert marked.status == MarkingDecisionStatus.MARKED
     assert marked.marked_at is not None
 
@@ -1264,6 +1661,7 @@ async def test_marking_cannot_complete_without_question_level_mark(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1271,6 +1669,7 @@ async def test_marking_cannot_complete_without_question_level_mark(
             db=db_session,
             current_user=teacher_user,
             decision_id=decision.id,
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 409
@@ -1317,6 +1716,7 @@ async def test_school_admin_can_review_marked_decision(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     await update_marking_decision(
@@ -1324,12 +1724,14 @@ async def test_school_admin_can_review_marked_decision(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("4.00"),
+        expected_revision=decision.revision,
     )
 
     await complete_marking(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     reviewed = await review_marking(
@@ -1337,6 +1739,7 @@ async def test_school_admin_can_review_marked_decision(
         current_user=school_admin,
         decision_id=decision.id,
         moderation_comment="Checked and agreed.",
+        expected_revision=decision.revision,
     )
 
     assert reviewed.status == MarkingDecisionStatus.REVIEWED
@@ -1378,6 +1781,7 @@ async def test_teacher_cannot_review_marked_decision(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     await update_marking_decision(
@@ -1385,12 +1789,14 @@ async def test_teacher_cannot_review_marked_decision(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("4.00"),
+        expected_revision=decision.revision,
     )
 
     await complete_marking(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1398,6 +1804,7 @@ async def test_teacher_cannot_review_marked_decision(
             db=db_session,
             current_user=teacher_user,
             decision_id=decision.id,
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 403
@@ -1444,6 +1851,7 @@ async def test_school_admin_can_finalise_marked_decision(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     await update_marking_decision(
@@ -1451,18 +1859,21 @@ async def test_school_admin_can_finalise_marked_decision(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("4.00"),
+        expected_revision=decision.revision,
     )
 
     await complete_marking(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     finalised = await finalise_marking(
         db=db_session,
         current_user=school_admin,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     assert finalised.status == MarkingDecisionStatus.FINALISED
@@ -1510,6 +1921,7 @@ async def test_finalised_decision_cannot_be_changed(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     await update_marking_decision(
@@ -1517,18 +1929,21 @@ async def test_finalised_decision_cannot_be_changed(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("4.00"),
+        expected_revision=decision.revision,
     )
 
     await complete_marking(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     await finalise_marking(
         db=db_session,
         current_user=school_admin,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1537,6 +1952,7 @@ async def test_finalised_decision_cannot_be_changed(
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("5.00"),
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 409
@@ -1590,6 +2006,7 @@ async def test_other_teacher_cannot_change_marking_decision(
             current_user=other_teacher,
             decision_id=decision.id,
             mark_awarded=Decimal("2.00"),
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 403
@@ -1724,6 +2141,75 @@ async def test_untouched_marking_decision_can_be_deleted(
 
 
 @pytest.mark.asyncio
+async def test_marking_decision_with_revision_history_cannot_be_deleted(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await start_marking(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        expected_revision=decision.revision,
+    )
+
+    assert decision.revision == 1
+
+    decision_id = decision.id
+
+    # Simulate live-state drift without removing immutable history.
+    decision.status = MarkingDecisionStatus.UNMARKED
+    decision.mark_awarded = None
+
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await delete_marking_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision_id,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == (
+        "Marking decision cannot be deleted after "
+        "marking history exists"
+    )
+
+    # The service rollback expires ORM state, so refresh explicitly
+    # before asserting that the audited decision still exists.
+    await db_session.refresh(decision)
+
+    assert decision.id == decision_id
+    assert decision.revision == 1
+    assert decision.status == MarkingDecisionStatus.UNMARKED
+
+
+@pytest.mark.asyncio
 async def test_started_marking_decision_cannot_be_deleted(
     db_session: AsyncSession,
     teacher_user,
@@ -1757,6 +2243,7 @@ async def test_started_marking_decision_cannot_be_deleted(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1823,6 +2310,7 @@ async def test_snapshot_maximum_mark_remains_authoritative_after_canonical_lower
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("5.00"),
+        expected_revision=decision.revision,
     )
 
     assert updated.mark_awarded == Decimal("5.00")
@@ -1879,6 +2367,7 @@ async def test_mark_above_snapshot_maximum_is_rejected_even_if_canonical_increas
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("6.00"),
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 422
@@ -1930,6 +2419,7 @@ async def test_complete_marking_validates_against_snapshot_maximum(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     # Simulate historical/imported inconsistent data so the lifecycle
@@ -1942,6 +2432,7 @@ async def test_complete_marking_validates_against_snapshot_maximum(
             db=db_session,
             current_user=teacher_user,
             decision_id=decision.id,
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 409
@@ -1987,6 +2478,7 @@ async def test_legacy_response_without_snapshot_uses_canonical_maximum(
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("6.00"),
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 422
@@ -2033,11 +2525,13 @@ async def test_instant_mark_awards_mark_and_completes_decision(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("4.00"),
+        expected_revision=decision.revision,
     )
 
     assert marked.mark_awarded == Decimal("4.00")
     assert marked.status == MarkingDecisionStatus.MARKED
     assert marked.marked_at is not None
+    assert marked.revision == 1
 
 
 @pytest.mark.asyncio
@@ -2087,6 +2581,7 @@ async def test_instant_mark_enforces_snapshot_maximum(
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("6.00"),
+            expected_revision=decision.revision,
         )
 
     assert exc.value.status_code == 422
@@ -2129,20 +2624,96 @@ async def test_instant_mark_can_correct_marked_decision_before_finalisation(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("3.00"),
+        expected_revision=decision.revision,
     )
 
     first_marked_at = first.marked_at
+
+    assert first.revision == 1
 
     corrected = await instant_mark_decision(
         db=db_session,
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("4.00"),
+        expected_revision=first.revision,
     )
 
     assert corrected.mark_awarded == Decimal("4.00")
     assert corrected.status == MarkingDecisionStatus.MARKED
     assert corrected.marked_at == first_marked_at
+    assert corrected.revision == 2
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_rejects_stale_expected_revision(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision_id = decision.id
+
+    first = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+        mark_awarded=Decimal("3.00"),
+        expected_revision=0,
+    )
+
+    assert first.revision == 1
+
+    with pytest.raises(HTTPException) as exc:
+        await instant_mark_decision(
+            db=db_session,
+            current_user=teacher_user,
+            decision_id=decision_id,
+            mark_awarded=Decimal("4.00"),
+            expected_revision=0,
+        )
+
+    assert exc.value.status_code == 409
+    assert (
+        exc.value.detail
+        == (
+            "Marking decision has changed since it was loaded. "
+            "Refresh the decision and try again."
+        )
+    )
+
+    current = await get_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision_id,
+    )
+
+    assert current.revision == 1
+    assert current.mark_awarded == Decimal("3.00")
 
 
 @pytest.mark.asyncio
@@ -2188,6 +2759,7 @@ async def test_reviewed_decision_cannot_be_instant_marked(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("3.00"),
+        expected_revision=decision.revision,
     )
 
     reviewed = await review_marking(
@@ -2195,6 +2767,7 @@ async def test_reviewed_decision_cannot_be_instant_marked(
         current_user=school_admin,
         decision_id=decision.id,
         moderation_comment="Reviewed.",
+        expected_revision=decision.revision,
     )
 
     assert reviewed.status == MarkingDecisionStatus.REVIEWED
@@ -2205,6 +2778,7 @@ async def test_reviewed_decision_cannot_be_instant_marked(
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("4.00"),
+            expected_revision=reviewed.revision,
         )
 
     assert exc.value.status_code == 409
@@ -2254,12 +2828,14 @@ async def test_finalised_decision_cannot_be_instant_marked(
         current_user=teacher_user,
         decision_id=decision.id,
         mark_awarded=Decimal("3.00"),
+        expected_revision=decision.revision,
     )
 
     finalised = await finalise_marking(
         db=db_session,
         current_user=school_admin,
         decision_id=decision.id,
+        expected_revision=decision.revision,
     )
 
     assert finalised.status == MarkingDecisionStatus.FINALISED
@@ -2270,6 +2846,7 @@ async def test_finalised_decision_cannot_be_instant_marked(
             current_user=teacher_user,
             decision_id=decision.id,
             mark_awarded=Decimal("4.00"),
+            expected_revision=finalised.revision,
         )
 
     assert exc.value.status_code == 409

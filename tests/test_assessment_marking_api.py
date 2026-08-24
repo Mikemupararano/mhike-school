@@ -339,9 +339,7 @@ async def _create_decision_via_api(
 
     response = await client.post(
         f"/api/v1/assessment-marking/responses/{response_id}/decision",
-        json={
-            "marker_comment": "Initial API marking.",
-        },
+        json={},
         headers=auth_headers(user),
     )
 
@@ -794,9 +792,7 @@ async def test_teacher_can_create_marking_decision(
 
     response = await client.post(
         f"/api/v1/assessment-marking/responses/{response_data['id']}/decision",
-        json={
-            "marker_comment": "Initial assessment.",
-        },
+        json={},
         headers=auth_headers(teacher_user),
     )
 
@@ -809,8 +805,47 @@ async def test_teacher_can_create_marking_decision(
     assert data["marker_id"] == teacher_user.id
     assert data["status"] == MarkingDecisionStatus.UNMARKED.value
     assert data["mark_awarded"] is None
-    assert data["marker_comment"] == "Initial assessment."
+    assert data["marker_comment"] is None
+    assert data["revision"] == 0
     assert data["item_awards"] == []
+
+
+@pytest.mark.asyncio
+async def test_create_marking_decision_rejects_obsolete_marker_comment(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.post(
+        f"/api/v1/assessment-marking/responses/{response_data['id']}/decision",
+        json={
+            "marker_comment": "Obsolete creation-time comment.",
+        },
+        headers=auth_headers(teacher_user),
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -973,6 +1008,7 @@ async def test_teacher_can_update_question_level_mark(
         json={
             "mark_awarded": "4.00",
             "marker_comment": "Good answer.",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -984,6 +1020,111 @@ async def test_teacher_can_update_question_level_mark(
     assert Decimal(data["mark_awarded"]) == Decimal("4.00")
     assert data["marker_comment"] == "Good answer."
     assert data["status"] == MarkingDecisionStatus.IN_PROGRESS.value
+
+
+@pytest.mark.asyncio
+async def test_manual_marking_update_api_rejects_stale_revision(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    teacher_headers = auth_headers(
+        teacher_user,
+    )
+
+    first_response = await client.patch(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        json={
+            "mark_awarded": "3.00",
+            "marker_comment": "First manual mark.",
+            "expected_revision": decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert first_response.status_code == 200, first_response.text
+
+    first_data = first_response.json()
+
+    assert first_data["revision"] == 1
+    assert Decimal(first_data["mark_awarded"]) == Decimal("3.00")
+    assert first_data["marker_comment"] == "First manual mark."
+
+    second_response = await client.patch(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        json={
+            "mark_awarded": "4.00",
+            "marker_comment": "Corrected manual mark.",
+            "expected_revision": first_data["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert second_response.status_code == 200, second_response.text
+
+    second_data = second_response.json()
+
+    assert second_data["revision"] == 2
+    assert Decimal(second_data["mark_awarded"]) == Decimal("4.00")
+    assert second_data["marker_comment"] == "Corrected manual mark."
+
+    stale_response = await client.patch(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        json={
+            "mark_awarded": "2.00",
+            "marker_comment": "Stale overwrite.",
+            "expected_revision": decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert stale_response.status_code == 409
+    assert stale_response.json()["error"]["message"] == (
+        "Marking decision has changed since it was loaded. "
+        "Refresh the decision and try again."
+    )
+
+    current_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        headers=teacher_headers,
+    )
+
+    assert current_response.status_code == 200, current_response.text
+
+    current_data = current_response.json()
+
+    assert current_data["revision"] == 2
+    assert Decimal(current_data["mark_awarded"]) == Decimal("4.00")
+    assert current_data["marker_comment"] == "Corrected manual mark."
 
 
 @pytest.mark.asyncio
@@ -1025,6 +1166,7 @@ async def test_mark_above_question_maximum_is_rejected_by_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}",
         json={
             "mark_awarded": "6.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -1081,6 +1223,7 @@ async def test_teacher_can_award_mark_scheme_item_via_api(
         json={
             "mark_scheme_item_id": first_item.id,
             "marks_awarded": "1.00",
+            "expected_revision": decision["revision"],
             "marker_note": "Method awarded.",
         },
         headers=auth_headers(teacher_user),
@@ -1142,6 +1285,7 @@ async def test_existing_criterion_award_is_updated_via_api(
         json={
             "mark_scheme_item_id": first_item.id,
             "marks_awarded": "0.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -1153,6 +1297,7 @@ async def test_existing_criterion_award_is_updated_via_api(
         json={
             "mark_scheme_item_id": first_item.id,
             "marks_awarded": "1.00",
+            "expected_revision": decision["revision"] + 1,
             "marker_note": "Awarded after review.",
         },
         headers=auth_headers(teacher_user),
@@ -1166,6 +1311,108 @@ async def test_existing_criterion_award_is_updated_via_api(
     assert updated_data["id"] == first_data["id"]
     assert Decimal(updated_data["marks_awarded"]) == Decimal("1.00")
     assert updated_data["marker_note"] == "Awarded after review."
+
+
+@pytest.mark.asyncio
+async def test_criterion_award_api_rejects_stale_decision_revision(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    _, first_item, _ = await _create_mark_scheme(
+        db_session,
+        question_id=context["question"].id,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    stale_revision = decision["revision"]
+    teacher_headers = auth_headers(teacher_user)
+
+    first_response = await client.put(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/awards",
+        json={
+            "mark_scheme_item_id": first_item.id,
+            "marks_awarded": "1.00",
+            "marker_note": "Initial criterion award.",
+            "expected_revision": stale_revision,
+        },
+        headers=teacher_headers,
+    )
+
+    assert first_response.status_code == 200, first_response.text
+
+    current_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        headers=teacher_headers,
+    )
+
+    assert current_response.status_code == 200, current_response.text
+
+    current_decision = current_response.json()
+
+    assert current_decision["revision"] == stale_revision + 1
+    assert current_decision["status"] == "in_progress"
+
+    stale_response = await client.put(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/awards",
+        json={
+            "mark_scheme_item_id": first_item.id,
+            "marks_awarded": "0.00",
+            "marker_note": "Stale criterion overwrite.",
+            "expected_revision": stale_revision,
+        },
+        headers=teacher_headers,
+    )
+
+    assert stale_response.status_code == 409
+
+    error = stale_response.json()
+
+    assert error["error"]["message"] == (
+        "Marking decision has changed since it was loaded. "
+        "Refresh the decision and try again."
+    )
+
+    after_stale_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        headers=teacher_headers,
+    )
+
+    assert (
+        after_stale_response.status_code == 200
+    ), after_stale_response.text
+
+    after_stale = after_stale_response.json()
+
+    assert after_stale["revision"] == current_decision["revision"]
+    assert after_stale["status"] == "in_progress"
 
 
 @pytest.mark.asyncio
@@ -1212,6 +1459,7 @@ async def test_criterion_award_above_item_maximum_is_rejected(
         json={
             "mark_scheme_item_id": first_item.id,
             "marks_awarded": "2.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -1270,11 +1518,111 @@ async def test_criterion_from_other_question_is_rejected(
         json={
             "mark_scheme_item_id": other_item.id,
             "marks_awarded": "1.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
 
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_criterion_award_delete_rejects_stale_decision_revision(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    _, first_item, _ = await _create_mark_scheme(
+        db_session,
+        question_id=context["question"].id,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    stale_revision = decision["revision"]
+    teacher_headers = auth_headers(teacher_user)
+
+    award_response = await client.put(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/awards",
+        json={
+            "mark_scheme_item_id": first_item.id,
+            "marks_awarded": "1.00",
+            "expected_revision": stale_revision,
+        },
+        headers=teacher_headers,
+    )
+
+    assert award_response.status_code == 200, award_response.text
+
+    award = award_response.json()
+
+    current_decision_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        headers=teacher_headers,
+    )
+
+    assert (
+        current_decision_response.status_code == 200
+    ), current_decision_response.text
+
+    current_decision = current_decision_response.json()
+
+    assert current_decision["revision"] == stale_revision + 1
+
+    stale_delete_response = await client.request(
+        "DELETE",
+        f"/api/v1/assessment-marking/awards/{award['id']}",
+        json={
+            "expected_revision": stale_revision,
+        },
+        headers=teacher_headers,
+    )
+
+    assert stale_delete_response.status_code == 409
+
+    error = stale_delete_response.json()
+
+    assert error["error"]["message"] == (
+        "Marking decision has changed since it was loaded. "
+        "Refresh the decision and try again."
+    )
+
+    valid_delete_response = await client.request(
+        "DELETE",
+        f"/api/v1/assessment-marking/awards/{award['id']}",
+        json={
+            "expected_revision": current_decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert valid_delete_response.status_code == 204
 
 
 @pytest.mark.asyncio
@@ -1321,6 +1669,7 @@ async def test_criterion_award_can_be_deleted_via_api(
         json={
             "mark_scheme_item_id": first_item.id,
             "marks_awarded": "1.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -1329,8 +1678,23 @@ async def test_criterion_award_can_be_deleted_via_api(
 
     award = award_response.json()
 
-    delete_response = await client.delete(
+    current_decision_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        headers=auth_headers(teacher_user),
+    )
+
+    assert (
+        current_decision_response.status_code == 200
+    ), current_decision_response.text
+
+    current_decision = current_decision_response.json()
+
+    delete_response = await client.request(
+        "DELETE",
         f"/api/v1/assessment-marking/awards/{award['id']}",
+        json={
+            "expected_revision": current_decision["revision"],
+        },
         headers=auth_headers(teacher_user),
     )
 
@@ -1378,6 +1742,7 @@ async def test_marking_can_progress_to_marked_via_api(
 
     start_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={"expected_revision": decision["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -1389,6 +1754,7 @@ async def test_marking_can_progress_to_marked_via_api(
         json={
             "mark_awarded": "3.00",
             "marker_comment": "Marked.",
+            "expected_revision": start_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -1397,6 +1763,7 @@ async def test_marking_can_progress_to_marked_via_api(
 
     complete_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={"expected_revision": mark_response.json()["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -1406,6 +1773,110 @@ async def test_marking_can_progress_to_marked_via_api(
 
     assert data["status"] == MarkingDecisionStatus.MARKED.value
     assert data["marked_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_marking_lifecycle_api_rejects_stale_revision(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    teacher_headers = auth_headers(
+        teacher_user,
+    )
+
+    start_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={
+            "expected_revision": decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert start_response.status_code == 200, start_response.text
+    assert start_response.json()["revision"] == 1
+
+    mark_response = await client.patch(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        json={
+            "mark_awarded": "3.00",
+            "expected_revision": start_response.json()["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert mark_response.status_code == 200, mark_response.text
+    assert mark_response.json()["revision"] == 2
+
+    stale_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={
+            "expected_revision": start_response.json()["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert stale_response.status_code == 409
+    assert stale_response.json()["error"]["message"] == (
+        "Marking decision has changed since it was loaded. "
+        "Refresh the decision and try again."
+    )
+
+    current_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}",
+        headers=teacher_headers,
+    )
+
+    assert current_response.status_code == 200, current_response.text
+
+    current = current_response.json()
+
+    assert current["revision"] == 2
+    assert current["status"] == MarkingDecisionStatus.IN_PROGRESS.value
+    assert current["mark_awarded"] == "3.00"
+
+    complete_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={
+            "expected_revision": current["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert complete_response.status_code == 200, complete_response.text
+    assert complete_response.json()["revision"] == 3
+    assert (
+        complete_response.json()["status"]
+        == MarkingDecisionStatus.MARKED.value
+    )
 
 
 @pytest.mark.asyncio
@@ -1444,6 +1915,7 @@ async def test_marking_cannot_complete_without_question_level_mark(
 
     start_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={"expected_revision": decision["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -1451,6 +1923,7 @@ async def test_marking_cannot_complete_without_question_level_mark(
 
     response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={"expected_revision": start_response.json()["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -1498,21 +1971,24 @@ async def test_school_admin_can_review_marked_decision_via_api(
         auth_headers=auth_headers,
     )
 
-    await client.post(
+    start_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={"expected_revision": decision["revision"]},
         headers=auth_headers(teacher_user),
     )
 
-    await client.patch(
+    mark_response = await client.patch(
         f"/api/v1/assessment-marking/decisions/{decision['id']}",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": start_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
 
     complete_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={"expected_revision": mark_response.json()["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -1522,6 +1998,7 @@ async def test_school_admin_can_review_marked_decision_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/review",
         json={
             "moderation_comment": "Checked and agreed.",
+            "expected_revision": complete_response.json()["revision"],
         },
         headers=auth_headers(school_admin),
     )
@@ -1569,21 +2046,24 @@ async def test_teacher_cannot_review_marked_decision(
         auth_headers=auth_headers,
     )
 
-    await client.post(
+    start_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={"expected_revision": decision["revision"]},
         headers=auth_headers(teacher_user),
     )
 
-    await client.patch(
+    mark_response = await client.patch(
         f"/api/v1/assessment-marking/decisions/{decision['id']}",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": start_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
 
     complete_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={"expected_revision": mark_response.json()["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -1593,6 +2073,7 @@ async def test_teacher_cannot_review_marked_decision(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/review",
         json={
             "moderation_comment": "Teacher should not moderate.",
+            "expected_revision": complete_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -1641,21 +2122,24 @@ async def test_school_admin_can_finalise_marked_decision_via_api(
         auth_headers=auth_headers,
     )
 
-    await client.post(
+    start_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={"expected_revision": decision["revision"]},
         headers=auth_headers(teacher_user),
     )
 
-    await client.patch(
+    mark_response = await client.patch(
         f"/api/v1/assessment-marking/decisions/{decision['id']}",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": start_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
 
     complete_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={"expected_revision": mark_response.json()["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -1663,6 +2147,7 @@ async def test_school_admin_can_finalise_marked_decision_via_api(
 
     response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/finalise",
+        json={"expected_revision": complete_response.json()["revision"]},
         headers=auth_headers(school_admin),
     )
 
@@ -1715,26 +2200,30 @@ async def test_finalised_decision_cannot_be_changed_via_api(
         auth_headers=auth_headers,
     )
 
-    await client.post(
+    start_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={"expected_revision": decision["revision"]},
         headers=auth_headers(teacher_user),
     )
 
-    await client.patch(
+    mark_response = await client.patch(
         f"/api/v1/assessment-marking/decisions/{decision['id']}",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": start_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
 
-    await client.post(
+    complete_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/complete",
+        json={"expected_revision": mark_response.json()["revision"]},
         headers=auth_headers(teacher_user),
     )
 
     finalise_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/finalise",
+        json={"expected_revision": complete_response.json()["revision"]},
         headers=auth_headers(school_admin),
     )
 
@@ -1744,11 +2233,220 @@ async def test_finalised_decision_cannot_be_changed_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}",
         json={
             "mark_awarded": "5.00",
+            "expected_revision": finalise_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
 
     assert response.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Marking-decision immutable revision history
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_marking_decision_revision_history_is_returned_via_api(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("5.00"),
+    )
+
+    teacher_id = teacher_user.id
+    teacher_headers = auth_headers(teacher_user)
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision_id = decision["id"]
+
+    assert decision["revision"] == 0
+
+    empty_history_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision_id}/revisions",
+        headers=teacher_headers,
+    )
+
+    assert (
+        empty_history_response.status_code == 200
+    ), empty_history_response.text
+    assert empty_history_response.json() == []
+
+    start_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision_id}/start",
+        json={
+            "expected_revision": decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert start_response.status_code == 200, start_response.text
+
+    started = start_response.json()
+
+    assert started["revision"] == 1
+    assert started["status"] == MarkingDecisionStatus.IN_PROGRESS.value
+    assert started["mark_awarded"] is None
+
+    mark_response = await client.patch(
+        f"/api/v1/assessment-marking/decisions/{decision_id}",
+        json={
+            "mark_awarded": "3.00",
+            "marker_comment": "History snapshot mark.",
+            "expected_revision": started["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert mark_response.status_code == 200, mark_response.text
+
+    marked = mark_response.json()
+
+    assert marked["revision"] == 2
+    assert Decimal(marked["mark_awarded"]) == Decimal("3.00")
+    assert marked["marker_comment"] == "History snapshot mark."
+
+    history_response = await client.get(
+        f"/api/v1/assessment-marking/decisions/{decision_id}/revisions",
+        headers=teacher_headers,
+    )
+
+    assert history_response.status_code == 200, history_response.text
+
+    history = history_response.json()
+
+    assert [revision["revision"] for revision in history] == [1, 2]
+
+    first_revision = history[0]
+
+    assert first_revision["marking_decision_id"] == decision_id
+    assert first_revision["response_id"] == response_data["id"]
+    assert first_revision["changed_by_id"] == teacher_id
+    assert first_revision["marker_id"] == teacher_id
+    assert first_revision["revision"] == 1
+    assert first_revision["change_type"] == "started"
+    assert first_revision["source"] == "manual"
+    assert (
+        first_revision["status"]
+        == MarkingDecisionStatus.IN_PROGRESS.value
+    )
+    assert first_revision["mark_awarded"] is None
+
+    second_revision = history[1]
+
+    assert second_revision["marking_decision_id"] == decision_id
+    assert second_revision["response_id"] == response_data["id"]
+    assert second_revision["changed_by_id"] == teacher_id
+    assert second_revision["marker_id"] == teacher_id
+    assert second_revision["revision"] == 2
+    assert second_revision["change_type"] == "updated"
+    assert second_revision["source"] == "manual"
+    assert (
+        second_revision["status"]
+        == MarkingDecisionStatus.IN_PROGRESS.value
+    )
+    assert Decimal(second_revision["mark_awarded"]) == Decimal("3.00")
+    assert second_revision["marker_comment"] == "History snapshot mark."
+
+    # Most importantly, revision 1 must remain its own historical snapshot.
+    # It must not reflect the mark subsequently written at revision 2.
+    assert first_revision["mark_awarded"] is None
+
+
+@pytest.mark.asyncio
+async def test_other_teacher_cannot_access_marking_decision_revision_history(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    teacher_headers = auth_headers(teacher_user)
+
+    other_teacher = await create_test_user(
+        db_session,
+        email=(
+            f"marking.api.history.other."
+            f"{context['assessment'].id}@example.com"
+        ),
+        roles=[UserRole.TEACHER],
+        school_id=teacher_user.school_id,
+    )
+
+    other_teacher_headers = auth_headers(other_teacher)
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    start_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={
+            "expected_revision": decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert start_response.status_code == 200, start_response.text
+    assert start_response.json()["revision"] == 1
+
+    response = await client.get(
+        (
+            f"/api/v1/assessment-marking/decisions/"
+            f"{decision['id']}/revisions"
+        ),
+        headers=other_teacher_headers,
+    )
+
+    assert response.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -1836,6 +2534,7 @@ async def test_other_teacher_cannot_change_marking_decision(
         f"/api/v1/assessment-marking/decisions/{decision['id']}",
         json={
             "mark_awarded": "2.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(other_teacher),
     )
@@ -1973,6 +2672,7 @@ async def test_started_marking_decision_cannot_be_deleted_via_api(
 
     start_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/start",
+        json={"expected_revision": decision["revision"]},
         headers=auth_headers(teacher_user),
     )
 
@@ -2491,6 +3191,7 @@ async def test_teacher_can_instant_mark_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2502,6 +3203,7 @@ async def test_teacher_can_instant_mark_via_api(
     assert Decimal(data["mark_awarded"]) == Decimal("4.00")
     assert data["status"] == MarkingDecisionStatus.MARKED.value
     assert data["marked_at"] is not None
+    assert data["revision"] == 1
 
 
 @pytest.mark.asyncio
@@ -2560,6 +3262,7 @@ async def test_instant_mark_api_enforces_snapshot_maximum(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "6.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2606,6 +3309,7 @@ async def test_instant_mark_api_can_correct_marked_decision(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "3.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2614,10 +3318,13 @@ async def test_instant_mark_api_can_correct_marked_decision(
 
     first_data = first_response.json()
 
+    assert first_data["revision"] == 1
+
     corrected_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": first_data["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2629,6 +3336,94 @@ async def test_instant_mark_api_can_correct_marked_decision(
     assert Decimal(corrected_data["mark_awarded"]) == Decimal("4.00")
     assert corrected_data["status"] == MarkingDecisionStatus.MARKED.value
     assert corrected_data["marked_at"] == first_data["marked_at"]
+    assert corrected_data["revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_instant_mark_api_rejects_stale_revision(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    response_data = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    await _submit_response_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    decision = await _create_decision_via_api(
+        client,
+        response_id=response_data["id"],
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    teacher_headers = auth_headers(
+        teacher_user,
+    )
+
+    first_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "3.00",
+            "expected_revision": decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert first_response.status_code == 200, first_response.text
+
+    first_data = first_response.json()
+
+    assert first_data["revision"] == 1
+
+    stale_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "4.00",
+            "expected_revision": decision["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert stale_response.status_code == 409
+    assert stale_response.json()["error"]["message"] == (
+        "Marking decision has changed since it was loaded. "
+        "Refresh the decision and try again."
+    )
+
+    # The same authoritative revision must still be usable after the stale
+    # request. This proves the rejected request did not advance the decision.
+    valid_response = await client.post(
+        f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
+        json={
+            "mark_awarded": "4.00",
+            "expected_revision": first_data["revision"],
+        },
+        headers=teacher_headers,
+    )
+
+    assert valid_response.status_code == 200, valid_response.text
+
+    valid_data = valid_response.json()
+
+    assert Decimal(valid_data["mark_awarded"]) == Decimal("4.00")
+    assert valid_data["revision"] == 2
 
 
 @pytest.mark.asyncio
@@ -2676,6 +3471,7 @@ async def test_reviewed_decision_cannot_be_instant_marked_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "3.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2686,6 +3482,7 @@ async def test_reviewed_decision_cannot_be_instant_marked_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/review",
         json={
             "moderation_comment": "Reviewed.",
+            "expected_revision": marked_response.json()["revision"],
         },
         headers=auth_headers(school_admin),
     )
@@ -2697,6 +3494,7 @@ async def test_reviewed_decision_cannot_be_instant_marked_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": review_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2752,6 +3550,7 @@ async def test_finalised_decision_cannot_be_instant_marked_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "3.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2760,6 +3559,7 @@ async def test_finalised_decision_cannot_be_instant_marked_via_api(
 
     finalise_response = await client.post(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/finalise",
+        json={"expected_revision": marked_response.json()["revision"]},
         headers=auth_headers(school_admin),
     )
 
@@ -2770,6 +3570,7 @@ async def test_finalised_decision_cannot_be_instant_marked_via_api(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "4.00",
+            "expected_revision": finalise_response.json()["revision"],
         },
         headers=auth_headers(teacher_user),
     )
@@ -2818,6 +3619,7 @@ async def test_instant_mark_api_rejects_negative_mark(
         f"/api/v1/assessment-marking/decisions/{decision['id']}/instant-mark",
         json={
             "mark_awarded": "-1.00",
+            "expected_revision": decision["revision"],
         },
         headers=auth_headers(teacher_user),
     )

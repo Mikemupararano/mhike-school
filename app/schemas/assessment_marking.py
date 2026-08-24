@@ -251,18 +251,32 @@ class AssessmentResponseStatusUpdate(BaseModel):
 
 class MarkingDecisionCreate(BaseModel):
     """
-    Payload for starting marking on one submitted response.
+    Payload for creating a pristine marking decision for one submitted
+    response.
+
+    Authoritative marking content is added only through revision-aware
+    mutation endpoints.
     """
 
-    marker_comment: str | None = None
+    model_config = {
+        "extra": "forbid",
+    }
 
 
 class InstantMarkRequest(BaseModel):
     """
     Payload for examiner-style one-click or keyboard marking.
+
+    ``expected_revision`` is the revision displayed by the marking client.
+    It is used for optimistic concurrency so a stale browser tab cannot
+    overwrite a newer authoritative marking decision.
     """
 
     mark_awarded: Decimal = Field(
+        ge=0,
+    )
+
+    expected_revision: int = Field(
         ge=0,
     )
 
@@ -270,6 +284,9 @@ class InstantMarkRequest(BaseModel):
 class MarkingDecisionUpdate(BaseModel):
     """
     Payload for updating the authoritative question-level result.
+
+    ``expected_revision`` is required for optimistic concurrency so a
+    stale marking client cannot overwrite a newer decision.
     """
 
     mark_awarded: Decimal | None = Field(
@@ -279,18 +296,40 @@ class MarkingDecisionUpdate(BaseModel):
 
     marker_comment: str | None = None
 
+    expected_revision: int = Field(
+        ge=0,
+    )
+
 
 class MarkingDecisionStatusUpdate(BaseModel):
     """
     Payload for an explicit marking-decision lifecycle transition.
 
     ``moderation_comment`` is used when moving a completed decision into
-    REVIEWED status.
+    REVIEWED status. ``expected_revision`` prevents a stale marking client
+    from changing a newer authoritative decision.
     """
 
     status: MarkingDecisionStatus
 
     moderation_comment: str | None = None
+
+    expected_revision: int = Field(
+        ge=0,
+    )
+
+
+class MarkingDecisionTransitionRequest(BaseModel):
+    """
+    Payload for lifecycle action endpoints such as start, complete and
+    finalise.
+
+    The revision is required for optimistic concurrency.
+    """
+
+    expected_revision: int = Field(
+        ge=0,
+    )
 
 
 class MarkingReviewRequest(BaseModel):
@@ -299,6 +338,10 @@ class MarkingReviewRequest(BaseModel):
     """
 
     moderation_comment: str | None = None
+
+    expected_revision: int = Field(
+        ge=0,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +352,9 @@ class MarkingReviewRequest(BaseModel):
 class MarkSchemeItemAwardCreate(BaseModel):
     """
     Payload for creating or updating one criterion-level award.
+
+    ``expected_revision`` protects the authoritative marking decision
+    from stale criterion-marking clients.
     """
 
     mark_scheme_item_id: int = Field(
@@ -320,6 +366,10 @@ class MarkSchemeItemAwardCreate(BaseModel):
     )
 
     marker_note: str | None = None
+
+    expected_revision: int = Field(
+        ge=0,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +580,19 @@ class MarkingAnnotationOut(BaseModel):
     deleted_by_id: int | None = None
 
 
+class MarkSchemeItemAwardDeleteRequest(BaseModel):
+    """
+    Payload for deleting one criterion-level award.
+
+    ``expected_revision`` protects the authoritative marking decision
+    from stale criterion-marking clients.
+    """
+
+    expected_revision: int = Field(
+        ge=0,
+    )
+
+
 class MarkSchemeItemAwardOut(BaseModel):
     """
     Criterion-level award response model.
@@ -556,6 +619,42 @@ class MarkSchemeItemAwardOut(BaseModel):
     mark_scheme_item: MarkSchemeItemSummaryOut | None = None
 
 
+class MarkingDecisionRevisionOut(BaseModel):
+    """
+    Immutable historical snapshot of one marking decision revision.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+
+    marking_decision_id: int
+    response_id: int
+
+    revision: int
+
+    changed_by_id: int | None = None
+    change_type: str
+    source: str
+
+    marker_id: int | None = None
+
+    status: MarkingDecisionStatus
+
+    mark_awarded: Decimal | None = None
+
+    marker_comment: str | None = None
+    moderation_comment: str | None = None
+
+    marked_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    finalised_at: datetime | None = None
+
+    created_at: datetime
+
+
 class MarkingDecisionOut(BaseModel):
     """
     Question-level marking decision response model.
@@ -576,6 +675,8 @@ class MarkingDecisionOut(BaseModel):
     status: MarkingDecisionStatus
 
     mark_awarded: Decimal | None = None
+
+    revision: int
 
     marker_comment: str | None = None
     moderation_comment: str | None = None

@@ -443,6 +443,7 @@ def test_create_review_item_returns_201(
         *,
         response_id,
         marking_decision_id,
+        expected_revision,
         outcome,
         mark_after,
         moderator_comment,
@@ -456,6 +457,7 @@ def test_create_review_item_returns_201(
                 "review_id": review_id,
                 "response_id": response_id,
                 "marking_decision_id": marking_decision_id,
+                "expected_revision": expected_revision,
                 "outcome": outcome,
                 "mark_after": mark_after,
                 "moderator_comment": moderator_comment,
@@ -476,6 +478,7 @@ def test_create_review_item_returns_201(
         json={
             "response_id": 200,
             "marking_decision_id": 300,
+            "expected_revision": 0,
             "outcome": "adjusted",
             "mark_after": "6.00",
             "moderator_comment": "One mark added.",
@@ -496,6 +499,7 @@ def test_create_review_item_returns_201(
     assert captured["response_id"] == 200
     assert captured["marking_decision_id"] == 300
     assert captured["outcome"] == AssessmentModerationItemOutcome.ADJUSTED
+    assert captured["expected_revision"] == 0
     assert captured["mark_after"] == Decimal("6.00")
 
 

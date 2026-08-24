@@ -111,6 +111,10 @@ class AssessmentModerationItemCreate(
         gt=0,
     )
 
+    expected_revision: int = Field(
+        ge=0,
+    )
+
     outcome: AssessmentModerationItemOutcome
 
     mark_after: Decimal | None = Field(

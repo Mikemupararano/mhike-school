@@ -28,10 +28,13 @@ from app.schemas.assessment_marking import (
     MarkingAnnotationUpdate,
     MarkingDecisionCreate,
     MarkingDecisionOut,
+    MarkingDecisionRevisionOut,
     MarkingDecisionStatusUpdate,
+    MarkingDecisionTransitionRequest,
     MarkingDecisionUpdate,
     MarkingReviewRequest,
     MarkSchemeItemAwardCreate,
+    MarkSchemeItemAwardDeleteRequest,
     MarkSchemeItemAwardOut,
 )
 from app.services.assessment_marking_annotation_service import (
@@ -53,6 +56,7 @@ from app.services.assessment_marking_service import (
     get_marking_decision,
     get_response,
     instant_mark_decision,
+    list_marking_decision_revisions,
     list_script_marking_decisions,
     list_script_responses,
     review_marking,
@@ -409,7 +413,6 @@ async def create_response_marking_decision(
         db=db,
         current_user=current_user,
         response_id=response_id,
-        marker_comment=payload.marker_comment,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -641,6 +644,37 @@ async def get_response_marking_decision(
     )
 
 
+@router.get(
+    "/decisions/{decision_id}/revisions",
+    response_model=list[MarkingDecisionRevisionOut],
+)
+async def list_response_marking_decision_revisions(
+    decision_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[MarkingDecisionRevisionOut]:
+    """
+    Return immutable revision history for one marking decision.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    revisions = await list_marking_decision_revisions(
+        db=db,
+        current_user=current_user,
+        decision_id=decision_id,
+    )
+
+    return [
+        MarkingDecisionRevisionOut.model_validate(
+            revision,
+        )
+        for revision in revisions
+    ]
+
+
 @router.patch(
     "/decisions/{decision_id}",
     response_model=MarkingDecisionOut,
@@ -665,6 +699,7 @@ async def update_response_marking_decision(
         decision_id=decision_id,
         mark_awarded=payload.mark_awarded,
         marker_comment=payload.marker_comment,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -695,6 +730,7 @@ async def instant_mark_response_decision(
         current_user=current_user,
         decision_id=decision_id,
         mark_awarded=payload.mark_awarded,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -726,6 +762,7 @@ async def update_marking_decision_status(
         decision_id=decision_id,
         new_status=payload.status,
         moderation_comment=payload.moderation_comment,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -739,6 +776,7 @@ async def update_marking_decision_status(
 )
 async def start_response_marking(
     decision_id: int,
+    payload: MarkingDecisionTransitionRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MarkingDecisionOut:
@@ -754,6 +792,7 @@ async def start_response_marking(
         db=db,
         current_user=current_user,
         decision_id=decision_id,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -767,6 +806,7 @@ async def start_response_marking(
 )
 async def complete_response_marking(
     decision_id: int,
+    payload: MarkingDecisionTransitionRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MarkingDecisionOut:
@@ -782,6 +822,7 @@ async def complete_response_marking(
         db=db,
         current_user=current_user,
         decision_id=decision_id,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -812,6 +853,7 @@ async def review_response_marking(
         current_user=current_user,
         decision_id=decision_id,
         moderation_comment=payload.moderation_comment,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -825,6 +867,7 @@ async def review_response_marking(
 )
 async def finalise_response_marking(
     decision_id: int,
+    payload: MarkingDecisionTransitionRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MarkingDecisionOut:
@@ -840,6 +883,7 @@ async def finalise_response_marking(
         db=db,
         current_user=current_user,
         decision_id=decision_id,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkingDecisionOut.model_validate(
@@ -905,6 +949,7 @@ async def set_mark_scheme_item_award(
         mark_scheme_item_id=payload.mark_scheme_item_id,
         marks_awarded=payload.marks_awarded,
         marker_note=payload.marker_note,
+        expected_revision=payload.expected_revision,
     )
 
     return MarkSchemeItemAwardOut.model_validate(
@@ -918,6 +963,7 @@ async def set_mark_scheme_item_award(
 )
 async def delete_marking_award(
     award_id: int,
+    payload: MarkSchemeItemAwardDeleteRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
@@ -933,6 +979,7 @@ async def delete_marking_award(
         db=db,
         current_user=current_user,
         award_id=award_id,
+        expected_revision=payload.expected_revision,
     )
 
     return Response(

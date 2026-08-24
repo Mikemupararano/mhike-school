@@ -344,6 +344,7 @@ async def create_review_item(
         review_id,
         response_id=payload.response_id,
         marking_decision_id=payload.marking_decision_id,
+        expected_revision=payload.expected_revision,
         outcome=payload.outcome,
         mark_after=payload.mark_after,
         moderator_comment=payload.moderator_comment,
