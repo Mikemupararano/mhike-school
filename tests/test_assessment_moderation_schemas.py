@@ -137,6 +137,7 @@ def test_item_create_accepts_confirmed_without_mark_after() -> None:
     payload = AssessmentModerationItemCreate(
         response_id=20,
         marking_decision_id=30,
+        expected_revision=0,
         outcome=AssessmentModerationItemOutcome.CONFIRMED,
     )
 
@@ -150,6 +151,7 @@ def test_item_create_accepts_decimal_mark() -> None:
     payload = AssessmentModerationItemCreate(
         response_id=20,
         marking_decision_id=30,
+        expected_revision=0,
         outcome=AssessmentModerationItemOutcome.ADJUSTED,
         mark_after=Decimal("7.50"),
     )
@@ -161,6 +163,7 @@ def test_item_create_coerces_numeric_string_to_decimal() -> None:
     payload = AssessmentModerationItemCreate(
         response_id=20,
         marking_decision_id=30,
+        expected_revision=0,
         outcome=AssessmentModerationItemOutcome.ADJUSTED,
         mark_after="6.25",
     )

@@ -1242,7 +1242,11 @@ async def add_moderation_item(
                     decision.reviewed_at or _utc_now()
                 )
 
-            if moderator_comment is not None:
+            if (
+                moderator_comment is not None
+                and cleaned_moderator_comment
+                != decision.moderation_comment
+            ):
                 decision_values["moderation_comment"] = (
                     cleaned_moderator_comment
                 )

@@ -2231,6 +2231,127 @@ async def test_moderation_uses_immutable_snapshot_maximum_mark(
 
 
 @pytest.mark.asyncio
+async def test_same_moderation_comment_does_not_create_decision_revision(
+    monkeypatch,
+) -> None:
+    db = _FakeDB()
+    repository = _FakeModerationRepository()
+
+    review = _review(
+        review_status=AssessmentModerationReviewStatus.IN_PROGRESS,
+    )
+
+    repository.reviews[review.id] = review
+
+    _install_repository(
+        monkeypatch,
+        repository,
+    )
+
+    response = SimpleNamespace(
+        id=200,
+        script_id=40,
+        question_id=500,
+        question_snapshot_id=700,
+        question_snapshot=SimpleNamespace(
+            id=700,
+            maximum_mark=Decimal("10.00"),
+        ),
+    )
+
+    decision = SimpleNamespace(
+        id=300,
+        response_id=200,
+        revision=4,
+        status=MarkingDecisionStatus.REVIEWED,
+        mark_awarded=Decimal("5.00"),
+        reviewed_at=None,
+        moderation_comment="Checked and confirmed.",
+    )
+
+    question = SimpleNamespace(
+        id=500,
+        assessment_id=20,
+        maximum_mark=Decimal("10.00"),
+    )
+
+    marking_repository = _FakeMarkingRepository(db)
+
+    monkeypatch.setattr(
+        service,
+        "AssessmentMarkingRepository",
+        lambda db: marking_repository,
+    )
+
+    async def fake_review_lookup(*args, **kwargs):
+        return review
+
+    async def fake_access(*args, **kwargs):
+        return _script(
+            script_status=AssessmentScriptStatus.MODERATION,
+        )
+
+    async def fake_response(*args, **kwargs):
+        return response
+
+    async def fake_decision(*args, **kwargs):
+        return decision
+
+    async def fake_question(*args, **kwargs):
+        return question
+
+    monkeypatch.setattr(
+        service,
+        "_get_review_or_404",
+        fake_review_lookup,
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_review_access",
+        fake_access,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_response_or_404",
+        fake_response,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_decision_or_404",
+        fake_decision,
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_question_or_404",
+        fake_question,
+    )
+
+    result = await service.add_moderation_item(
+        db,
+        _user(),
+        review.id,
+        response_id=200,
+        marking_decision_id=300,
+        expected_revision=4,
+        outcome=AssessmentModerationItemOutcome.CONFIRMED,
+        moderator_comment="Checked and confirmed.",
+    )
+
+    assert result.moderator_comment == "Checked and confirmed."
+    assert result.mark_changed is False
+
+    assert decision.status == MarkingDecisionStatus.REVIEWED
+    assert decision.revision == 4
+    assert decision.moderation_comment == "Checked and confirmed."
+
+    assert marking_repository.update_calls == []
+    assert len(repository.create_item_calls) == 1
+
+    assert db.commits == 1
+    assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
 async def test_finalised_decision_cannot_be_adjusted_through_moderation(
     monkeypatch,
 ) -> None:
