@@ -15,6 +15,7 @@ import {
 
 import RoleGate from "@/components/auth/RoleGate";
 import AssessmentQuestionExtractionPanel from "@/components/assessments/AssessmentQuestionExtractionPanel";
+import AssessmentMarkingPanel from "@/components/assessments/AssessmentMarkingPanel";
 import { apiGet, apiPatch } from "@/lib/api";
 import {
     archiveAssessment,
@@ -3643,6 +3644,9 @@ function TeacherAssessmentDetailContent() {
                             </aside>
                         )}
                     </section>
+                    <AssessmentMarkingPanel
+                        assessment={assessment}
+                    />
 
                     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <h2 className="text-2xl font-extrabold text-slate-900">
@@ -3650,12 +3654,13 @@ function TeacherAssessmentDetailContent() {
                         </h2>
 
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                            The assessment definition and question structure
-                            are now connected. Candidate allocation, marking,
-                            moderation, result publication and exports can be
+                            The assessment definition, question structure and
+                            primary marking workflow are now connected.
+                            Moderation, result publication and exports can be
                             connected into this workspace next.
                         </p>
                     </section>
+
                 </>
             )}
         </main>

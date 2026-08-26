@@ -16,6 +16,10 @@ from app.models.assessment_marking_annotation import (
     MarkingAnnotationSurfaceType,
     MarkingAnnotationType,
 )
+from app.models.marking_palette import (
+    MarkingPaletteToolType,
+)
+
 from app.models.assessment_response import (
     AssessmentResponseStatus,
     MarkingDecisionStatus,
@@ -405,6 +409,62 @@ class MarkSchemeItemSummaryOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Examiner marking palette output
+# ---------------------------------------------------------------------------
+
+
+class MarkingPaletteToolOut(BaseModel):
+    """
+    One active examiner tool exposed to the marking workspace.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+    palette_id: int
+
+    tool_type: MarkingPaletteToolType
+
+    value: str
+    label: str
+    description: str | None = None
+    keyboard_shortcut: str | None = None
+
+    sort_order: int
+    is_active: bool
+
+    created_at: datetime
+    updated_at: datetime
+
+
+class MarkingPaletteOut(BaseModel):
+    """
+    School-scoped marking palette exposed to authorised markers.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+    school_id: int
+    subject_id: int | None = None
+
+    name: str
+    description: str | None = None
+
+    is_default: bool
+    is_active: bool
+
+    created_at: datetime
+    updated_at: datetime
+
+    tools: list[MarkingPaletteToolOut]
+
+
+# ---------------------------------------------------------------------------
 # Examiner marking annotation payloads
 # ---------------------------------------------------------------------------
 
@@ -423,6 +483,16 @@ class MarkingAnnotationCreate(BaseModel):
 
     palette_tool_id: int = Field(
         gt=0,
+    )
+
+    expected_decision_revision: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Expected authoritative marking-decision revision. "
+            "Required for score-bearing tick/cross annotations; "
+            "optional for non-scoring examiner annotations."
+        ),
     )
 
     surface_type: MarkingAnnotationSurfaceType = (
@@ -693,6 +763,90 @@ class MarkingDecisionOut(BaseModel):
     )
 
 
+class AssessmentQuestionSnapshotOptionOut(BaseModel):
+    """
+    Learner-visible option frozen into an immutable question snapshot.
+
+    Correct-answer flags and feedback are deliberately absent from this
+    marking representation.
+    """
+
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+
+    id: int
+    text: str
+    order: int
+
+
+class AssessmentQuestionSnapshotAssetOut(BaseModel):
+    """
+    Safe marker-facing metadata for an immutable question asset.
+
+    Internal storage paths, checksums, and file-system provenance remain
+    server-side.
+    """
+
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+
+    id: int
+    asset_type: str
+
+    original_filename: str | None = None
+    mime_type: str | None = None
+    file_size_bytes: int | None = None
+
+    alt_text: str | None = None
+    caption: str | None = None
+
+    order: int
+
+
+class AssessmentQuestionSnapshotOut(BaseModel):
+    """
+    Immutable learner-facing question state used by one script/version.
+
+    Once a response is linked to a question snapshot, marking clients should
+    use this representation rather than mutable canonical question content.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+
+    script_id: int
+    question_id: int
+    parent_question_id_snapshot: int | None = None
+
+    question_number: str
+    title: str | None = None
+    prompt: str | None = None
+    question_type: str
+
+    interaction_config_snapshot: dict[str, Any] | None = None
+
+    maximum_mark: Decimal
+    order: int
+    is_markable: bool
+
+    section_snapshot: dict[str, Any] | None = None
+
+    options_snapshot: list[AssessmentQuestionSnapshotOptionOut] = Field(
+        default_factory=list,
+    )
+
+    assets_snapshot: list[AssessmentQuestionSnapshotAssetOut] = Field(
+        default_factory=list,
+    )
+
+    created_at: datetime
+
+
 class AssessmentResponseOut(BaseModel):
     """
     Assessment response representation.
@@ -700,6 +854,10 @@ class AssessmentResponseOut(BaseModel):
     The nested marking decision is included when one exists so a marking
     client can retrieve the current question-level result and supporting
     criterion awards without making a separate request.
+
+    ``question_snapshot`` exposes the immutable learner-facing question state
+    that governed the submitted response. Marking clients should prefer this
+    snapshot whenever ``question_snapshot_id`` is present.
 
     ``response_data`` remains the stored JSON/text representation so existing
     API consumers remain backwards compatible.
@@ -713,6 +871,9 @@ class AssessmentResponseOut(BaseModel):
 
     script_id: int
     question_id: int
+
+    question_snapshot_id: int | None = None
+    question_snapshot: AssessmentQuestionSnapshotOut | None = None
 
     status: AssessmentResponseStatus
 

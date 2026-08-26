@@ -41,6 +41,8 @@ from tests.test_assessment_marking_service import (
 async def _build_annotation_context(
     db_session: AsyncSession,
     teacher_user,
+    *,
+    maximum_mark: Decimal = Decimal("5.00"),
 ):
     """
     Build one submitted response with an allocated marking decision and
@@ -50,6 +52,7 @@ async def _build_annotation_context(
     context = await _build_marking_context(
         db_session,
         teacher_user,
+        maximum_mark=maximum_mark,
     )
 
     response = await create_response(
@@ -124,6 +127,7 @@ async def test_marker_can_create_symbol_annotation(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x=Decimal("0.250000"),
         y=Decimal("0.500000"),
     )
@@ -211,6 +215,7 @@ async def test_marker_can_list_response_annotations(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.10",
         y="0.20",
     )
@@ -220,6 +225,7 @@ async def test_marker_can_list_response_annotations(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=cross_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.30",
         y="0.40",
     )
@@ -260,6 +266,7 @@ async def test_drag_update_increments_annotation_revision(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.10",
         y="0.20",
     )
@@ -299,6 +306,7 @@ async def test_stale_annotation_revision_is_rejected(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.10",
         y="0.20",
     )
@@ -344,6 +352,7 @@ async def test_annotation_is_soft_deleted(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.10",
         y="0.20",
     )
@@ -353,6 +362,7 @@ async def test_annotation_is_soft_deleted(
         current_user=teacher_user,
         annotation_id=annotation.id,
         revision=annotation.revision,
+        expected_decision_revision=context["decision"].revision,
     )
 
     assert deleted.deleted_at is not None
@@ -404,6 +414,7 @@ async def test_inactive_palette_tool_is_rejected(
             current_user=teacher_user,
             response_id=context["response"].id,
             palette_tool_id=tick_tool.id,
+            expected_decision_revision=context["decision"].revision,
             x="0.10",
             y="0.20",
         )
@@ -597,6 +608,7 @@ async def test_allocated_marker_guard_blocks_course_teacher_when_reassigned(
             current_user=teacher_user,
             response_id=context["response"].id,
             palette_tool_id=tick_tool.id,
+            expected_decision_revision=context["decision"].revision,
             x="0.10",
             y="0.20",
         )
@@ -664,6 +676,7 @@ async def test_response_surface_rejects_page_number(
             current_user=teacher_user,
             response_id=context["response"].id,
             palette_tool_id=tick_tool.id,
+            expected_decision_revision=context["decision"].revision,
             x="0.10",
             y="0.20",
             surface_type="response",
@@ -695,6 +708,7 @@ async def test_question_asset_surface_requires_reference(
             current_user=teacher_user,
             response_id=context["response"].id,
             palette_tool_id=tick_tool.id,
+            expected_decision_revision=context["decision"].revision,
             x="0.10",
             y="0.20",
             surface_type="question_asset",
@@ -725,6 +739,7 @@ async def test_script_page_surface_requires_page_number(
             current_user=teacher_user,
             response_id=context["response"].id,
             palette_tool_id=tick_tool.id,
+            expected_decision_revision=context["decision"].revision,
             x="0.10",
             y="0.20",
             surface_type="script_page",
@@ -754,6 +769,7 @@ async def test_valid_script_page_annotation_is_created(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.10",
         y="0.20",
         surface_type="script_page",
@@ -789,6 +805,7 @@ async def test_finalised_decision_blocks_annotation_creation(
             current_user=teacher_user,
             response_id=context["response"].id,
             palette_tool_id=tick_tool.id,
+            expected_decision_revision=context["decision"].revision,
             x="0.10",
             y="0.20",
         )
@@ -818,6 +835,7 @@ async def test_finalised_decision_blocks_annotation_update(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.10",
         y="0.20",
     )
@@ -859,6 +877,7 @@ async def test_finalised_decision_blocks_annotation_delete(
         current_user=teacher_user,
         response_id=context["response"].id,
         palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
         x="0.10",
         y="0.20",
     )
@@ -872,8 +891,610 @@ async def test_finalised_decision_blocks_annotation_delete(
             current_user=teacher_user,
             annotation_id=annotation.id,
             revision=annotation.revision,
+            expected_decision_revision=context["decision"].revision,
         )
 
     assert exc.value.status_code == 409
     assert exc.value.detail == "Finalised marking decisions cannot be changed"
+
+
+# ===========================================================================
+# Authoritative tick/cross scoring
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_first_tick_awards_exactly_one_mark(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    assert context["decision"].revision == 0
+    assert context["decision"].mark_awarded is None
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("1.00")
+    assert context["decision"].revision == 1
+    assert context["decision"].status == MarkingDecisionStatus.MARKED
+
+
+@pytest.mark.asyncio
+async def test_second_tick_awards_exactly_second_mark(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].revision == 1
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=1,
+        x="0.30",
+        y="0.40",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("2.00")
+    assert context["decision"].revision == 2
+
+
+@pytest.mark.asyncio
+async def test_cross_on_pristine_decision_records_zero_marks(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    cross_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✗",
+    )
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=cross_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("0.00")
+    assert context["decision"].revision == 1
+    assert context["decision"].status == MarkingDecisionStatus.MARKED
+
+
+@pytest.mark.asyncio
+async def test_additional_cross_does_not_create_false_decision_revision(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    cross_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✗",
+    )
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=cross_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].revision == 1
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=cross_tool.id,
+        expected_decision_revision=1,
+        x="0.30",
+        y="0.40",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("0.00")
+    assert context["decision"].revision == 1
+
+
+@pytest.mark.asyncio
+async def test_deleting_tick_removes_exactly_one_mark(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    first = await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    second = await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=context["decision"].revision,
+        x="0.30",
+        y="0.40",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("2.00")
+    assert context["decision"].revision == 2
+
+    await delete_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        annotation_id=second.id,
+        revision=second.revision,
+        expected_decision_revision=2,
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("1.00")
+    assert context["decision"].revision == 3
+
+    active = await list_marking_annotations(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+    )
+
+    assert [item.id for item in active] == [first.id]
+
+
+@pytest.mark.asyncio
+async def test_deleting_cross_does_not_change_mark_or_decision_revision(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    cross_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✗",
+    )
+
+    cross = await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=cross_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("0.00")
+    assert context["decision"].revision == 1
+
+    await delete_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        annotation_id=cross.id,
+        revision=cross.revision,
+        expected_decision_revision=1,
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("0.00")
+    assert context["decision"].revision == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_decision_revision_rejects_tick_atomically(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].revision == 1
+
+    response_id = context["response"].id
+
+    with pytest.raises(HTTPException) as exc:
+        await create_marking_annotation(
+            db=db_session,
+            current_user=teacher_user,
+            response_id=context["response"].id,
+            palette_tool_id=tick_tool.id,
+            expected_decision_revision=0,
+            x="0.30",
+            y="0.40",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == (
+        "Marking decision has changed since it was loaded. "
+        "Refresh the decision and try again."
+    )
+
+    active = await list_marking_annotations(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response_id,
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert len(active) == 1
+    assert context["decision"].mark_awarded == Decimal("1.00")
+    assert context["decision"].revision == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_count_cannot_exceed_frozen_maximum_and_rolls_back(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("1.00"),
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("1.00")
+    assert context["decision"].revision == 1
+
+    response_id = context["response"].id
+
+    with pytest.raises(HTTPException) as exc:
+        await create_marking_annotation(
+            db=db_session,
+            current_user=teacher_user,
+            response_id=context["response"].id,
+            palette_tool_id=tick_tool.id,
+            expected_decision_revision=1,
+            x="0.30",
+            y="0.40",
+        )
+
+    assert exc.value.status_code == 422
+
+    active = await list_marking_annotations(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response_id,
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert len(active) == 1
+    assert active[0].value == "✓"
+    assert context["decision"].mark_awarded == Decimal("1.00")
+    assert context["decision"].revision == 1
+
+
+@pytest.mark.asyncio
+async def test_moving_tick_changes_only_annotation_revision(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    annotation = await create_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=context["response"].id,
+        palette_tool_id=tick_tool.id,
+        expected_decision_revision=0,
+        x="0.10",
+        y="0.20",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    decision_revision = context["decision"].revision
+
+    updated = await update_marking_annotation(
+        db=db_session,
+        current_user=teacher_user,
+        annotation_id=annotation.id,
+        revision=annotation.revision,
+        x="0.75",
+        y="0.80",
+    )
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert updated.revision == 2
+    assert updated.x == Decimal("0.750000")
+    assert updated.y == Decimal("0.800000")
+    assert context["decision"].mark_awarded == Decimal("1.00")
+    assert context["decision"].revision == decision_revision
+
+
+@pytest.mark.asyncio
+async def test_fractional_manual_mark_rejects_tick_scoring(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    context["decision"].mark_awarded = Decimal("1.50")
+    context["decision"].status = MarkingDecisionStatus.MARKED
+    await db_session.commit()
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    response_id = context["response"].id
+    revision = context["decision"].revision
+
+    with pytest.raises(HTTPException) as exc:
+        await create_marking_annotation(
+            db=db_session,
+            current_user=teacher_user,
+            response_id=response_id,
+            palette_tool_id=tick_tool.id,
+            expected_decision_revision=revision,
+            x="0.10",
+            y="0.20",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == (
+        "The existing question mark is not consistent "
+        "with the active tick annotations. Resolve the "
+        "mark before using tick or cross scoring."
+    )
+
+    active = await list_marking_annotations(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response_id,
+    )
+
+    assert active == []
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("1.50")
+    assert context["decision"].revision == revision
+
+
+@pytest.mark.asyncio
+async def test_integer_manual_mark_without_ticks_rejects_tick_scoring(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_annotation_context(
+        db_session,
+        teacher_user,
+    )
+
+    tick_tool = _find_tool(
+        context["palette"],
+        tool_type=MarkingPaletteToolType.SYMBOL,
+        value="✓",
+    )
+
+    context["decision"].mark_awarded = Decimal("2.00")
+    context["decision"].status = MarkingDecisionStatus.MARKED
+    await db_session.commit()
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    response_id = context["response"].id
+    revision = context["decision"].revision
+
+    with pytest.raises(HTTPException) as exc:
+        await create_marking_annotation(
+            db=db_session,
+            current_user=teacher_user,
+            response_id=response_id,
+            palette_tool_id=tick_tool.id,
+            expected_decision_revision=revision,
+            x="0.10",
+            y="0.20",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == (
+        "The existing question mark is not consistent "
+        "with the active tick annotations. Resolve the "
+        "mark before using tick or cross scoring."
+    )
+
+    active = await list_marking_annotations(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response_id,
+    )
+
+    assert active == []
+
+    await db_session.refresh(
+        context["decision"],
+    )
+
+    assert context["decision"].mark_awarded == Decimal("2.00")
+    assert context["decision"].revision == revision
 

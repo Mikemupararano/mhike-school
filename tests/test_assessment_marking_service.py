@@ -47,6 +47,7 @@ from app.services.assessment_marking_service import (
     get_marking_decision,
     get_response,
     instant_mark_decision,
+    list_marking_decision_revisions,
     list_script_marking_decisions,
     list_script_responses,
     review_marking,
@@ -2484,6 +2485,77 @@ async def test_legacy_response_without_snapshot_uses_canonical_maximum(
     assert exc.value.status_code == 422
     assert "5.00" in str(exc.value.detail)
 
+@pytest.mark.asyncio
+async def test_identical_manual_save_after_instant_mark_is_noop(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("1.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    instant = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("1.00"),
+        expected_revision=decision.revision,
+    )
+
+    assert instant.revision == 1
+    assert instant.status == MarkingDecisionStatus.MARKED
+    assert instant.mark_awarded == Decimal("1.00")
+
+    saved = await update_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("1.00"),
+        marker_comment=None,
+        expected_revision=instant.revision,
+    )
+
+    assert saved.revision == 1
+    assert saved.status == MarkingDecisionStatus.MARKED
+    assert saved.mark_awarded == Decimal("1.00")
+    assert saved.marker_comment is None
+
+    revisions = await list_marking_decision_revisions(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+    )
+
+    assert len(revisions) == 1
+    assert revisions[0].revision == 1
+    assert revisions[0].change_type == (
+        MarkingDecisionRevisionChangeType.INSTANT_MARKED
+    )
+    assert revisions[0].source == MarkingDecisionRevisionSource.QUICK_MARK
+
+
 # ----------------------------------------------------------------------
 # Instant marking
 # ----------------------------------------------------------------------
@@ -2586,6 +2658,101 @@ async def test_instant_mark_enforces_snapshot_maximum(
 
     assert exc.value.status_code == 422
     assert "5.00" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_identical_instant_mark_is_noop(
+    db_session: AsyncSession,
+    teacher_user,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+        maximum_mark=Decimal("1.00"),
+    )
+
+    response = await create_response(
+        db=db_session,
+        current_user=teacher_user,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        response_text="Answer",
+    )
+
+    await submit_response(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    decision = await create_marking_decision(
+        db=db_session,
+        current_user=teacher_user,
+        response_id=response.id,
+    )
+
+    first = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("1.00"),
+        expected_revision=decision.revision,
+    )
+
+    first_marked_at = first.marked_at
+
+    assert first.revision == 1
+    assert first.status == MarkingDecisionStatus.MARKED
+    assert first.mark_awarded == Decimal("1.00")
+    assert first_marked_at is not None
+
+    repeated = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("1.00"),
+        expected_revision=first.revision,
+    )
+
+    assert repeated.revision == 1
+    assert repeated.status == MarkingDecisionStatus.MARKED
+    assert repeated.mark_awarded == Decimal("1.00")
+    assert repeated.marked_at == first_marked_at
+
+    revisions = await list_marking_decision_revisions(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+    )
+
+    assert len(revisions) == 1
+    assert revisions[0].revision == 1
+    assert revisions[0].change_type == (
+        MarkingDecisionRevisionChangeType.INSTANT_MARKED
+    )
+    assert revisions[0].source == MarkingDecisionRevisionSource.QUICK_MARK
+
+    corrected = await instant_mark_decision(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+        mark_awarded=Decimal("0.00"),
+        expected_revision=repeated.revision,
+    )
+
+    assert corrected.revision == 2
+    assert corrected.status == MarkingDecisionStatus.MARKED
+    assert corrected.mark_awarded == Decimal("0.00")
+    assert corrected.marked_at == first_marked_at
+
+    revisions = await list_marking_decision_revisions(
+        db=db_session,
+        current_user=teacher_user,
+        decision_id=decision.id,
+    )
+
+    assert len(revisions) == 2
+    assert [revision.revision for revision in revisions] == [1, 2]
 
 
 @pytest.mark.asyncio

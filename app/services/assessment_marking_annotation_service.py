@@ -15,12 +15,20 @@ from app.models.assessment_marking_annotation import (
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
+    MarkingDecisionStatus,
 )
 from app.models.marking_palette import (
     MarkingPaletteTool,
     MarkingPaletteToolType,
 )
+from app.models.marking_decision_revision import (
+    MarkingDecisionRevisionChangeType,
+    MarkingDecisionRevisionSource,
+)
 from app.models.user import User
+from app.repositories.assessment_marking import (
+    AssessmentMarkingRepository,
+)
 from app.repositories.assessment_marking_annotation import (
     AssessmentMarkingAnnotationRepository,
 )
@@ -31,11 +39,129 @@ from app.services.assessment_marking_service import (
     _ensure_decision_editable,
     _ensure_marker_or_admin,
     _ensure_response_marking_access,
+    _get_authoritative_response_maximum_mark,
     _get_response_or_404,
 )
 
 
 _UNSET = object()
+
+_TICK_SYMBOL = "✓"
+_CROSS_SYMBOL = "✗"
+
+
+def _is_score_annotation(
+    annotation_type: MarkingAnnotationType,
+    value: str | None,
+) -> bool:
+    return (
+        annotation_type == MarkingAnnotationType.SYMBOL
+        and value in {
+            _TICK_SYMBOL,
+            _CROSS_SYMBOL,
+        }
+    )
+
+
+def _is_tick_annotation(
+    annotation: AssessmentMarkingAnnotation,
+) -> bool:
+    return (
+        annotation.annotation_type
+        == MarkingAnnotationType.SYMBOL
+        and annotation.value == _TICK_SYMBOL
+        and annotation.deleted_at is None
+    )
+
+
+def _ensure_tick_scoring_consistent(
+    *,
+    decision_mark: Decimal | None,
+    active_tick_count: int,
+) -> None:
+    """
+    Prevent tick/cross scoring from silently replacing an
+    incompatible existing authoritative mark.
+
+    Tick-scored decisions must satisfy:
+        mark_awarded == number of active ticks
+
+    A pristine None mark is allowed only when there are no
+    existing active ticks.
+    """
+
+    tick_mark = Decimal(
+        active_tick_count,
+    )
+
+    if decision_mark is None:
+        if active_tick_count == 0:
+            return
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Existing marking evidence is inconsistent with "
+                "the authoritative question mark. Resolve the "
+                "mark before using tick or cross scoring."
+            ),
+        )
+
+    if Decimal(decision_mark) != tick_mark:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The existing question mark is not consistent "
+                "with the active tick annotations. Resolve the "
+                "mark before using tick or cross scoring."
+            ),
+        )
+
+
+def _normalise_decision_revision(
+    value: Any,
+) -> int | None:
+    if value is None:
+        return None
+
+    if isinstance(
+        value,
+        bool,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "expected_decision_revision must be "
+                "a non-negative integer"
+            ),
+        )
+
+    try:
+        revision = int(
+            value,
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "expected_decision_revision must be "
+                "a non-negative integer"
+            ),
+        ) from exc
+
+    if revision < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "expected_decision_revision must be "
+                "a non-negative integer"
+            ),
+        )
+
+    return revision
 
 
 def _utc_now() -> datetime:
@@ -577,6 +703,7 @@ async def create_marking_annotation(
     response_id: int,
     *,
     palette_tool_id: int,
+    expected_decision_revision: int | None = None,
     x: Any,
     y: Any,
     surface_type: MarkingAnnotationSurfaceType | str = (
@@ -590,6 +717,12 @@ async def create_marking_annotation(
     height: Any = None,
     text: str | None = None,
 ) -> AssessmentMarkingAnnotation:
+    expected_decision_revision = (
+        _normalise_decision_revision(
+            expected_decision_revision,
+        )
+    )
+
     response = await _get_response_or_404(
         db,
         response_id,
@@ -729,10 +862,189 @@ async def create_marking_annotation(
         db,
     )
 
+    marking_repository = AssessmentMarkingRepository(
+        db,
+    )
+
+    is_score_annotation = _is_score_annotation(
+        annotation_type,
+        tool.value,
+    )
+
+    if (
+        is_score_annotation
+        and expected_decision_revision is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "expected_decision_revision is required "
+                "for tick and cross annotations"
+            ),
+        )
+
     try:
+        locked_decision = None
+
+        if is_score_annotation:
+            decision = response.marking_decision
+
+            if decision is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "A marking decision must exist before "
+                        "tick or cross annotations can be used"
+                    ),
+                )
+
+            locked_decision = (
+                await marking_repository
+                .get_decision_by_id_for_update(
+                    decision.id,
+                )
+            )
+
+            if locked_decision is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Marking decision not found",
+                )
+
+            if (
+                locked_decision.revision
+                != expected_decision_revision
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Marking decision has changed since it "
+                        "was loaded. Refresh the decision and "
+                        "try again."
+                    ),
+                )
+
+            _ensure_decision_editable(
+                locked_decision,
+            )
+            _ensure_marker_or_admin(
+                current_user,
+                locked_decision,
+            )
+
+            existing_annotations = (
+                await repository.list_for_response(
+                    response.id,
+                    include_deleted=False,
+                    include_relationships=False,
+                )
+            )
+
+            existing_tick_count = sum(
+                1
+                for item in existing_annotations
+                if _is_tick_annotation(
+                    item,
+                )
+            )
+
+            _ensure_tick_scoring_consistent(
+                decision_mark=locked_decision.mark_awarded,
+                active_tick_count=existing_tick_count,
+            )
+
         annotation = await repository.create(
             annotation,
         )
+
+        if is_score_annotation:
+            active_annotations = (
+                await repository.list_for_response(
+                    response.id,
+                    include_deleted=False,
+                    include_relationships=False,
+                )
+            )
+
+            tick_count = sum(
+                1
+                for item in active_annotations
+                if _is_tick_annotation(
+                    item,
+                )
+            )
+
+            authoritative_mark = Decimal(
+                tick_count,
+            )
+
+            maximum_mark = (
+                await _get_authoritative_response_maximum_mark(
+                    db,
+                    response,
+                )
+            )
+
+            if authoritative_mark > maximum_mark:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        "The number of tick annotations exceeds "
+                        "the question maximum mark"
+                    ),
+                )
+
+            assert locked_decision is not None
+
+            values = {
+                "mark_awarded": authoritative_mark,
+                "status": MarkingDecisionStatus.MARKED,
+                "marked_at": (
+                    locked_decision.marked_at
+                    or _utc_now()
+                ),
+            }
+
+            decision_changed = any(
+                getattr(
+                    locked_decision,
+                    field_name,
+                )
+                != field_value
+                for (
+                    field_name,
+                    field_value,
+                ) in values.items()
+            )
+
+            if decision_changed:
+                revision = (
+                    await marking_repository
+                    .update_decision_with_revision(
+                        locked_decision.id,
+                        expected_decision_revision,
+                        values=values,
+                        changed_by_id=current_user.id,
+                        change_type=(
+                            MarkingDecisionRevisionChangeType
+                            .INSTANT_MARKED
+                        ),
+                        source=(
+                            MarkingDecisionRevisionSource
+                            .QUICK_MARK
+                        ),
+                    )
+                )
+
+                if revision is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "Marking decision has changed since "
+                            "it was loaded. Refresh the decision "
+                            "and try again."
+                        ),
+                    )
 
         await db.commit()
 
@@ -741,6 +1053,10 @@ async def create_marking_annotation(
             annotation.id,
             include_deleted=False,
         )
+
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception:
         await db.rollback()
         raise
@@ -947,9 +1263,15 @@ async def delete_marking_annotation(
     annotation_id: int,
     *,
     revision: int,
+    expected_decision_revision: int | None = None,
 ) -> AssessmentMarkingAnnotation:
     expected_revision = _normalise_revision(
         revision,
+    )
+    expected_decision_revision = (
+        _normalise_decision_revision(
+            expected_decision_revision,
+        )
     )
 
     annotation = await _get_annotation_or_404(
@@ -977,7 +1299,97 @@ async def delete_marking_annotation(
         db,
     )
 
+    marking_repository = AssessmentMarkingRepository(
+        db,
+    )
+
+    is_score_annotation = _is_score_annotation(
+        annotation.annotation_type,
+        annotation.value,
+    )
+
+    if (
+        is_score_annotation
+        and expected_decision_revision is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "expected_decision_revision is required "
+                "for tick and cross annotations"
+            ),
+        )
+
     try:
+        locked_decision = None
+
+        if is_score_annotation:
+            decision = response.marking_decision
+
+            if decision is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "A marking decision must exist before "
+                        "tick or cross annotations can be removed"
+                    ),
+                )
+
+            locked_decision = (
+                await marking_repository
+                .get_decision_by_id_for_update(
+                    decision.id,
+                )
+            )
+
+            if locked_decision is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Marking decision not found",
+                )
+
+            if (
+                locked_decision.revision
+                != expected_decision_revision
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Marking decision has changed since it "
+                        "was loaded. Refresh the decision and "
+                        "try again."
+                    ),
+                )
+
+            _ensure_decision_editable(
+                locked_decision,
+            )
+            _ensure_marker_or_admin(
+                current_user,
+                locked_decision,
+            )
+
+            existing_annotations = (
+                await repository.list_for_response(
+                    response.id,
+                    include_deleted=False,
+                    include_relationships=False,
+                )
+            )
+
+            existing_tick_count = sum(
+                1
+                for item in existing_annotations
+                if _is_tick_annotation(
+                    item,
+                )
+            )
+
+            _ensure_tick_scoring_consistent(
+                decision_mark=locked_decision.mark_awarded,
+                active_tick_count=existing_tick_count,
+            )
+
         deleted = await repository.soft_delete_if_revision(
             annotation.id,
             expected_revision,
@@ -986,8 +1398,6 @@ async def delete_marking_annotation(
         )
 
         if not deleted:
-            await db.rollback()
-
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
@@ -996,6 +1406,95 @@ async def delete_marking_annotation(
                 ),
             )
 
+        if is_score_annotation:
+            active_annotations = (
+                await repository.list_for_response(
+                    response.id,
+                    include_deleted=False,
+                    include_relationships=False,
+                )
+            )
+
+            tick_count = sum(
+                1
+                for item in active_annotations
+                if _is_tick_annotation(
+                    item,
+                )
+            )
+
+            authoritative_mark = Decimal(
+                tick_count,
+            )
+
+            maximum_mark = (
+                await _get_authoritative_response_maximum_mark(
+                    db,
+                    response,
+                )
+            )
+
+            if authoritative_mark > maximum_mark:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Active tick annotations exceed the "
+                        "question maximum mark"
+                    ),
+                )
+
+            assert locked_decision is not None
+
+            values = {
+                "mark_awarded": authoritative_mark,
+                "status": MarkingDecisionStatus.MARKED,
+                "marked_at": (
+                    locked_decision.marked_at
+                    or _utc_now()
+                ),
+            }
+
+            decision_changed = any(
+                getattr(
+                    locked_decision,
+                    field_name,
+                )
+                != field_value
+                for (
+                    field_name,
+                    field_value,
+                ) in values.items()
+            )
+
+            if decision_changed:
+                revision = (
+                    await marking_repository
+                    .update_decision_with_revision(
+                        locked_decision.id,
+                        expected_decision_revision,
+                        values=values,
+                        changed_by_id=current_user.id,
+                        change_type=(
+                            MarkingDecisionRevisionChangeType
+                            .INSTANT_MARKED
+                        ),
+                        source=(
+                            MarkingDecisionRevisionSource
+                            .QUICK_MARK
+                        ),
+                    )
+                )
+
+                if revision is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "Marking decision has changed since "
+                            "it was loaded. Refresh the decision "
+                            "and try again."
+                        ),
+                    )
+
         await db.commit()
 
         return await _get_annotation_or_404(
@@ -1003,7 +1502,9 @@ async def delete_marking_annotation(
             annotation.id,
             include_deleted=True,
         )
+
     except HTTPException:
+        await db.rollback()
         raise
     except Exception:
         await db.rollback()

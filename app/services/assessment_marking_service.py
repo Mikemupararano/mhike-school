@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +33,7 @@ from app.models.user import User, UserRole
 from app.repositories.assessment_candidate import AssessmentCandidateRepository
 from app.repositories.assessment_marking import AssessmentMarkingRepository
 from app.repositories.course import CourseRepository
+from app.services import assessment_document_service
 
 # ----------------------------------------------------------------------
 # Role helpers
@@ -537,6 +540,238 @@ async def _ensure_decision_marking_access(
     )
 
     return response
+
+
+# ----------------------------------------------------------------------
+# Secure marking asset delivery
+# ----------------------------------------------------------------------
+
+
+def _sha256_file(
+    path: Path,
+) -> str:
+    """
+    Return the SHA-256 digest for one file.
+    """
+
+    digest = hashlib.sha256()
+
+    with path.open("rb") as handle:
+        for chunk in iter(
+            lambda: handle.read(1024 * 1024),
+            b"",
+        ):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+async def resolve_marking_response_asset_path(
+    db: AsyncSession,
+    current_user: User,
+    response_id: int,
+    asset_id: int,
+) -> tuple[Path, str, str | None]:
+    """
+    Resolve one immutable response-snapshot asset for secure marker delivery.
+
+    Access is governed by the established response marking-access policy.
+    The asset must belong to the exact immutable question snapshot linked
+    to the submitted response. Mutable canonical question assets are never
+    used as a fallback.
+    """
+
+    response = await _get_response_or_404(
+        db,
+        response_id,
+        include_relationships=True,
+    )
+
+    script = await _ensure_response_marking_access(
+        db,
+        current_user,
+        response,
+    )
+
+    candidate = await _get_candidate_or_404(
+        db,
+        script.candidate_id,
+    )
+
+    assessment = candidate.assessment
+
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment candidate is not linked to an assessment",
+        )
+
+    if (
+        response.question_snapshot_id is None
+        or response.question_snapshot is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Assessment response is not linked to an immutable "
+                "question snapshot."
+            ),
+        )
+
+    snapshot = response.question_snapshot
+
+    if snapshot.script_id != script.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Assessment response question snapshot does not belong "
+                "to the response script."
+            ),
+        )
+
+    if snapshot.question_id != response.question_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Assessment response question snapshot does not match "
+                "the response question."
+            ),
+        )
+
+    assets_snapshot = (
+        snapshot.assets_snapshot
+        if isinstance(snapshot.assets_snapshot, list)
+        else []
+    )
+
+    asset_snapshot = next(
+        (
+            item
+            for item in assets_snapshot
+            if (
+                isinstance(item, dict)
+                and item.get("id") == asset_id
+            )
+        ),
+        None,
+    )
+
+    if asset_snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment response asset not found.",
+        )
+
+    storage_path_value = asset_snapshot.get(
+        "storage_path",
+    )
+
+    if (
+        not isinstance(storage_path_value, str)
+        or not storage_path_value.strip()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment response asset file is not available.",
+        )
+
+    mime_type_value = asset_snapshot.get(
+        "mime_type",
+    )
+
+    original_filename_value = asset_snapshot.get(
+        "original_filename",
+    )
+
+    raw_sha256 = asset_snapshot.get(
+        "sha256",
+    )
+
+    expected_sha256: str | None = None
+
+    if raw_sha256 is not None:
+        if (
+            not isinstance(raw_sha256, str)
+            or len(raw_sha256) != 64
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Assessment question snapshot contains an invalid "
+                    "asset checksum."
+                ),
+            )
+
+        expected_sha256 = raw_sha256.lower()
+
+    expected_root = (
+        Path(
+            assessment_document_service.ASSESSMENT_UPLOAD_ROOT,
+        )
+        / str(assessment.school_id)
+        / str(assessment.id)
+    ).resolve()
+
+    asset_path = Path(
+        storage_path_value,
+    ).resolve()
+
+    try:
+        asset_path.relative_to(
+            expected_root,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The stored assessment question asset path falls outside "
+                "the authorised assessment directory."
+            ),
+        ) from exc
+
+    if not asset_path.exists() or not asset_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment question asset file was not found.",
+        )
+
+    if expected_sha256 is not None:
+        actual_sha256 = _sha256_file(
+            asset_path,
+        )
+
+        if actual_sha256.lower() != expected_sha256:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Assessment question asset no longer matches the "
+                    "immutable attempt snapshot."
+                ),
+            )
+
+    mime_type = (
+        mime_type_value.strip()
+        if (
+            isinstance(mime_type_value, str)
+            and mime_type_value.strip()
+        )
+        else "application/octet-stream"
+    )
+
+    download_name = (
+        original_filename_value.strip()
+        if (
+            isinstance(original_filename_value, str)
+            and original_filename_value.strip()
+        )
+        else None
+    )
+
+    return (
+        asset_path,
+        mime_type,
+        download_name,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -1307,6 +1542,10 @@ async def update_marking_decision(
 ) -> MarkingDecision:
     """
     Update the authoritative question-level mark and marker comment.
+
+    Identical authoritative state is a no-op: the current decision is
+    returned without creating a new immutable revision. Revision checks
+    remain authoritative, so stale requests still fail with 409.
     """
 
     decision = await _get_decision_or_404(
@@ -1329,9 +1568,14 @@ async def update_marking_decision(
         decision,
     )
 
-    values: dict = {
-        "marker_comment": marker_comment,
-    }
+    normalised_comment = (
+        marker_comment.strip()
+        if marker_comment is not None
+        and marker_comment.strip()
+        else None
+    )
+
+    normalised_mark: Decimal | None = None
 
     if mark_awarded is not None:
         normalised_mark = _normalise_decimal(
@@ -1353,18 +1597,68 @@ async def update_marking_decision(
                 ),
             )
 
-        values["mark_awarded"] = normalised_mark
-
-    if decision.status == MarkingDecisionStatus.UNMARKED:
-        values["status"] = MarkingDecisionStatus.IN_PROGRESS
-
     repository = AssessmentMarkingRepository(
         db,
     )
 
     try:
-        revision = await repository.update_decision_with_revision(
+        locked_decision = await repository.get_decision_by_id_for_update(
             decision.id,
+        )
+
+        if locked_decision is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Marking decision not found",
+            )
+
+        _ensure_decision_editable(
+            locked_decision,
+        )
+        _ensure_marker_or_admin(
+            current_user,
+            locked_decision,
+        )
+
+        if locked_decision.revision != expected_revision:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
+
+        values: dict = {
+            "marker_comment": normalised_comment,
+        }
+
+        if normalised_mark is not None:
+            values["mark_awarded"] = normalised_mark
+
+        if locked_decision.status == MarkingDecisionStatus.UNMARKED:
+            values["status"] = MarkingDecisionStatus.IN_PROGRESS
+
+        unchanged = all(
+            getattr(
+                locked_decision,
+                field_name,
+            )
+            == field_value
+            for field_name, field_value in values.items()
+        )
+
+        if unchanged:
+            await db.commit()
+
+            return await _get_decision_or_404(
+                db,
+                locked_decision.id,
+                include_relationships=True,
+            )
+
+        revision = await repository.update_decision_with_revision(
+            locked_decision.id,
             expected_revision,
             values=values,
             changed_by_id=current_user.id,
@@ -1385,7 +1679,7 @@ async def update_marking_decision(
 
         return await _get_decision_or_404(
             db,
-            decision.id,
+            locked_decision.id,
             include_relationships=True,
         )
 
@@ -1851,6 +2145,10 @@ async def instant_mark_decision(
 
     This supports examiner-style one-click or keyboard marking without a
     separate save/complete request.
+
+    Repeating the same authoritative quick mark is a no-op: the current
+    decision is returned without advancing its immutable revision history.
+    Stale expected revisions still fail with 409.
     """
 
     decision = await _get_decision_or_404(
@@ -1903,14 +2201,67 @@ async def instant_mark_decision(
     )
 
     try:
-        revision = await repository.update_decision_with_revision(
+        locked_decision = await repository.get_decision_by_id_for_update(
             decision.id,
+        )
+
+        if locked_decision is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Marking decision not found",
+            )
+
+        _ensure_decision_editable(
+            locked_decision,
+        )
+        _ensure_marker_or_admin(
+            current_user,
+            locked_decision,
+        )
+
+        if locked_decision.status == MarkingDecisionStatus.REVIEWED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Reviewed marking decisions cannot be instant-marked",
+            )
+
+        if locked_decision.revision != expected_revision:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Marking decision has changed since it was loaded. "
+                    "Refresh the decision and try again."
+                ),
+            )
+
+        values = {
+            "mark_awarded": normalised_mark,
+            "status": MarkingDecisionStatus.MARKED,
+            "marked_at": locked_decision.marked_at or _utc_now(),
+        }
+
+        unchanged = all(
+            getattr(
+                locked_decision,
+                field_name,
+            )
+            == field_value
+            for field_name, field_value in values.items()
+        )
+
+        if unchanged:
+            await db.commit()
+
+            return await _get_decision_or_404(
+                db,
+                locked_decision.id,
+                include_relationships=True,
+            )
+
+        revision = await repository.update_decision_with_revision(
+            locked_decision.id,
             expected_revision,
-            values={
-                "mark_awarded": normalised_mark,
-                "status": MarkingDecisionStatus.MARKED,
-                "marked_at": decision.marked_at or _utc_now(),
-            },
+            values=values,
             changed_by_id=current_user.id,
             change_type=(
                 MarkingDecisionRevisionChangeType.INSTANT_MARKED
@@ -1931,7 +2282,7 @@ async def instant_mark_decision(
 
         return await _get_decision_or_404(
             db,
-            decision.id,
+            locked_decision.id,
             include_relationships=True,
         )
 

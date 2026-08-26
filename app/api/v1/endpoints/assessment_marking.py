@@ -7,6 +7,7 @@ from fastapi import (
     Response,
     status,
 )
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -26,6 +27,7 @@ from app.schemas.assessment_marking import (
     MarkingAnnotationCreate,
     MarkingAnnotationOut,
     MarkingAnnotationUpdate,
+    MarkingPaletteOut,
     MarkingDecisionCreate,
     MarkingDecisionOut,
     MarkingDecisionRevisionOut,
@@ -36,6 +38,9 @@ from app.schemas.assessment_marking import (
     MarkSchemeItemAwardCreate,
     MarkSchemeItemAwardDeleteRequest,
     MarkSchemeItemAwardOut,
+)
+from app.services.assessment_marking_palette_service import (
+    ensure_default_marking_palette,
 )
 from app.services.assessment_marking_annotation_service import (
     create_marking_annotation,
@@ -59,6 +64,7 @@ from app.services.assessment_marking_service import (
     list_marking_decision_revisions,
     list_script_marking_decisions,
     list_script_responses,
+    resolve_marking_response_asset_path,
     review_marking,
     start_marking,
     submit_response,
@@ -236,6 +242,46 @@ async def get_assessment_response(
 
     return AssessmentResponseOut.model_validate(
         response,
+    )
+
+
+@router.get(
+    "/responses/{response_id}/assets/{asset_id}/content",
+    response_class=FileResponse,
+)
+async def get_assessment_response_asset_content(
+    response_id: int,
+    asset_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """
+    Deliver one immutable question-snapshot asset to an authorised marker.
+
+    The service layer verifies marking access, immutable response/snapshot
+    linkage, assessment-directory containment, file existence, and the
+    frozen SHA-256 checksum before returning the binary.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    (
+        asset_path,
+        mime_type,
+        download_name,
+    ) = await resolve_marking_response_asset_path(
+        db=db,
+        current_user=current_user,
+        response_id=response_id,
+        asset_id=asset_id,
+    )
+
+    return FileResponse(
+        path=asset_path,
+        media_type=mime_type,
+        filename=download_name,
     )
 
 
@@ -421,6 +467,70 @@ async def create_response_marking_decision(
 
 
 # ---------------------------------------------------------------------------
+# Examiner marking palette
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/responses/{response_id}/palette",
+    response_model=MarkingPaletteOut,
+)
+async def get_response_marking_palette(
+    response_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkingPaletteOut:
+    """
+    Return the active default marking palette for the school owning
+    the assessment response.
+
+    Response scope is intentional: platform administrators may mark
+    assessments outside their own school assignment, so palette
+    ownership must come from the assessment being marked rather than
+    from ``current_user.school_id``.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    response = await get_response(
+        db=db,
+        current_user=current_user,
+        response_id=response_id,
+    )
+
+    assessment = (
+        response
+        .script
+        .candidate
+        .assessment
+    )
+
+    palette = await ensure_default_marking_palette(
+        db,
+        assessment.school_id,
+    )
+
+    result = MarkingPaletteOut.model_validate(
+        palette,
+    )
+
+    # The persistence model retains inactive tools for history and
+    # configuration, but the live marking workspace should expose
+    # only currently active examiner tools.
+    return result.model_copy(
+        update={
+            "tools": [
+                tool
+                for tool in result.tools
+                if tool.is_active
+            ],
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Examiner annotation routes
 # ---------------------------------------------------------------------------
 
@@ -519,6 +629,9 @@ async def create_response_marking_annotation(
         current_user=current_user,
         response_id=response_id,
         palette_tool_id=payload.palette_tool_id,
+        expected_decision_revision=(
+            payload.expected_decision_revision
+        ),
         x=payload.x,
         y=payload.y,
         surface_type=payload.surface_type,
@@ -585,6 +698,10 @@ async def delete_response_marking_annotation(
         ...,
         gt=0,
     ),
+    expected_decision_revision: int | None = Query(
+        default=None,
+        ge=0,
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MarkingAnnotationOut:
@@ -604,6 +721,9 @@ async def delete_response_marking_annotation(
         current_user=current_user,
         annotation_id=annotation_id,
         revision=revision,
+        expected_decision_revision=(
+            expected_decision_revision
+        ),
     )
 
     return MarkingAnnotationOut.model_validate(

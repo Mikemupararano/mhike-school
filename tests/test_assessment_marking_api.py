@@ -596,6 +596,224 @@ async def test_teacher_can_update_response(
 
 
 # ---------------------------------------------------------------------------
+# Response-scoped marking palette
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_get_response_marking_palette(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    created = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    response = await client.get(
+        (
+            "/api/v1/assessment-marking/"
+            f"responses/{created['id']}/palette"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    assert (
+        data["school_id"]
+        == context["assessment"].school_id
+    )
+    assert data["is_default"] is True
+    assert data["is_active"] is True
+
+    tools = data["tools"]
+
+    tick = next(
+        tool
+        for tool in tools
+        if (
+            tool["tool_type"] == "symbol"
+            and tool["value"] == "✓"
+        )
+    )
+
+    cross = next(
+        tool
+        for tool in tools
+        if (
+            tool["tool_type"] == "symbol"
+            and tool["value"] == "✗"
+        )
+    )
+
+    assert tick["id"] > 0
+    assert tick["palette_id"] == data["id"]
+    assert tick["label"] == "Correct / credit"
+    assert tick["is_active"] is True
+
+    assert cross["id"] > 0
+    assert cross["palette_id"] == data["id"]
+    assert cross["label"] == "Incorrect"
+    assert cross["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_response_marking_palette_hides_inactive_tools(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    created = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    palette = await ensure_default_marking_palette(
+        db_session,
+        school_id=context["assessment"].school_id,
+    )
+
+    grammar_tool = next(
+        tool
+        for tool in palette.tools
+        if (
+            tool.tool_type.value == "code"
+            and tool.value == "GR"
+        )
+    )
+
+    grammar_tool.is_active = False
+
+    await db_session.commit()
+
+    response = await client.get(
+        (
+            "/api/v1/assessment-marking/"
+            f"responses/{created['id']}/palette"
+        ),
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+
+    tools = response.json()["tools"]
+
+    assert not any(
+        tool["id"] == grammar_tool.id
+        for tool in tools
+    )
+
+    assert any(
+        (
+            tool["tool_type"] == "symbol"
+            and tool["value"] == "✓"
+        )
+        for tool in tools
+    )
+
+    assert any(
+        (
+            tool["tool_type"] == "symbol"
+            and tool["value"] == "✗"
+        )
+        for tool in tools
+    )
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_without_school_gets_response_school_palette(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+):
+    context = await _build_marking_context(
+        db_session,
+        teacher_user,
+    )
+
+    created = await _create_response_via_api(
+        client,
+        script_id=context["script"].id,
+        question_id=context["question"].id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+    )
+
+    platform_admin = await create_test_user(
+        db_session,
+        email="marking.palette.platform@example.com",
+        roles=[
+            UserRole.PLATFORM_ADMIN,
+        ],
+        school_id=None,
+    )
+
+    assert platform_admin.school_id is None
+
+    response = await client.get(
+        (
+            "/api/v1/assessment-marking/"
+            f"responses/{created['id']}/palette"
+        ),
+        headers=auth_headers(
+            platform_admin,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    assert (
+        data["school_id"]
+        == context["assessment"].school_id
+    )
+
+    assert any(
+        (
+            tool["tool_type"] == "symbol"
+            and tool["value"] == "✓"
+        )
+        for tool in data["tools"]
+    )
+
+    assert any(
+        (
+            tool["tool_type"] == "symbol"
+            and tool["value"] == "✗"
+        )
+        for tool in data["tools"]
+    )
+
+
+# ---------------------------------------------------------------------------
 # Response lifecycle
 # ---------------------------------------------------------------------------
 
@@ -2771,6 +2989,7 @@ async def test_teacher_can_create_list_and_get_marking_annotation(
         f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
         json={
             "palette_tool_id": context["tick_tool"].id,
+            "expected_decision_revision": context["decision"]["revision"],
             "x": "0.25",
             "y": "0.75",
         },
@@ -2828,6 +3047,7 @@ async def test_teacher_can_update_marking_annotation_with_revision(
         f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
         json={
             "palette_tool_id": context["tick_tool"].id,
+            "expected_decision_revision": context["decision"]["revision"],
             "x": "0.10",
             "y": "0.20",
         },
@@ -2875,6 +3095,7 @@ async def test_stale_marking_annotation_revision_returns_409(
         f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
         json={
             "palette_tool_id": context["tick_tool"].id,
+            "expected_decision_revision": context["decision"]["revision"],
             "x": "0.10",
             "y": "0.20",
         },
@@ -2926,6 +3147,7 @@ async def test_marking_annotation_can_be_soft_deleted_via_api(
         f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
         json={
             "palette_tool_id": context["tick_tool"].id,
+            "expected_decision_revision": context["decision"]["revision"],
             "x": "0.10",
             "y": "0.20",
         },
@@ -2940,6 +3162,9 @@ async def test_marking_annotation_can_be_soft_deleted_via_api(
         f"/api/v1/assessment-marking/annotations/{annotation['id']}",
         params={
             "revision": annotation["revision"],
+            "expected_decision_revision": (
+                context["decision"]["revision"] + 1
+            ),
         },
         headers=auth_headers(teacher_user),
     )
@@ -3019,6 +3244,7 @@ async def test_marking_annotation_update_rejects_surface_mutation(
         f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
         json={
             "palette_tool_id": context["tick_tool"].id,
+            "expected_decision_revision": context["decision"]["revision"],
             "x": "0.10",
             "y": "0.20",
         },
@@ -3060,6 +3286,7 @@ async def test_finalised_decision_blocks_annotation_mutation_via_api(
         f"/api/v1/assessment-marking/responses/{context['response']['id']}/annotations",
         json={
             "palette_tool_id": context["tick_tool"].id,
+            "expected_decision_revision": context["decision"]["revision"],
             "x": "0.10",
             "y": "0.20",
         },
