@@ -1443,16 +1443,21 @@ export default function StudentAssessmentAttemptPage() {
                     return;
                 }
 
-                setResponses(current => ({
-                    ...current,
-                    [question.id]: {
-                        text: saved.response_text ?? "",
-                        data: parseData(saved.response_data),
-                        status: saved.status,
-                        saveState: "saved",
-                        error: null,
-                    },
-                }));
+                setResponses(current => {
+                    const live =
+                        current[question.id]
+                        ?? state;
+
+                    return {
+                        ...current,
+                        [question.id]: {
+                            ...live,
+                            status: saved.status,
+                            saveState: "saved",
+                            error: null,
+                        },
+                    };
+                });
             } catch (saveError: unknown) {
                 if (saveVersion.current[question.id] !== version) {
                     return;
