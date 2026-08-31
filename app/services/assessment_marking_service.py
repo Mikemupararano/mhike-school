@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from app.models.assessment_candidate import (
     AssessmentScriptStatus,
 )
 from app.models.assessment_question import AssessmentQuestion
+from app.models.course import Course
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -957,6 +959,38 @@ async def get_response(
     return response
 
 
+async def get_script_marking_school_id(
+    db: AsyncSession,
+    current_user: User,
+    script_id: int,
+) -> int:
+    """
+    Return the school that owns a script after confirming
+    the current user may access its marking workspace.
+    """
+
+    script = await _get_script_or_404(
+        db,
+        script_id,
+        include_relationships=False,
+    )
+
+    candidate = await _ensure_script_marking_access(
+        db,
+        current_user,
+        script,
+    )
+
+    assessment = candidate.assessment
+
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment candidate is not linked to an assessment",
+        )
+
+    return assessment.school_id
+
 async def list_script_responses(
     db: AsyncSession,
     current_user: User,
@@ -968,26 +1002,83 @@ async def list_script_responses(
     Return responses for one assessment script.
     """
 
-    script = await _get_script_or_404(
-        db,
-        script_id,
-        include_relationships=True,
+    scope_result = await db.execute(
+        select(
+            AssessmentScript.id,
+            Assessment.school_id,
+            Assessment.course_id,
+            Course.school_id,
+            Course.teacher_id,
+        )
+        .join(
+            AssessmentCandidate,
+            AssessmentCandidate.id == AssessmentScript.candidate_id,
+        )
+        .join(
+            Assessment,
+            Assessment.id == AssessmentCandidate.assessment_id,
+        )
+        .join(
+            Course,
+            Course.id == Assessment.course_id,
+        )
+        .where(
+            AssessmentScript.id == script_id,
+        )
     )
 
-    await _ensure_script_marking_access(
-        db,
+    scope_row = scope_result.one_or_none()
+
+    if scope_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment script not found",
+        )
+
+    (
+        resolved_script_id,
+        assessment_school_id,
+        assessment_course_id,
+        course_school_id,
+        course_teacher_id,
+    ) = scope_row
+
+    _ensure_marking_staff_role(
         current_user,
-        script,
     )
+
+    if (
+        not is_platform_admin(current_user)
+        and assessment_school_id != current_user.school_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assessment does not belong to your school",
+        )
+
+    if course_school_id != assessment_school_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment and course school scope are inconsistent",
+        )
+
+    if (
+        is_teacher_without_admin_scope(current_user)
+        and course_teacher_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only mark assessments for your own courses",
+        )
 
     return await AssessmentMarkingRepository(
         db,
     ).list_responses_by_script(
-        script.id,
+        resolved_script_id,
         status=response_status,
-        include_relationships=True,
+        include_relationships=False,
+        workspace_relationships=True,
     )
-
 
 async def update_response(
     db: AsyncSession,
@@ -2475,3 +2566,11 @@ async def delete_marking_decision(
     except Exception:
         await db.rollback()
         raise
+
+
+
+
+
+
+
+

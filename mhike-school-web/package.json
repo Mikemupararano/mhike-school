@@ -13,6 +13,7 @@
     "axios": "^1.16.1",
     "lucide-react": "^1.16.0",
     "next": "^16.2.6",
+    "pdfjs-dist": "^6.3.289",
     "postcss": "^8.5.8",
     "react": "19.2.3",
     "react-dom": "19.2.3",

@@ -500,11 +500,21 @@ export async function getScriptResponses(
     scriptId: number,
     responseStatus?: AssessmentResponseStatus,
 ): Promise<AssessmentResponse[]> {
-    return apiGet<AssessmentResponse[]>(
-        `/assessment-marking/scripts/${scriptId}/responses${buildResponseStatusQuery(
-            responseStatus,
-        )}`,
-    );
+    const startedAt = Date.now();
+
+    try {
+        return await apiGet<AssessmentResponse[]>(
+            `/assessment-marking/scripts/${scriptId}/responses${buildResponseStatusQuery(
+                responseStatus,
+            )}`,
+        );
+    } finally {
+        console.info(
+            `[MARKING TIMING] getScriptResponses script=${scriptId}: ${
+                Date.now() - startedAt
+            } ms`,
+        );
+    }
 }
 
 
@@ -549,12 +559,40 @@ export async function getAssessmentResponseAssetBlob(
 // ---------------------------------------------------------------------
 
 
+export async function getScriptMarkingPalette(
+    scriptId: number,
+): Promise<MarkingPalette> {
+    const startedAt = Date.now();
+
+    try {
+        return await apiGet<MarkingPalette>(
+            `/assessment-marking/scripts/${scriptId}/palette`,
+        );
+    } finally {
+        console.info(
+            `[MARKING TIMING] getScriptMarkingPalette script=${scriptId}: ${
+                Date.now() - startedAt
+            } ms`,
+        );
+    }
+}
+
 export async function getResponseMarkingPalette(
     responseId: number,
 ): Promise<MarkingPalette> {
-    return apiGet<MarkingPalette>(
-        `/assessment-marking/responses/${responseId}/palette`,
-    );
+    const startedAt = Date.now();
+
+    try {
+        return await apiGet<MarkingPalette>(
+            `/assessment-marking/responses/${responseId}/palette`,
+        );
+    } finally {
+        console.info(
+            `[MARKING TIMING] getResponseMarkingPalette response=${responseId}: ${
+                Date.now() - startedAt
+            } ms`,
+        );
+    }
 }
 
 
@@ -563,10 +601,12 @@ export async function getResponseMarkingPalette(
 // ---------------------------------------------------------------------
 
 
-export async function getMarkingAnnotations(
-    responseId: number,
+export async function getScriptMarkingAnnotations(
+    scriptId: number,
     includeDeleted = false,
 ): Promise<MarkingAnnotation[]> {
+    const startedAt = Date.now();
+
     const params =
         new URLSearchParams();
 
@@ -582,9 +622,51 @@ export async function getMarkingAnnotations(
             ? `?${params.toString()}`
             : "";
 
-    return apiGet<MarkingAnnotation[]>(
-        `/assessment-marking/responses/${responseId}/annotations${query}`,
-    );
+    try {
+        return await apiGet<MarkingAnnotation[]>(
+            `/assessment-marking/scripts/${scriptId}/annotations${query}`,
+        );
+    } finally {
+        console.info(
+            `[MARKING TIMING] getScriptMarkingAnnotations script=${scriptId}: ${
+                Date.now() - startedAt
+            } ms`,
+        );
+    }
+}
+
+export async function getMarkingAnnotations(
+    responseId: number,
+    includeDeleted = false,
+): Promise<MarkingAnnotation[]> {
+    const startedAt = Date.now();
+
+    const params =
+        new URLSearchParams();
+
+    if (includeDeleted) {
+        params.set(
+            "include_deleted",
+            "true",
+        );
+    }
+
+    const query =
+        params.size > 0
+            ? `?${params.toString()}`
+            : "";
+
+    try {
+        return await apiGet<MarkingAnnotation[]>(
+            `/assessment-marking/responses/${responseId}/annotations${query}`,
+        );
+    } finally {
+        console.info(
+            `[MARKING TIMING] getMarkingAnnotations response=${responseId}: ${
+                Date.now() - startedAt
+            } ms`,
+        );
+    }
 }
 
 
@@ -853,3 +935,10 @@ export async function deleteMarkingDecision(
         `/assessment-marking/decisions/${decisionId}`,
     );
 }
+
+
+
+
+
+
+

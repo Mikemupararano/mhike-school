@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import DashboardShell from "@/components/layout/DashboardShell";
 import { clearToken, getToken } from "@/lib/api";
@@ -62,6 +62,7 @@ export default function DashboardShellWrapper({
     children,
 }: DashboardShellWrapperProps) {
     const router = useRouter();
+    const pathname = usePathname();
 
     const [user, setUser] = useState<CurrentUser | null>(null);
     const [loading, setLoading] = useState(true);
@@ -113,6 +114,17 @@ export default function DashboardShellWrapper({
     const displayName = getDisplayName(user);
     const sidebarSections = getSidebarSections(resolvedRole);
 
+    const assessmentWorkspaceMatch =
+        pathname.match(
+            /^\/teacher\/assessments\/([^/]+)\/?$/,
+        );
+
+    const isAssessmentWorkspace =
+        Boolean(
+            assessmentWorkspaceMatch
+            && assessmentWorkspaceMatch[1] !== "new",
+        );
+
     return (
         <DashboardShell
             userId={user.id}
@@ -120,8 +132,15 @@ export default function DashboardShellWrapper({
             userName={displayName}
             schoolName={schoolLabel}
             sidebarSections={sidebarSections}
+            showSidebar={!isAssessmentWorkspace}
+            contentClassName={
+                isAssessmentWorkspace
+                    ? "!px-0 !py-4"
+                    : ""
+            }
         >
             {children}
         </DashboardShell>
     );
 }
+

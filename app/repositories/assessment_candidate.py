@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.models.assessment import Assessment
 from app.models.assessment_candidate import (
@@ -182,6 +182,38 @@ class AssessmentCandidateRepository:
         )
 
     @staticmethod
+    def _apply_marking_workspace_candidate_loading(
+        statement,
+    ):
+        """
+        Load only relationships required by the examiner marking workspace.
+        """
+
+        script_loader = selectinload(
+            AssessmentCandidate.scripts,
+        )
+
+        return statement.execution_options(
+            populate_existing=True,
+        ).options(
+            noload(
+                AssessmentCandidate.assessment,
+            ),
+            noload(
+                AssessmentCandidate.student,
+            ),
+            script_loader.noload(
+                AssessmentScript.candidate,
+            ),
+            script_loader.noload(
+                AssessmentScript.responses,
+            ),
+            script_loader.noload(
+                AssessmentScript.question_snapshots,
+            ),
+        )
+
+    @staticmethod
     def _apply_script_relationship_loading(
         statement,
         *,
@@ -347,6 +379,7 @@ class AssessmentCandidateRepository:
         *,
         status: AssessmentCandidateStatus | str | None = None,
         include_relationships: bool = True,
+        workspace_relationships: bool = False,
     ) -> list[AssessmentCandidate]:
         """
         Return candidates allocated to one assessment.
@@ -376,10 +409,15 @@ class AssessmentCandidateRepository:
             AssessmentCandidate.id.asc(),
         )
 
-        statement = self._apply_candidate_relationship_loading(
-            statement,
-            include_relationships=include_relationships,
-        )
+        if workspace_relationships:
+            statement = self._apply_marking_workspace_candidate_loading(
+                statement,
+            )
+        else:
+            statement = self._apply_candidate_relationship_loading(
+                statement,
+                include_relationships=include_relationships,
+            )
 
         result = await self.db.execute(
             statement,
@@ -1118,3 +1156,5 @@ class AssessmentCandidateRepository:
         )
 
         await self.db.flush()
+
+

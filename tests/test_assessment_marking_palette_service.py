@@ -39,7 +39,7 @@ async def test_default_marking_palette_contains_expected_universal_tools(
         ),
     )
 
-    assert len(tools) == len(DEFAULT_MARKING_TOOLS) == 13
+    assert len(tools) == len(DEFAULT_MARKING_TOOLS) == len(DEFAULT_MARKING_TOOLS)
 
     actual = [
         (
@@ -94,7 +94,7 @@ async def test_default_marking_palette_is_idempotent(
     }
 
     assert second_tool_ids == first_tool_ids
-    assert len(second_tool_ids) == 13
+    assert len(second_tool_ids) == len(DEFAULT_MARKING_TOOLS)
 
     palette_count_result = await db_session.execute(
         select(
@@ -147,7 +147,7 @@ async def test_default_marking_palette_preserves_school_customisation(
     assert customised_tick.sort_order == 999
     assert customised_tick.is_active is False
 
-    assert len(refreshed.tools) == 13
+    assert len(refreshed.tools) == len(DEFAULT_MARKING_TOOLS)
 
 
 @pytest.mark.asyncio
@@ -257,7 +257,7 @@ async def test_missing_default_tool_is_restored_without_overwriting_others(
     assert ecf_tools[0].id != removed_tool_id
     assert ecf_tools[0].label == "Error carried forward"
 
-    assert len(refreshed.tools) == 13
+    assert len(refreshed.tools) == len(DEFAULT_MARKING_TOOLS)
 
 
 @pytest.mark.asyncio
@@ -281,4 +281,5 @@ async def test_palette_tools_are_persisted_as_database_rows(
         result.scalars().all(),
     )
 
-    assert len(tools) == 13
+    assert len(tools) == len(DEFAULT_MARKING_TOOLS)
+

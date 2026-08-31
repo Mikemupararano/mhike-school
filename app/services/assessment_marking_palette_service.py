@@ -100,6 +100,54 @@ DEFAULT_MARKING_TOOLS: tuple[DefaultMarkingToolDefinition, ...] = (
         sort_order=90,
     ),
     DefaultMarkingToolDefinition(
+        tool_type=MarkingPaletteToolType.CODE,
+        value="L1^1",
+        label="Level 1 – 1 mark",
+        description="Level 1 response awarded 1 mark.",
+        keyboard_shortcut=None,
+        sort_order=91,
+    ),
+    DefaultMarkingToolDefinition(
+        tool_type=MarkingPaletteToolType.CODE,
+        value="L1",
+        label="Level 1 – 2 marks",
+        description="Level 1 response awarded 2 marks.",
+        keyboard_shortcut=None,
+        sort_order=92,
+    ),
+    DefaultMarkingToolDefinition(
+        tool_type=MarkingPaletteToolType.CODE,
+        value="L2^2",
+        label="Level 2 – 3 marks",
+        description="Level 2 response awarded 3 marks.",
+        keyboard_shortcut=None,
+        sort_order=93,
+    ),
+    DefaultMarkingToolDefinition(
+        tool_type=MarkingPaletteToolType.CODE,
+        value="L2",
+        label="Level 2 – 4 marks",
+        description="Level 2 response awarded 4 marks.",
+        keyboard_shortcut=None,
+        sort_order=94,
+    ),
+    DefaultMarkingToolDefinition(
+        tool_type=MarkingPaletteToolType.CODE,
+        value="L3^",
+        label="Level 3 – 5 marks",
+        description="Level 3 response awarded 5 marks.",
+        keyboard_shortcut=None,
+        sort_order=95,
+    ),
+    DefaultMarkingToolDefinition(
+        tool_type=MarkingPaletteToolType.CODE,
+        value="L3",
+        label="Level 3 – 6 marks",
+        description="Level 3 response awarded 6 marks.",
+        keyboard_shortcut=None,
+        sort_order=96,
+    ),
+    DefaultMarkingToolDefinition(
         tool_type=MarkingPaletteToolType.TEXT,
         value="TEXT",
         label="Text comment",
@@ -133,6 +181,127 @@ DEFAULT_MARKING_TOOLS: tuple[DefaultMarkingToolDefinition, ...] = (
     ),
 )
 
+
+LEGACY_LEVEL_RESPONSE_TOOL_KEYS = frozenset(
+    {
+        (
+            MarkingPaletteToolType.CODE,
+            "L1^",
+        ),
+    }
+)
+
+EXACT_LEVEL_RESPONSE_TOOL_KEYS = frozenset(
+    {
+        (
+            MarkingPaletteToolType.CODE,
+            "L1^1",
+        ),
+        (
+            MarkingPaletteToolType.CODE,
+            "L1",
+        ),
+        (
+            MarkingPaletteToolType.CODE,
+            "L2^2",
+        ),
+        (
+            MarkingPaletteToolType.CODE,
+            "L2",
+        ),
+        (
+            MarkingPaletteToolType.CODE,
+            "L3^",
+        ),
+        (
+            MarkingPaletteToolType.CODE,
+            "L3",
+        ),
+    }
+)
+
+
+async def get_default_marking_palette(
+    db: AsyncSession,
+    school_id: int,
+) -> MarkingPalette:
+    """
+    Return the active school-wide default marking palette
+    without performing maintenance writes.
+
+    The normal marking workspace should use this read path.
+    The ensure operation is retained as a fallback for schools
+    whose default palette has not yet been initialised.
+    """
+
+    if (
+        not isinstance(school_id, int)
+        or isinstance(school_id, bool)
+        or school_id < 1
+    ):
+        raise ValueError(
+            "school_id must be a positive integer.",
+        )
+
+    repository = MarkingPaletteRepository(
+        db,
+    )
+
+    palette = await repository.get_default_palette(
+        school_id,
+        subject_id=None,
+        include_relationships=True,
+    )
+
+    if palette is not None:
+        existing_keys = {
+            (
+                tool.tool_type,
+                tool.value,
+            )
+            for tool in palette.tools
+        }
+
+        defaults_complete = all(
+            (
+                definition.tool_type,
+                definition.value,
+            )
+            in existing_keys
+            for definition in DEFAULT_MARKING_TOOLS
+        )
+
+        legacy_tools_active = any(
+            (
+                tool.tool_type,
+                tool.value,
+            )
+            in LEGACY_LEVEL_RESPONSE_TOOL_KEYS
+            and tool.is_active
+            for tool in palette.tools
+        )
+
+        exact_level_tools_inactive = any(
+            (
+                tool.tool_type,
+                tool.value,
+            )
+            in EXACT_LEVEL_RESPONSE_TOOL_KEYS
+            and not tool.is_active
+            for tool in palette.tools
+        )
+
+        if (
+            defaults_complete
+            and not legacy_tools_active
+            and not exact_level_tools_inactive
+        ):
+            return palette
+
+    return await ensure_default_marking_palette(
+        db,
+        school_id,
+    )
 
 async def ensure_default_marking_palette(
     db: AsyncSession,
@@ -183,6 +352,26 @@ async def ensure_default_marking_palette(
             palette.id,
             active_only=False,
         )
+
+        for tool in existing_tools:
+            tool_key = (
+                tool.tool_type,
+                tool.value,
+            )
+
+            if (
+                tool_key
+                in LEGACY_LEVEL_RESPONSE_TOOL_KEYS
+                and tool.is_active
+            ):
+                tool.is_active = False
+
+            if (
+                tool_key
+                in EXACT_LEVEL_RESPONSE_TOOL_KEYS
+                and not tool.is_active
+            ):
+                tool.is_active = True
 
         existing_keys = {
             (
@@ -250,3 +439,9 @@ async def ensure_default_marking_palette(
         )
 
     return refreshed
+
+
+
+
+
+

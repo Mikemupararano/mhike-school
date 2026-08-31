@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, noload, selectinload
 
 from app.models.assessment import Assessment
 from app.models.assessment_candidate import (
@@ -12,6 +12,7 @@ from app.models.assessment_candidate import (
     AssessmentScript,
 )
 from app.models.assessment_question import AssessmentQuestion
+from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -235,6 +236,72 @@ class AssessmentMarkingRepository:
     # ------------------------------------------------------------------
     # Relationship loading
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_marking_workspace_response_loading(
+        statement,
+    ):
+        """
+        Apply the minimal relationship graph required by the
+        examiner marking workspace.
+        """
+
+        snapshot_loader = joinedload(
+            AssessmentResponse.question_snapshot,
+        )
+
+        decision_loader = joinedload(
+            AssessmentResponse.marking_decision,
+        )
+
+        award_loader = decision_loader.selectinload(
+            MarkingDecision.item_awards,
+        )
+
+        mark_scheme_item_loader = award_loader.selectinload(
+            MarkSchemeItemAward.mark_scheme_item,
+        )
+
+        return statement.execution_options(
+            populate_existing=True,
+        ).options(
+            noload(
+                AssessmentResponse.script,
+            ),
+            noload(
+                AssessmentResponse.question,
+            ),
+            noload(
+                AssessmentResponse.marking_annotations,
+            ),
+            snapshot_loader.noload(
+                AssessmentQuestionSnapshot.script,
+            ),
+            snapshot_loader.noload(
+                AssessmentQuestionSnapshot.question,
+            ),
+            decision_loader.noload(
+                MarkingDecision.response,
+            ),
+            decision_loader.noload(
+                MarkingDecision.marker,
+            ),
+            decision_loader.noload(
+                MarkingDecision.revisions,
+            ),
+            award_loader.noload(
+                MarkSchemeItemAward.marking_decision,
+            ),
+            award_loader.noload(
+                MarkSchemeItemAward.awarded_by,
+            ),
+            mark_scheme_item_loader.noload(
+                MarkSchemeItem.mark_scheme,
+            ),
+            mark_scheme_item_loader.noload(
+                MarkSchemeItem.awards,
+            ),
+        )
 
     @staticmethod
     def _apply_response_relationship_loading(
@@ -691,6 +758,7 @@ class AssessmentMarkingRepository:
         *,
         status: AssessmentResponseStatus | str | None = None,
         include_relationships: bool = True,
+    workspace_relationships: bool = False,
     ) -> list[AssessmentResponse]:
         """
         Return responses belonging to one script.
@@ -729,10 +797,15 @@ class AssessmentMarkingRepository:
             AssessmentResponse.id.asc(),
         )
 
-        statement = self._apply_response_relationship_loading(
-            statement,
-            include_relationships=include_relationships,
-        )
+        if workspace_relationships:
+            statement = self._apply_marking_workspace_response_loading(
+                statement,
+            )
+        else:
+            statement = self._apply_response_relationship_loading(
+                statement,
+                include_relationships=include_relationships,
+            )
 
         result = await self.db.execute(
             statement,
@@ -1844,3 +1917,10 @@ class AssessmentMarkingRepository:
         )
 
         await self.db.flush()
+
+
+
+
+
+
+

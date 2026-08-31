@@ -715,38 +715,45 @@ function TeacherAssessmentDetailContent() {
                         data,
                     );
 
+                    setIsLoading(
+                        false,
+                    );
+
                     setCourseTitle(
                         null,
                     );
 
-                    try {
-                        const courses =
-                            await apiGet<TeacherCourseSummary[]>(
-                                "/courses/me",
-                            );
+                    void (
+                        async () => {
+                            try {
+                                const courses =
+                                    await apiGet<TeacherCourseSummary[]>(
+                                        "/courses/me",
+                                    );
 
-                        const matchingCourse =
-                            courses.find(
-                                course =>
-                                    course.id
-                                    === data.course_id,
-                            );
+                                const matchingCourse =
+                                    courses.find(
+                                        course =>
+                                            course.id
+                                            === data.course_id,
+                                    );
 
-                        setCourseTitle(
-                            matchingCourse?.title
-                            ?? null,
-                        );
-                    } catch {
-                        /*
-                         * Course-title resolution is presentation-only.
-                         * The assessment itself has already loaded successfully,
-                         * so keep the page usable and fall back to its course ID
-                         * if this secondary lookup is unavailable.
-                         */
-                        setCourseTitle(
-                            null,
-                        );
-                    }
+                                setCourseTitle(
+                                    matchingCourse?.title
+                                    ?? null,
+                                );
+                            } catch {
+                                /*
+                                 * Course-title resolution is presentation-only.
+                                 * The assessment is already visible, so keep the
+                                 * page usable and fall back to its course ID.
+                                 */
+                                setCourseTitle(
+                                    null,
+                                );
+                            }
+                        }
+                    )();
                 } catch (err: unknown) {
                     setError(
                         err instanceof Error
@@ -2080,11 +2087,55 @@ function TeacherAssessmentDetailContent() {
             </Link>
 
             {isLoading && (
-                <p className="text-sm text-slate-600">
-                    Loading assessment...
-                </p>
-            )}
+                <div
+                    aria-label="Loading assessment"
+                    className="space-y-6"
+                >
+                    <section className="animate-pulse rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0 flex-1">
+                                <div className="h-9 w-80 max-w-full rounded-lg bg-slate-200" />
+                                <div className="mt-4 h-4 w-96 max-w-full rounded bg-slate-100" />
+                            </div>
 
+                            <div className="h-10 w-36 rounded-lg bg-slate-200" />
+                        </div>
+
+                        <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                            {Array.from({ length: 4 }).map((_, index) => (
+                                <div
+                                    key={index}
+                                    className="h-20 rounded-xl bg-slate-100"
+                                />
+                            ))}
+                        </div>
+
+                        <div className="mt-4 grid gap-4 md:grid-cols-2">
+                            {Array.from({ length: 2 }).map((_, index) => (
+                                <div
+                                    key={index}
+                                    className="h-16 rounded-xl border border-slate-100 bg-slate-50"
+                                />
+                            ))}
+                        </div>
+                    </section>
+
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        {Array.from({ length: 4 }).map((_, index) => (
+                            <div
+                                key={index}
+                                className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                            >
+                                <div className="h-3 w-24 rounded bg-slate-200" />
+                                <div className="mt-5 h-8 w-16 rounded bg-slate-200" />
+                                <div className="mt-3 h-3 w-40 max-w-full rounded bg-slate-100" />
+                            </div>
+                        ))}
+                    </div>
+
+                    <section className="h-80 animate-pulse rounded-2xl bg-slate-950" />
+                </div>
+            )}
             {error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
                     {error}
@@ -2651,6 +2702,7 @@ function TeacherAssessmentDetailContent() {
                         </div>
                     </section>
 
+                    {isDraft && (
                     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                             <div>
@@ -2664,7 +2716,7 @@ function TeacherAssessmentDetailContent() {
                                 </p>
                             </div>
 
-                            {currentQuestionPaper && (
+                            {isDraft && currentQuestionPaper && (
                                 <span className="w-fit rounded-full bg-green-50 px-3 py-1 text-xs font-bold text-green-700">
                                     Paper attached
                                 </span>
@@ -2853,8 +2905,9 @@ function TeacherAssessmentDetailContent() {
                         )}
 
                     </section>
+                    )}
 
-                    {currentQuestionPaper && (
+                    {isDraft && currentQuestionPaper && (
                         <AssessmentQuestionExtractionPanel
                             assessmentId={
                                 assessment.id
@@ -2871,21 +2924,8 @@ function TeacherAssessmentDetailContent() {
                         />
                     )}
 
-                    {!isDraft && (
-                        <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
-                            <p className="font-semibold text-blue-900">
-                                Assessment structure locked
-                            </p>
-
-                            <p className="mt-1 text-sm leading-6 text-blue-800">
-                                Sections and questions can be viewed below,
-                                but their structure can only be changed while
-                                the assessment is in draft.
-                            </p>
-                        </section>
-                    )}
-
-                    <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+                    {isDraft && (
+                        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
                         <div className="space-y-4">
                             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3644,6 +3684,8 @@ function TeacherAssessmentDetailContent() {
                             </aside>
                         )}
                     </section>
+                    )}
+
                     <AssessmentMarkingPanel
                         assessment={assessment}
                     />
@@ -3666,3 +3708,11 @@ function TeacherAssessmentDetailContent() {
         </main>
     );
 }
+
+
+
+
+
+
+
+

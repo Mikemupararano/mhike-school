@@ -175,6 +175,75 @@ class AssessmentMarkingAnnotationRepository:
 
         return result.scalar_one_or_none()
 
+    async def list_for_responses(
+        self,
+        response_ids: list[int],
+        *,
+        include_deleted: bool = False,
+        include_relationships: bool = True,
+    ) -> list[AssessmentMarkingAnnotation]:
+        """
+        Return annotations for several responses in one query.
+        """
+
+        if not isinstance(response_ids, list):
+            raise ValueError(
+                "response_ids must be a list.",
+            )
+
+        if not response_ids:
+            return []
+
+        for response_id in response_ids:
+            self._validate_positive_integer(
+                response_id,
+                "response_id",
+            )
+
+        unique_response_ids = list(
+            dict.fromkeys(
+                response_ids,
+            ),
+        )
+
+        statement = select(
+            AssessmentMarkingAnnotation,
+        ).where(
+            AssessmentMarkingAnnotation.response_id.in_(
+                unique_response_ids,
+            ),
+        )
+
+        if not include_deleted:
+            statement = statement.where(
+                AssessmentMarkingAnnotation.deleted_at.is_(
+                    None,
+                ),
+            )
+
+        statement = statement.order_by(
+            AssessmentMarkingAnnotation.response_id.asc(),
+            AssessmentMarkingAnnotation.id.asc(),
+        )
+
+        statement = self._apply_relationship_loading(
+            statement,
+            include_relationships=include_relationships,
+        )
+
+        if include_relationships:
+            statement = statement.execution_options(
+                populate_existing=True,
+            )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return list(
+            result.scalars().all(),
+        )
+
     async def list_for_response(
         self,
         response_id: int,
@@ -412,3 +481,4 @@ class AssessmentMarkingAnnotationRepository:
         )
 
         return annotation
+

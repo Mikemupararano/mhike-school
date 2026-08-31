@@ -41,12 +41,14 @@ from app.schemas.assessment_marking import (
 )
 from app.services.assessment_marking_palette_service import (
     ensure_default_marking_palette,
+    get_default_marking_palette,
 )
 from app.services.assessment_marking_annotation_service import (
     create_marking_annotation,
     delete_marking_annotation,
     get_marking_annotation,
     list_marking_annotations,
+    list_script_marking_annotations,
     update_marking_annotation,
 )
 from app.services.assessment_marking_service import (
@@ -60,6 +62,7 @@ from app.services.assessment_marking_service import (
     finalise_marking,
     get_marking_decision,
     get_response,
+    get_script_marking_school_id,
     instant_mark_decision,
     list_marking_decision_revisions,
     list_script_marking_decisions,
@@ -472,6 +475,52 @@ async def create_response_marking_decision(
 
 
 @router.get(
+    "/scripts/{script_id}/palette",
+    response_model=MarkingPaletteOut,
+)
+async def get_script_marking_palette(
+    script_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkingPaletteOut:
+    """
+    Return the active examiner marking palette for the
+    school owning the selected assessment script.
+
+    Script scope allows the examiner toolbox to load in
+    parallel with the candidate responses.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    school_id = await get_script_marking_school_id(
+        db=db,
+        current_user=current_user,
+        script_id=script_id,
+    )
+
+    palette = await get_default_marking_palette(
+        db,
+        school_id,
+    )
+
+    result = MarkingPaletteOut.model_validate(
+        palette,
+    )
+
+    return result.model_copy(
+        update={
+            "tools": [
+                tool
+                for tool in result.tools
+                if tool.is_active
+            ],
+        },
+    )
+
+@router.get(
     "/responses/{response_id}/palette",
     response_model=MarkingPaletteOut,
 )
@@ -534,6 +583,41 @@ async def get_response_marking_palette(
 # Examiner annotation routes
 # ---------------------------------------------------------------------------
 
+
+@router.get(
+    "/scripts/{script_id}/annotations",
+    response_model=list[MarkingAnnotationOut],
+)
+async def get_script_marking_annotations(
+    script_id: int,
+    include_deleted: bool = Query(
+        default=False,
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[MarkingAnnotationOut]:
+    """
+    Return all examiner annotations for a script in one
+    request.
+    """
+
+    _ensure_marking_staff_access(
+        current_user,
+    )
+
+    annotations = await list_script_marking_annotations(
+        db=db,
+        current_user=current_user,
+        script_id=script_id,
+        include_deleted=include_deleted,
+    )
+
+    return [
+        MarkingAnnotationOut.model_validate(
+            annotation,
+        )
+        for annotation in annotations
+    ]
 
 @router.get(
     "/responses/{response_id}/annotations",
@@ -1105,3 +1189,11 @@ async def delete_marking_award(
     return Response(
         status_code=status.HTTP_204_NO_CONTENT,
     )
+
+
+
+
+
+
+
+

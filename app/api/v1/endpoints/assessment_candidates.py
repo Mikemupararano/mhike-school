@@ -3,10 +3,13 @@ from __future__ import annotations
 from fastapi import (
     APIRouter,
     Depends,
+    File,
     Query,
     Response,
+    UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -55,6 +58,12 @@ from app.services.assessment_candidate_service import (
     transition_script_status,
     update_candidate_details,
     withdraw_candidate,
+)
+from app.services.assessment_script_upload_service import (
+    MAX_SCANNED_SCRIPT_SIZE_BYTES,
+    upload_scanned_script,
+    resolve_scanned_script_path,
+    PDF_MIME_TYPE,
 )
 
 router = APIRouter()
@@ -333,6 +342,45 @@ async def get_assessment_script(
 
     return AssessmentScriptOut.model_validate(
         script,
+    )
+
+
+@router.get(
+    "/scripts/{script_id}/file",
+    response_class=FileResponse,
+)
+async def get_scanned_assessment_script_file(
+    script_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """
+    Return an authorised scanned assessment-script PDF for inline viewing.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    (
+        script,
+        script_path,
+    ) = await resolve_scanned_script_path(
+        db=db,
+        current_user=current_user,
+        script_id=script_id,
+    )
+
+    filename = (
+        script.source_filename
+        or f"assessment-script-{script.id}.pdf"
+    )
+
+    return FileResponse(
+        path=script_path,
+        media_type=PDF_MIME_TYPE,
+        filename=filename,
+        content_disposition_type="inline",
     )
 
 
@@ -793,6 +841,53 @@ async def mark_assessment_candidate_absent(
 
 
 @router.post(
+    "/{candidate_id}/scripts/upload",
+    response_model=AssessmentScriptOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_assessment_scanned_script(
+    candidate_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssessmentScriptOut:
+    """
+    Upload a scanned handwritten PDF script for an assessment candidate.
+
+    The upload is read with a strict upper bound of the configured maximum
+    size plus one byte so oversized requests can be rejected without loading
+    an arbitrarily large file into memory.
+    """
+
+    _ensure_assessment_staff_access(
+        current_user,
+    )
+
+    filename = file.filename
+    mime_type = file.content_type
+
+    try:
+        contents = await file.read(
+            MAX_SCANNED_SCRIPT_SIZE_BYTES + 1,
+        )
+    finally:
+        await file.close()
+
+    script = await upload_scanned_script(
+        db=db,
+        current_user=current_user,
+        candidate_id=candidate_id,
+        filename=filename,
+        mime_type=mime_type,
+        contents=contents,
+    )
+
+    return AssessmentScriptOut.model_validate(
+        script,
+    )
+
+
+@router.post(
     "/{candidate_id}/scripts",
     response_model=AssessmentScriptOut,
     status_code=status.HTTP_201_CREATED,
@@ -896,3 +991,4 @@ async def delete_assessment_candidate(
     return Response(
         status_code=status.HTTP_204_NO_CONTENT,
     )
+

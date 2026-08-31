@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from time import perf_counter
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -535,26 +536,116 @@ async def list_assessment_candidates(
     Return candidates allocated to an assessment.
     """
 
-    assessment = await _get_assessment_or_404(
-        db,
-        assessment_id,
-        include_relationships=False,
+    total_started_at = perf_counter()
+    stage_started_at = perf_counter()
+
+    scope_result = await db.execute(
+        select(
+            Assessment.id,
+            Assessment.school_id,
+            Assessment.course_id,
+            Course.id.label("course_record_id"),
+            Course.school_id.label("course_school_id"),
+            Course.teacher_id.label("course_teacher_id"),
+        )
+        .outerjoin(
+            Course,
+            Course.id == Assessment.course_id,
+        )
+        .where(
+            Assessment.id == assessment_id,
+        )
     )
 
-    await _ensure_assessment_management_access(
-        db,
-        current_user,
-        assessment,
-    )
+    scope_row = scope_result.one_or_none()
 
-    return await AssessmentCandidateRepository(
+    if scope_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found",
+        )
+
+    (
+        resolved_assessment_id,
+        assessment_school_id,
+        assessment_course_id,
+        course_record_id,
+        course_school_id,
+        course_teacher_id,
+    ) = scope_row
+
+    if course_record_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found",
+        )
+
+    if (
+        not is_platform_admin(current_user)
+        and assessment_school_id != current_user.school_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assessment does not belong to your school",
+        )
+
+    if course_school_id != assessment_school_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment and course school scope are inconsistent",
+        )
+
+    if (
+        is_teacher_without_admin_scope(current_user)
+        and course_teacher_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only manage candidates for your own courses",
+        )
+
+    if (
+        not is_platform_admin(current_user)
+        and course_school_id != current_user.school_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Course does not belong to your school",
+        )
+
+    scope_ms = (
+        perf_counter() - stage_started_at
+    ) * 1000
+
+    stage_started_at = perf_counter()
+
+    candidates = await AssessmentCandidateRepository(
         db,
     ).list_candidates_by_assessment(
-        assessment.id,
+        resolved_assessment_id,
         status=candidate_status,
-        include_relationships=True,
+        include_relationships=False,
+        workspace_relationships=True,
     )
 
+    candidate_query_ms = (
+        perf_counter() - stage_started_at
+    ) * 1000
+
+    total_ms = (
+        perf_counter() - total_started_at
+    ) * 1000
+
+    print(
+        "[CANDIDATE TIMING] "
+        f"assessment={assessment_id} "
+        f"scope={scope_ms:.1f}ms "
+        f"query={candidate_query_ms:.1f}ms "
+        f"total={total_ms:.1f}ms "
+        f"candidates={len(candidates)}"
+    )
+
+    return candidates
 
 async def update_candidate_details(
     db: AsyncSession,
@@ -882,6 +973,7 @@ async def create_script_version(
     storage_key: str | None = None,
     mime_type: str | None = None,
     checksum: str | None = None,
+    initial_status: AssessmentScriptStatus = AssessmentScriptStatus.NOT_SUBMITTED,
 ) -> AssessmentScript:
     """
     Create the next script version for a candidate.
@@ -919,6 +1011,17 @@ async def create_script_version(
             detail="Scripts cannot be created for this candidate",
         )
 
+    if initial_status not in {
+        AssessmentScriptStatus.NOT_SUBMITTED,
+        AssessmentScriptStatus.SUBMITTED,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A newly created script must be unsubmitted or submitted",
+        )
+
+    now = _utc_now()
+
     repository = AssessmentCandidateRepository(
         db,
     )
@@ -930,18 +1033,39 @@ async def create_script_version(
     script = AssessmentScript(
         candidate_id=candidate.id,
         version=version,
-        status=AssessmentScriptStatus.NOT_SUBMITTED,
+        status=initial_status,
         source_type=source_type,
         source_filename=source_filename,
         storage_key=storage_key,
         mime_type=mime_type,
         checksum=checksum,
+        submitted_at=(
+            now
+            if initial_status == AssessmentScriptStatus.SUBMITTED
+            else None
+        ),
     )
+
+    if initial_status == AssessmentScriptStatus.SUBMITTED:
+        if candidate.status == AssessmentCandidateStatus.ALLOCATED:
+            candidate.started_at = candidate.started_at or now
+
+        if candidate.status in {
+            AssessmentCandidateStatus.ALLOCATED,
+            AssessmentCandidateStatus.STARTED,
+        }:
+            candidate.status = AssessmentCandidateStatus.SUBMITTED
+            candidate.submitted_at = candidate.submitted_at or now
 
     try:
         script = await repository.create_script(
             script,
         )
+
+        if initial_status == AssessmentScriptStatus.SUBMITTED:
+            await repository.save_candidate(
+                candidate,
+            )
 
         await db.commit()
         await db.refresh(
@@ -1308,3 +1432,7 @@ async def delete_script(
     except Exception:
         await db.rollback()
         raise
+
+
+
+

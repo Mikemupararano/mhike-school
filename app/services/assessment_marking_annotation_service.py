@@ -40,7 +40,8 @@ from app.services.assessment_marking_service import (
     _ensure_marker_or_admin,
     _ensure_response_marking_access,
     _get_authoritative_response_maximum_mark,
-    _get_response_or_404,
+    _get_response_or_404,
+    list_script_responses,
 )
 
 
@@ -646,6 +647,41 @@ def _ensure_response_can_be_annotated(
             detail="Only submitted responses can be annotated",
         )
 
+
+async def list_script_marking_annotations(
+    db: AsyncSession,
+    current_user: User,
+    script_id: int,
+    *,
+    include_deleted: bool = False,
+) -> list[AssessmentMarkingAnnotation]:
+    """
+    Return all examiner annotations for one script in one
+    database query after validating script-level access.
+    """
+
+    responses = await list_script_responses(
+        db=db,
+        current_user=current_user,
+        script_id=script_id,
+        response_status=None,
+    )
+
+    response_ids = [
+        response.id
+        for response in responses
+    ]
+
+    if not response_ids:
+        return []
+
+    return await AssessmentMarkingAnnotationRepository(
+        db,
+    ).list_for_responses(
+        response_ids,
+        include_deleted=include_deleted,
+        include_relationships=False,
+    )
 
 async def list_marking_annotations(
     db: AsyncSession,
@@ -1509,3 +1545,6 @@ async def delete_marking_annotation(
     except Exception:
         await db.rollback()
         raise
+
+
+
