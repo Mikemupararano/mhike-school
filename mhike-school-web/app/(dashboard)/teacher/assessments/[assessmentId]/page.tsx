@@ -16,6 +16,7 @@ import {
 import RoleGate from "@/components/auth/RoleGate";
 import AssessmentQuestionExtractionPanel from "@/components/assessments/AssessmentQuestionExtractionPanel";
 import AssessmentMarkingPanel from "@/components/assessments/AssessmentMarkingPanel";
+import AssessmentScannedScriptUploadPanel from "@/components/assessments/AssessmentScannedScriptUploadPanel";
 import { apiGet, apiPatch } from "@/lib/api";
 import {
     archiveAssessment,
@@ -3686,6 +3687,10 @@ function TeacherAssessmentDetailContent() {
                     </section>
                     )}
 
+                    <AssessmentScannedScriptUploadPanel
+                        assessmentId={assessment.id}
+                    />
+
                     <AssessmentMarkingPanel
                         assessment={assessment}
                     />
@@ -3708,6 +3713,7 @@ function TeacherAssessmentDetailContent() {
         </main>
     );
 }
+
 
 
 

@@ -10,6 +10,8 @@ import {
     type PointerEvent,
 } from "react";
 
+import ScannedScriptPdfViewer from "@/components/assessments/ScannedScriptPdfViewer";
+
 import {
     ApiError,
 } from "@/lib/api";
@@ -818,6 +820,9 @@ export default function AssessmentMarkingPanel({
         useRef<SVGLineElement | null>(
             null,
         );
+
+    const nextTemporaryAnnotationIdRef =
+        useRef(-1);
 
 
     const [
@@ -2571,8 +2576,14 @@ export default function AssessmentMarkingPanel({
 
     async function handleResponseAnnotationClick(
         response: AssessmentResponse,
-        event: MouseEvent<HTMLDivElement>,
+        event: MouseEvent<HTMLDivElement> | null,
         readOnly: boolean,
+        normalizedPoint?: {
+            x: number;
+            y: number;
+        },
+        surfaceType: "response" | "script_page" = "response",
+        pageNumber: number | null = null,
     ): Promise<void> {
         if (
             readOnly
@@ -2602,52 +2613,47 @@ export default function AssessmentMarkingPanel({
             return;
         }
 
-        const bounds =
-            event.currentTarget.getBoundingClientRect();
+        let x: number;
+        let y: number;
 
-        if (
-            bounds.width <= 0
-            || bounds.height <= 0
-        ) {
-            return;
-        }
+        if (normalizedPoint) {
+            x =
+                Math.min(
+                    1,
+                    Math.max(
+                        0,
+                        normalizedPoint.x,
+                    ),
+                );
 
-        const x =
-            Math.min(
-                1,
-                Math.max(
-                    0,
-                    (
-                        event.clientX
-                        - bounds.left
-                    ) / bounds.width,
-                ),
-            );
+            y =
+                Math.min(
+                    1,
+                    Math.max(
+                        0,
+                        normalizedPoint.y,
+                    ),
+                );
+        } else {
+            if (!event) {
+                return;
+            }
 
-        const y =
-            Math.min(
-                1,
-                Math.max(
-                    0,
-                    (
-                        event.clientY
-                        - bounds.top
-                    ) / bounds.height,
-                ),
-            );
-
-        const selectedTool =
-            selectedMarkingTool;
-
-        if (selectedTool.tool_type === "text") {
             const bounds =
                 event.currentTarget.getBoundingClientRect();
 
-            const x =
-                Math.max(
-                    0,
-                    Math.min(
-                        1,
+            if (
+                bounds.width <= 0
+                || bounds.height <= 0
+            ) {
+                return;
+            }
+
+            x =
+                Math.min(
+                    1,
+                    Math.max(
+                        0,
                         (
                             event.clientX
                             - bounds.left
@@ -2655,18 +2661,26 @@ export default function AssessmentMarkingPanel({
                     ),
                 );
 
-            const y =
-                Math.max(
-                    0,
-                    Math.min(
-                        1,
+            y =
+                Math.min(
+                    1,
+                    Math.max(
+                        0,
                         (
                             event.clientY
                             - bounds.top
                         ) / bounds.height,
                     ),
                 );
+        }
 
+        const selectedTool =
+            selectedMarkingTool;
+
+        if (
+            selectedTool.tool_type === "text"
+            && surfaceType === "response"
+        ) {
             setPendingTextAnnotation({
                 responseId:
                     response.id,
@@ -2763,7 +2777,9 @@ const isLevelResponseTool =
         }
 
         const temporaryAnnotationId =
-            -response.id;
+            nextTemporaryAnnotationIdRef.current;
+
+        nextTemporaryAnnotationIdRef.current -= 1;
 
         const temporaryAnnotation: MarkingAnnotation = {
             id: temporaryAnnotationId,
@@ -2774,9 +2790,9 @@ const isLevelResponseTool =
             value: selectedTool.value,
             label_snapshot: null,
             text: null,
-            surface_type: "response",
+            surface_type: surfaceType,
             surface_reference: null,
-            page_number: null,
+            page_number: pageNumber,
             x,
             y,
             end_x: null,
@@ -2900,10 +2916,13 @@ const isLevelResponseTool =
                             decision.revision,
 
                         surface_type:
-                            "response",
+                            surfaceType,
 
                         surface_reference:
                             null,
+
+                        page_number:
+                            pageNumber,
 
                         x,
                         y,
@@ -4440,6 +4459,234 @@ const isLevelResponseTool =
                                                     Loading responses…
                                                 </p>
                                             )
+                                            : selectedScript?.source_type === "scanned_pdf"
+                                                ? (
+                                                    <div className="space-y-3">
+                                                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700 bg-black/20 px-4 py-3">
+                                                            <button
+                                                                type="button"
+                                                                disabled={
+                                                                    activeResponseIndex <= 0
+                                                                }
+                                                                onClick={
+                                                                    () => {
+                                                                        setSelectedAnnotationId(null);
+                                                                        setAnnotationDrag(null);
+
+                                                                        setActiveResponseIndex(
+                                                                            (current) =>
+                                                                                Math.max(
+                                                                                    0,
+                                                                                    current - 1,
+                                                                                ),
+                                                                        );
+                                                                    }
+                                                                }
+                                                                className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-white transition hover:border-blue-400 hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                                            >
+                                                                ← Previous
+                                                            </button>
+
+                                                            <div className="text-center">
+                                                                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                                                    Scanned paper · Current question
+                                                                </div>
+
+                                                                <div className="mt-1 text-sm font-bold text-white">
+                                                                    Question{" "}
+                                                                    {
+                                                                        responses[
+                                                                            activeResponseIndex
+                                                                        ]?.question_snapshot
+                                                                            ?.question_number
+                                                                        ?? activeResponseIndex + 1
+                                                                    }
+                                                                    {" · "}
+                                                                    {
+                                                                        activeResponseIndex + 1
+                                                                    }
+                                                                    {" of "}
+                                                                    {
+                                                                        responses.length
+                                                                    }
+                                                                </div>
+
+                                                                <div className="mt-1 text-xs font-semibold text-slate-300">
+                                                                    {
+                                                                        responses[
+                                                                            activeResponseIndex
+                                                                        ]?.marking_decision
+                                                                            ?.mark_awarded
+                                                                        ?? 0
+                                                                    }
+                                                                    {" / "}
+                                                                    {
+                                                                        responses[
+                                                                            activeResponseIndex
+                                                                        ]?.question_snapshot
+                                                                            ?.maximum_mark
+                                                                        ?? "—"
+                                                                    }
+                                                                    {" marks"}
+                                                                </div>
+
+                                                                
+<div className="mt-1 text-xs font-semibold text-amber-300">
+                                                                    
+Source page:{" "}
+                                                                    
+{responses[activeResponseIndex]?.question_snapshot?.source_page_number ?? "—"}
+                                                                
+</div>
+                                                            </div>
+
+                                                            <button
+                                                                type="button"
+                                                                disabled={
+                                                                    activeResponseIndex
+                                                                    >= responses.length - 1
+                                                                }
+                                                                onClick={
+                                                                    () => {
+                                                                        setSelectedAnnotationId(null);
+                                                                        setAnnotationDrag(null);
+
+                                                                        setActiveResponseIndex(
+                                                                            (current) =>
+                                                                                Math.min(
+                                                                                    responses.length - 1,
+                                                                                    current + 1,
+                                                                                ),
+                                                                        );
+                                                                    }
+                                                                }
+                                                                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                                                            >
+                                                                Next →
+                                                            </button>
+                                                        </div>
+
+                                                        <ScannedScriptPdfViewer
+                                                        scriptId={selectedScript.id}
+                                                        filename={selectedScript.source_filename}
+                targetPageNumber={
+                    responses[
+                        activeResponseIndex
+                    ]?.question_snapshot
+                        ?.source_page_number
+                        ?? null
+                }
+                                                        annotations={
+                                                            responses[
+                                                                activeResponseIndex
+                                                            ]
+                                                                ? (
+                                                                    markingAnnotations[
+                                                                        responses[
+                                                                            activeResponseIndex
+                                                                        ].id
+                                                                    ]
+                                                                    ?? []
+                                                                )
+                                                                : []
+                                                        }
+                                                        annotationDeleteEnabled={
+                                                            deleteMode
+                                                            && Boolean(
+                                                                responses[
+                                                                    activeResponseIndex
+                                                                ],
+                                                            )
+                                                            && selectedWorkspaceItem
+                                                                .script.status
+                                                                === "marking"
+                                                        }
+                                                        onDeleteAnnotation={
+                                                            (annotation) => {
+                                                                const response =
+                                                                    responses[
+                                                                        activeResponseIndex
+                                                                    ];
+
+                                                                if (!response) {
+                                                                    return;
+                                                                }
+
+                                                                const readOnly =
+                                                                    isDecisionReadOnly(
+                                                                        response
+                                                                            .marking_decision,
+                                                                    )
+                                                                    || selectedWorkspaceItem
+                                                                        .script.status
+                                                                        !== "marking";
+
+                                                                void handleDeleteAnnotation(
+                                                                    response,
+                                                                    annotation,
+                                                                    readOnly,
+                                                                );
+                                                            }
+                                                        }
+                                                        pointPlacementEnabled={
+                                                            Boolean(
+                                                                !deleteMode
+                                                                && responses[
+                                                                    activeResponseIndex
+                                                                ]
+                                                                && selectedMarkingTool
+                                                                && [
+                                                                    "symbol",
+                                                                    "code",
+                                                                ].includes(
+                                                                    selectedMarkingTool
+                                                                        .tool_type,
+                                                                )
+                                                                && selectedWorkspaceItem
+                                                                    .script.status
+                                                                    === "marking"
+                                                            )
+                                                        }
+                                                        onPagePoint={
+                                                            (
+                                                                pageNumber,
+                                                                x,
+                                                                y,
+                                                            ) => {
+                                                                const response =
+                                                                    responses[
+                                                                        activeResponseIndex
+                                                                    ];
+
+                                                                if (!response) {
+                                                                    return;
+                                                                }
+
+                                                                const readOnly =
+                                                                    isDecisionReadOnly(
+                                                                        response
+                                                                            .marking_decision,
+                                                                    )
+                                                                    || selectedWorkspaceItem
+                                                                        .script.status
+                                                                        !== "marking";
+
+                                                                void handleResponseAnnotationClick(
+                                                                    response,
+                                                                    null,
+                                                                    readOnly,
+                                                                    {
+                                                                        x,
+                                                                        y,
+                                                                    },
+                                                                    "script_page",
+                                                                    pageNumber,
+                                                                );
+                                                            }
+                                                        }
+                                                    />
+                                                    </div>
+                                                )
                                             : responses.length === 0
                                                 ? (
                                                     <div className="rounded-xl border border-dashed border-slate-600 p-8 text-center text-slate-400">
@@ -5644,4 +5891,10 @@ const isLevelResponseTool =
 
 
 
-        status=initial_status,
+
+
+
+
+
+
+

@@ -974,6 +974,7 @@ async def create_script_version(
     mime_type: str | None = None,
     checksum: str | None = None,
     initial_status: AssessmentScriptStatus = AssessmentScriptStatus.NOT_SUBMITTED,
+    commit_transaction: bool = True,
 ) -> AssessmentScript:
     """
     Create the next script version for a candidate.
@@ -1067,10 +1068,13 @@ async def create_script_version(
                 candidate,
             )
 
-        await db.commit()
-        await db.refresh(
-            script,
-        )
+        if commit_transaction:
+            await db.commit()
+            await db.refresh(
+                script,
+            )
+        else:
+            await db.flush()
 
     except IntegrityError as exc:
         await db.rollback()
@@ -1432,6 +1436,7 @@ async def delete_script(
     except Exception:
         await db.rollback()
         raise
+
 
 
 

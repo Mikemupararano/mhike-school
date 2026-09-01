@@ -198,6 +198,7 @@ export type AssessmentQuestionSnapshot = {
     parent_question_id_snapshot: number | null;
 
     question_number: string;
+    source_page_number: number | null;
     title: string | null;
     prompt: string | null;
     question_type: string;

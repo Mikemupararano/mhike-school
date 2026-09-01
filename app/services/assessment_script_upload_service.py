@@ -12,6 +12,9 @@ from app.models.assessment_candidate import (
     AssessmentScriptStatus,
 )
 from app.models.user import User
+from app.services.assessment_taking_service import (
+    scaffold_submitted_scanned_script_responses,
+)
 from app.services.assessment_candidate_service import (
     create_script_version,
     get_candidate,
@@ -261,11 +264,25 @@ async def upload_scanned_script(
             mime_type=PDF_MIME_TYPE,
             checksum=checksum,
             initial_status=AssessmentScriptStatus.SUBMITTED,
+            commit_transaction=False,
+        )
+
+        await scaffold_submitted_scanned_script_responses(
+            db,
+            assessment=assessment,
+            script=script,
+        )
+
+        await db.commit()
+        await db.refresh(
+            script,
         )
 
         return script
 
     except Exception:
+        await db.rollback()
+
         try:
             destination.unlink(
                 missing_ok=True,
@@ -340,4 +357,5 @@ async def resolve_scanned_script_path(
         script,
         script_path,
     )
+
 

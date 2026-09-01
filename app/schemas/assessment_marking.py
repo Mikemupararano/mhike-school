@@ -833,6 +833,7 @@ class AssessmentQuestionSnapshotOut(BaseModel):
     maximum_mark: Decimal
     order: int
     is_markable: bool
+    source_page_number: int | None = None
 
     section_snapshot: dict[str, Any] | None = None
 

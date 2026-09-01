@@ -292,6 +292,11 @@ class AssessmentQuestion(Base):
         default=True,
     )
 
+    source_page_number: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
     assessment: Mapped["Assessment"] = relationship(
         "Assessment",
         back_populates="questions",

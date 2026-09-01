@@ -806,6 +806,7 @@ class AssessmentQuestionRepository:
                     AssessmentQuestion.maximum_mark,
                     AssessmentQuestion.order,
                     AssessmentQuestion.is_markable,
+                    AssessmentQuestion.source_page_number,
                 ),
                 selectinload(
                     AssessmentQuestion.section,
@@ -1089,6 +1090,7 @@ class AssessmentQuestionRepository:
                     AssessmentQuestion.maximum_mark,
                     AssessmentQuestion.order,
                     AssessmentQuestion.is_markable,
+                    AssessmentQuestion.source_page_number,
                 ),
                 selectinload(
                     AssessmentQuestion.section,

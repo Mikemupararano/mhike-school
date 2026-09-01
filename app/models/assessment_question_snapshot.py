@@ -144,6 +144,10 @@ class AssessmentQuestionSnapshot(Base):
         nullable=False,
     )
 
+    source_page_number: Mapped[int | None] = mapped_column(
+        nullable=True,
+    )
+
     # ------------------------------------------------------------------
     # Related learner-facing state
     # ------------------------------------------------------------------

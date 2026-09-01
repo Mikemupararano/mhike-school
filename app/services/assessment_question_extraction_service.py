@@ -4782,6 +4782,33 @@ def _build_import_question_specs(
             field_name="question_number",
         )
 
+        source = question.get(
+            "source",
+        )
+
+        source_page_number: int | None = None
+
+        if isinstance(
+            source,
+            dict,
+        ):
+            raw_source_page_number = source.get(
+                "page_number",
+            )
+
+            if (
+                isinstance(
+                    raw_source_page_number,
+                    int,
+                )
+                and not isinstance(
+                    raw_source_page_number,
+                    bool,
+                )
+                and raw_source_page_number > 0
+            ):
+                source_page_number = raw_source_page_number
+
         marks = question.get(
             "marks",
         )
@@ -4908,6 +4935,7 @@ def _build_import_question_specs(
                     marks,
                 ),
                 "is_markable": True,
+                "source_page_number": source_page_number,
                 "options": options,
                 "assets": assets,
                 "synthesised": False,
@@ -5248,6 +5276,7 @@ async def import_question_extraction(
                 maximum_mark=spec["maximum_mark"],
                 order=next_order + offset,
                 is_markable=spec["is_markable"],
+                source_page_number=spec.get("source_page_number"),
                 options=[
                     AssessmentQuestionOption(
                         text=option["text"],

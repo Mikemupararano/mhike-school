@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.assessment import Assessment, AssessmentStatus
 from app.models.assessment_candidate import (
     AssessmentCandidateStatus,
     AssessmentScriptStatus,
+)
+from app.models.assessment_question import AssessmentQuestion
+from app.models.assessment_question_snapshot import AssessmentQuestionSnapshot
+from app.models.assessment_response import (
+    AssessmentResponse,
+    AssessmentResponseStatus,
 )
 from app.models.course import Course
 from app.models.user import UserRole
@@ -784,6 +792,159 @@ async def test_teacher_can_upload_scanned_pdf_script(
         assessment_script_upload_root.resolve(),
     )
 
+
+@pytest.mark.asyncio
+async def test_scanned_pdf_upload_creates_question_response_scaffold(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    teacher_user,
+    auth_headers,
+    assessment_script_upload_root: Path,
+):
+    _, assessment = await _create_assessment_for_teacher(
+        db_session,
+        teacher_user,
+    )
+
+    questions = [
+        AssessmentQuestion(
+            assessment_id=assessment.id,
+            question_number="1",
+            prompt="State the unit of force.",
+            maximum_mark=Decimal("2.00"),
+            order=1,
+            is_markable=True,
+        ),
+        AssessmentQuestion(
+            assessment_id=assessment.id,
+            question_number="2",
+            prompt="Calculate the resultant force.",
+            maximum_mark=Decimal("3.00"),
+            order=2,
+            is_markable=True,
+        ),
+    ]
+
+    db_session.add_all(
+        questions,
+    )
+
+    await db_session.commit()
+
+    for question in questions:
+        await db_session.refresh(
+            question,
+        )
+
+    student = await _create_student(
+        db_session,
+        school_id=teacher_user.school_id,
+        email="candidate.api.scanned.scaffold@example.com",
+    )
+
+    candidate = await _allocate_candidate_via_api(
+        client,
+        assessment_id=assessment.id,
+        student_id=student.id,
+        user=teacher_user,
+        auth_headers=auth_headers,
+        candidate_number="SCAN-SCAFFOLD-001",
+    )
+
+    response = await client.post(
+        f"/api/v1/assessment-candidates/{candidate['id']}/scripts/upload",
+        files={
+            "file": (
+                "scaffolded-script.pdf",
+                SCANNED_SCRIPT_PDF,
+                "application/pdf",
+            ),
+        },
+        headers=auth_headers(
+            teacher_user,
+        ),
+    )
+
+    assert response.status_code == 201, response.text
+
+    script = response.json()
+
+    snapshot_result = await db_session.execute(
+        select(
+            AssessmentQuestionSnapshot,
+        )
+        .where(
+            AssessmentQuestionSnapshot.script_id == script["id"],
+        )
+        .order_by(
+            AssessmentQuestionSnapshot.order,
+        )
+    )
+
+    snapshots = list(
+        snapshot_result.scalars().all(),
+    )
+
+    response_result = await db_session.execute(
+        select(
+            AssessmentResponse,
+        )
+        .where(
+            AssessmentResponse.script_id == script["id"],
+        )
+        .order_by(
+            AssessmentResponse.question_id,
+        )
+    )
+
+    responses = list(
+        response_result.scalars().all(),
+    )
+
+    assert len(snapshots) == 2
+    assert len(responses) == 2
+
+    assert [
+        snapshot.question_number
+        for snapshot in snapshots
+    ] == [
+        "1",
+        "2",
+    ]
+
+    assert [
+        snapshot.maximum_mark
+        for snapshot in snapshots
+    ] == [
+        Decimal("2.00"),
+        Decimal("3.00"),
+    ]
+
+    snapshot_by_question_id = {
+        snapshot.question_id: snapshot
+        for snapshot in snapshots
+    }
+
+    assert {
+        response.question_id
+        for response in responses
+    } == {
+        question.id
+        for question in questions
+    }
+
+    for script_response in responses:
+        assert script_response.status == AssessmentResponseStatus.SUBMITTED
+        assert script_response.submitted_at is not None
+        assert script_response.question_snapshot_id is not None
+
+        snapshot = snapshot_by_question_id[
+            script_response.question_id
+        ]
+
+        assert script_response.question_snapshot_id == snapshot.id
+        assert snapshot.script_id == script["id"]
+        assert snapshot.question_id == script_response.question_id
 
 @pytest.mark.asyncio
 async def test_scanned_pdf_upload_creates_next_script_version(
@@ -1945,6 +2106,7 @@ async def test_candidate_with_script_history_cannot_be_deleted(
     )
 
     assert response.status_code == 409
+
 
 
 

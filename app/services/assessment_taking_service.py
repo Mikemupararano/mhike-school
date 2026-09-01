@@ -834,6 +834,7 @@ async def _ensure_question_snapshots(
                 maximum_mark=question.maximum_mark,
                 order=question.order,
                 is_markable=question.is_markable,
+                source_page_number=question.source_page_number,
                 section_snapshot=section_snapshot,
                 options_snapshot=options_snapshot,
                 assets_snapshot=assets_snapshot,
@@ -1007,6 +1008,69 @@ async def _ensure_response_rows(
         await db.flush()
 
 
+async def scaffold_submitted_scanned_script_responses(
+    db: AsyncSession,
+    *,
+    assessment: Assessment,
+    script: AssessmentScript,
+) -> list[AssessmentResponse]:
+    """
+    Create the immutable question structure required to mark a scanned script.
+
+    Scanned handwritten work uses the same question snapshots and response rows
+    as a browser attempt. The physical PDF remains the response surface while
+    each markable assessment question retains its own response identity.
+
+    This helper flushes changes but does not commit the transaction.
+    """
+
+    questions = await _list_candidate_questions(
+        db,
+        assessment=assessment,
+    )
+
+    await _ensure_question_snapshots(
+        db,
+        script=script,
+        assessment=assessment,
+        questions=questions,
+    )
+
+    await _ensure_response_rows(
+        db,
+        script=script,
+        questions=questions,
+    )
+
+    responses = await _list_script_responses_safe(
+        db,
+        script_id=script.id,
+        for_update=True,
+    )
+
+    now = _utc_now()
+
+    for response in responses:
+        if response.status == AssessmentResponseStatus.VOID:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Scanned script contains a void response and cannot "
+                    "be prepared for marking."
+                ),
+            )
+
+        response.status = AssessmentResponseStatus.SUBMITTED
+        response.submitted_at = response.submitted_at or now
+
+        db.add(
+            response,
+        )
+
+    await db.flush()
+
+    return responses
+
 # ---------------------------------------------------------------------------
 # Diagram-response integrity
 # ---------------------------------------------------------------------------
@@ -1071,6 +1135,7 @@ async def _get_question_snapshot_safe(
                 AssessmentQuestionSnapshot.question_type,
                 AssessmentQuestionSnapshot.interaction_config_snapshot,
                 AssessmentQuestionSnapshot.is_markable,
+                AssessmentQuestionSnapshot.source_page_number,
                 AssessmentQuestionSnapshot.assets_snapshot,
             ),
         )
@@ -1490,6 +1555,7 @@ async def _list_question_snapshots_safe(
                 AssessmentQuestionSnapshot.maximum_mark,
                 AssessmentQuestionSnapshot.order,
                 AssessmentQuestionSnapshot.is_markable,
+                AssessmentQuestionSnapshot.source_page_number,
                 AssessmentQuestionSnapshot.section_snapshot,
                 AssessmentQuestionSnapshot.options_snapshot,
                 AssessmentQuestionSnapshot.assets_snapshot,
@@ -2753,3 +2819,4 @@ async def submit_student_assessment(
     except Exception:
         await db.rollback()
         raise
+

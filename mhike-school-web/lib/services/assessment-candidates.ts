@@ -1,6 +1,8 @@
 import {
     apiGet,
+    apiGetBlob,
     apiPost,
+    apiPostForm,
 } from "@/lib/api";
 
 
@@ -252,3 +254,41 @@ export function getLatestCandidateScript(
         ),
     );
 }
+
+// ---------------------------------------------------------------------
+// Scanned script file
+// ---------------------------------------------------------------------
+
+
+export async function getAssessmentScriptFileBlob(
+    scriptId: number,
+): Promise<Blob> {
+    return apiGetBlob(
+        `/assessment-candidates/scripts/${scriptId}/file`,
+    );
+}
+
+// ---------------------------------------------------------------------
+// Scanned script upload
+// ---------------------------------------------------------------------
+
+
+export async function uploadAssessmentScannedScript(
+    candidateId: number,
+    file: File,
+): Promise<AssessmentScript> {
+    const formData =
+        new FormData();
+
+    formData.append(
+        "file",
+        file,
+        file.name,
+    );
+
+    return apiPostForm<AssessmentScript>(
+        `/assessment-candidates/${candidateId}/scripts/upload`,
+        formData,
+    );
+}
+
