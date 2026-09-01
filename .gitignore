@@ -84,3 +84,8 @@ uploads/
 app/repositories/student_reports.backup.py
 
 celerybeat-schedule
+*.before-*
+*.failed-*
+*.corrupt-*
+patch-*.ps1
+add-*-diagnostic*.ps1
