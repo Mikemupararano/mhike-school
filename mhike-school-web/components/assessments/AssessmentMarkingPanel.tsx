@@ -4461,7 +4461,8 @@ const isLevelResponseTool =
                                             )
                                             : selectedScript?.source_type === "scanned_pdf"
                                                 ? (
-                                                    <div className="space-y-3">
+                                                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_250px]">
+                                                        <div className="min-w-0 space-y-3">
                                                         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700 bg-black/20 px-4 py-3">
                                                             <button
                                                                 type="button"
@@ -4685,6 +4686,67 @@ Source page:{" "}
                                                             }
                                                         }
                                                     />
+                                                        </div>
+
+                                                        <aside className="overflow-hidden rounded-xl border border-slate-700 bg-slate-950/70 xl:sticky xl:top-3 xl:self-start">
+                                                            <div className="border-b border-slate-700 px-4 py-3">
+                                                                <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                                                                    Question navigator
+                                                                </div>
+                                                                <div className="mt-1 text-sm font-semibold text-white">
+                                                                    {markedCount} of {responses.length} marked
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="max-h-[68vh] overflow-y-auto py-1">
+                                                                {responses.map((response, index) => {
+                                                                    const isActive = index === activeResponseIndex;
+
+                                                                    return (
+                                                                        <button
+                                                                            key={response.id}
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setSelectedAnnotationId(null);
+                                                                                setAnnotationDrag(null);
+                                                                                setActiveResponseIndex(index);
+                                                                            }}
+                                                                            className={[
+                                                                                "flex w-full items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 text-left transition",
+                                                                                isActive
+                                                                                    ? "bg-blue-600 text-white"
+                                                                                    : "text-slate-200 hover:bg-white/5",
+                                                                            ].join(" ")}
+                                                                        >
+                                                                            <span className="min-w-0 truncate text-sm font-semibold">
+                                                                                {response.question_snapshot?.question_number ?? index + 1}
+                                                                            </span>
+
+                                                                            <span className="shrink-0 text-sm font-bold">
+                                                                                {response.marking_decision?.mark_awarded ?? "—"}
+                                                                                {" / "}
+                                                                                {response.question_snapshot?.maximum_mark ?? "—"}
+                                                                            </span>
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+
+                                                            <div className="border-t border-slate-700 bg-black/20 px-4 py-4">
+                                                                <div className="flex items-end justify-between gap-3">
+                                                                    <span className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                                                                        Total marks
+                                                                    </span>
+                                                                    <span className="text-xl font-bold text-white">
+                                                                        {runningTotal}
+                                                                        <span className="text-sm font-semibold text-slate-400">
+                                                                            {" / "}{maximumTotal}
+                                                                        </span>
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        </aside>
+
                                                     </div>
                                                 )
                                             : responses.length === 0
