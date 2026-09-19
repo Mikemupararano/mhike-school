@@ -38,6 +38,7 @@ from app.models.assessment_marking_annotation import (
     MarkingAnnotationSurfaceType,
     MarkingAnnotationType,
 )
+from app.models.assessment_script_question_map import AssessmentScriptQuestionMap
 from app.models.assessment_response import (
     AssessmentResponse,
     AssessmentResponseStatus,
@@ -128,6 +129,7 @@ __all__ = [
     "AssessmentResultPublicationStatus",
     "AssessmentScript",
     "AssessmentScriptStatus",
+    "AssessmentScriptQuestionMap",
     "AssessmentSection",
     "AssessmentStatus",
     "AssessmentTarget",
