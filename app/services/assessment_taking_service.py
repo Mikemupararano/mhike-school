@@ -1089,7 +1089,7 @@ def _parse_json_object(
         )
     except json.JSONDecodeError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Structured response data must contain valid JSON.",
         ) from exc
 
@@ -1098,7 +1098,7 @@ def _parse_json_object(
         dict,
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Structured response data must be a JSON object.",
         )
 
@@ -1234,7 +1234,7 @@ def _validate_response_for_question(
     if question_type == AssessmentQuestionType.DIAGRAM_ANNOTATION:
         if clean_text is not None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     "Diagram-annotation responses must not contain " "response_text."
                 ),
@@ -1253,13 +1253,13 @@ def _validate_response_for_question(
             )
         except ValidationError as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Invalid diagram-annotation response data.",
             ) from exc
 
         if payload.asset_id not in visible_asset_ids:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     "Diagram annotation references an asset that does not "
                     "belong to this candidate-visible question."
@@ -1310,7 +1310,7 @@ def _validate_response_for_question(
                 for annotation in payload.annotations
             ):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
                         "Diagram annotation contains a symbol that is not "
                         "permitted for this question."
@@ -1350,7 +1350,7 @@ def _validate_response_for_question(
             == "diagram_annotation"
         ):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     "Diagram-annotation response data cannot be saved against "
                     "this question type."

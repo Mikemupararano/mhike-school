@@ -1017,7 +1017,7 @@ async def create_script_version(
         AssessmentScriptStatus.SUBMITTED,
     }:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A newly created script must be unsubmitted or submitted",
         )
 
