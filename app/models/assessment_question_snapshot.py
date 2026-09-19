@@ -148,6 +148,12 @@ class AssessmentQuestionSnapshot(Base):
         nullable=True,
     )
 
+    source_regions: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
     # ------------------------------------------------------------------
     # Related learner-facing state
     # ------------------------------------------------------------------

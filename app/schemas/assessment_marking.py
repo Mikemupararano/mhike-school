@@ -834,6 +834,7 @@ class AssessmentQuestionSnapshotOut(BaseModel):
     order: int
     is_markable: bool
     source_page_number: int | None = None
+    source_regions: list[dict[str, Any]] = Field(default_factory=list)
 
     section_snapshot: dict[str, Any] | None = None
 

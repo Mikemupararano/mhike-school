@@ -199,6 +199,7 @@ export type AssessmentQuestionSnapshot = {
 
     question_number: string;
     source_page_number: number | null;
+    source_regions: Array<Record<string, unknown>>;
     title: string | null;
     prompt: string | null;
     question_type: string;

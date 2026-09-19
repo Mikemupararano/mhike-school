@@ -946,6 +946,7 @@ def _new_proposal_question(
         ),
         "options": [],
         "assets": [],
+        "source_regions": [],
         "source": {
             "page_number": page_number,
             "line_number": line_number,
@@ -4809,6 +4810,37 @@ def _build_import_question_specs(
             ):
                 source_page_number = raw_source_page_number
 
+        raw_source_regions = question.get(
+            "source_regions",
+            [],
+        )
+
+        if raw_source_regions is None:
+            raw_source_regions = []
+
+        if (
+            not isinstance(
+                raw_source_regions,
+                list,
+            )
+            or any(
+                not isinstance(region, dict)
+                for region in raw_source_regions
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Question {question_number!r} contains malformed "
+                    "source region metadata."
+                ),
+            )
+
+        source_regions = [
+            dict(region)
+            for region in raw_source_regions
+        ]
+
         marks = question.get(
             "marks",
         )
@@ -4936,6 +4968,7 @@ def _build_import_question_specs(
                 ),
                 "is_markable": True,
                 "source_page_number": source_page_number,
+                "source_regions": source_regions,
                 "options": options,
                 "assets": assets,
                 "synthesised": False,
@@ -5277,6 +5310,7 @@ async def import_question_extraction(
                 order=next_order + offset,
                 is_markable=spec["is_markable"],
                 source_page_number=spec.get("source_page_number"),
+                source_regions=spec.get("source_regions", []),
                 options=[
                     AssessmentQuestionOption(
                         text=option["text"],

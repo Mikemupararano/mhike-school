@@ -297,6 +297,12 @@ class AssessmentQuestion(Base):
         nullable=True,
     )
 
+    source_regions: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
     assessment: Mapped["Assessment"] = relationship(
         "Assessment",
         back_populates="questions",
