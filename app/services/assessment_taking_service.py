@@ -835,7 +835,7 @@ async def _ensure_question_snapshots(
                 order=question.order,
                 is_markable=question.is_markable,
                 source_page_number=question.source_page_number,
-                source_regions=list(question.source_regions or []),
+                source_regions=list(question.__dict__.get("source_regions") or []),
                 section_snapshot=section_snapshot,
                 options_snapshot=options_snapshot,
                 assets_snapshot=assets_snapshot,

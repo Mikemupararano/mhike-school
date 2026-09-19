@@ -2578,6 +2578,566 @@ def _render_question_visual_asset(
     }
 
 
+def _find_question_source_region_anchor_rect(
+    *,
+    page: pymupdf.Page,
+    question: dict[str, Any],
+) -> pymupdf.Rect | None:
+    """
+    Locate the narrowest reliable question anchor available on the source PDF.
+
+    Exact PyMuPDF text search is preferred because one general text block can
+    contain more than one sub-question. The existing block matcher remains the
+    conservative fallback.
+    """
+
+    source = question.get(
+        "source",
+        {},
+    )
+
+    source_line = (
+        source.get(
+            "source_line",
+        )
+        if isinstance(source, dict)
+        else None
+    )
+
+    question_text = question.get(
+        "text",
+        "",
+    )
+
+    search_values: list[str] = []
+
+    for raw_value in (
+        source_line,
+        question_text,
+    ):
+        if not isinstance(
+            raw_value,
+            str,
+        ):
+            continue
+
+        collapsed = " ".join(
+            raw_value.split(),
+        )
+
+        if len(collapsed) < 4:
+            continue
+
+        search_values.append(
+            collapsed,
+        )
+
+        if len(collapsed) > 120:
+            search_values.append(
+                collapsed[:120],
+            )
+
+    for search_value in search_values:
+        try:
+            matches = page.search_for(
+                search_value,
+            )
+        except Exception:
+            matches = []
+
+        usable_matches = [
+            pymupdf.Rect(match)
+            for match in matches
+            if pymupdf.Rect(match).height > 0
+            and pymupdf.Rect(match).width > 0
+        ]
+
+        if usable_matches:
+            usable_matches.sort(
+                key=lambda rect: (
+                    rect.y0,
+                    rect.x0,
+                    rect.height * rect.width,
+                ),
+            )
+
+            return usable_matches[0]
+
+    return _find_question_anchor_rect(
+        page=page,
+        question=question,
+    )
+
+
+def _source_region_payload(
+    *,
+    kind: str,
+    page_number: int,
+    rect: pymupdf.Rect,
+    page_rect: pymupdf.Rect,
+    confidence: str,
+    shared_reference_key: str | None = None,
+) -> dict[str, Any]:
+    """
+    Serialise one source-PDF region without changing its coordinate system.
+    """
+
+    payload: dict[str, Any] = {
+        "kind": kind,
+        "page_number": page_number,
+        "x0": round(
+            rect.x0,
+            3,
+        ),
+        "y0": round(
+            rect.y0,
+            3,
+        ),
+        "x1": round(
+            rect.x1,
+            3,
+        ),
+        "y1": round(
+            rect.y1,
+            3,
+        ),
+        "page_width": round(
+            page_rect.width,
+            3,
+        ),
+        "page_height": round(
+            page_rect.height,
+            3,
+        ),
+        "confidence": confidence,
+    }
+
+    if shared_reference_key is not None:
+        payload["shared_reference_key"] = shared_reference_key
+
+    return payload
+
+
+def _attach_source_regions_to_proposal(
+    *,
+    document_path: Path,
+    proposal: dict[str, Any],
+) -> int:
+    """
+    Attach question-response geometry from the immutable source question paper.
+
+    Response regions are bounded by the next reliably located question anchor.
+    Questions can therefore own several page regions when their answer space
+    continues across a page boundary.
+
+    Candidate-visible visual assets are represented separately as reference
+    regions. Identical geometry receives the same shared reference key so one
+    graph, table or diagram can support several later question parts.
+
+    If neighbouring question anchors on the same page cannot be separated
+    reliably, no response crop is emitted for that question. This is safer
+    than creating a crop that could expose another response as the active one.
+    """
+
+    questions = proposal.get(
+        "questions",
+        [],
+    )
+
+    if not isinstance(
+        questions,
+        list,
+    ):
+        return 0
+
+    try:
+        document = pymupdf.open(
+            str(
+                document_path,
+            )
+        )
+    except Exception as exc:
+        proposal.setdefault(
+            "warnings",
+            [],
+        ).append(
+            {
+                "code": "source_region_extraction_unavailable",
+                "message": (
+                    "Question source regions could not be inspected: "
+                    f"{type(exc).__name__}."
+                ),
+                "page_numbers": [],
+            }
+        )
+
+        return 0
+
+    generated_count = 0
+    ambiguous_questions: list[str] = []
+
+    try:
+        anchored_questions: list[
+            tuple[
+                int,
+                float,
+                int,
+                dict[str, Any],
+                pymupdf.Rect,
+            ]
+        ] = []
+
+        for question_index, question in enumerate(
+            questions,
+        ):
+            if not isinstance(
+                question,
+                dict,
+            ):
+                continue
+
+            question["source_regions"] = []
+
+            source = question.get(
+                "source",
+                {},
+            )
+
+            if not isinstance(
+                source,
+                dict,
+            ):
+                continue
+
+            page_number = source.get(
+                "page_number",
+            )
+
+            if (
+                not isinstance(
+                    page_number,
+                    int,
+                )
+                or isinstance(
+                    page_number,
+                    bool,
+                )
+                or page_number < 1
+                or page_number > len(document)
+            ):
+                continue
+
+            page = document[
+                page_number - 1
+            ]
+
+            anchor = _find_question_source_region_anchor_rect(
+                page=page,
+                question=question,
+            )
+
+            if anchor is None:
+                ambiguous_questions.append(
+                    str(
+                        question.get(
+                            "question_number",
+                            "",
+                        )
+                    )
+                )
+                continue
+
+            anchored_questions.append(
+                (
+                    page_number,
+                    anchor.y0,
+                    question_index,
+                    question,
+                    anchor,
+                )
+            )
+
+        anchored_questions.sort(
+            key=lambda item: (
+                item[0],
+                item[1],
+                item[2],
+            ),
+        )
+
+        for position, anchored in enumerate(
+            anchored_questions,
+        ):
+            (
+                start_page_number,
+                _,
+                _,
+                question,
+                anchor,
+            ) = anchored
+
+            next_anchored = (
+                anchored_questions[
+                    position + 1
+                ]
+                if position + 1 < len(
+                    anchored_questions
+                )
+                else None
+            )
+
+            next_page_number: int | None = None
+            next_anchor: pymupdf.Rect | None = None
+
+            if next_anchored is not None:
+                next_page_number = next_anchored[0]
+                next_anchor = next_anchored[4]
+
+            if (
+                next_page_number == start_page_number
+                and next_anchor is not None
+                and next_anchor.y0 <= anchor.y0 + 12.0
+            ):
+                ambiguous_questions.append(
+                    str(
+                        question.get(
+                            "question_number",
+                            "",
+                        )
+                    )
+                )
+                continue
+
+            if next_page_number is None:
+                end_page_number = len(
+                    document
+                )
+            elif next_page_number == start_page_number:
+                end_page_number = start_page_number
+            elif (
+                next_anchor is not None
+                and next_anchor.y0 <= 72.0
+            ):
+                # A following question beginning within the top inch of the
+                # next page normally indicates a page break rather than a
+                # genuine continuation of the current response area.
+                end_page_number = next_page_number - 1
+            else:
+                # Preserve genuine cross-page response areas when the next
+                # question starts far enough down the following page.
+                end_page_number = next_page_number
+
+            response_regions: list[
+                dict[str, Any]
+            ] = []
+
+            for page_number in range(
+                start_page_number,
+                end_page_number + 1,
+            ):
+                page = document[
+                    page_number - 1
+                ]
+
+                page_rect = page.rect
+
+                if page_number == start_page_number:
+                    region_y0 = max(
+                        page_rect.y0,
+                        anchor.y0 - 6.0,
+                    )
+                else:
+                    region_y0 = page_rect.y0
+
+                if (
+                    next_page_number is not None
+                    and page_number == next_page_number
+                    and next_anchor is not None
+                ):
+                    region_y1 = min(
+                        page_rect.y1,
+                        next_anchor.y0 - 4.0,
+                    )
+                else:
+                    region_y1 = page_rect.y1
+
+                if region_y1 <= region_y0 + 12.0:
+                    continue
+
+                region_rect = pymupdf.Rect(
+                    page_rect.x0,
+                    region_y0,
+                    page_rect.x1,
+                    region_y1,
+                )
+
+                response_regions.append(
+                    _source_region_payload(
+                        kind="response",
+                        page_number=page_number,
+                        rect=region_rect,
+                        page_rect=page_rect,
+                        confidence="high",
+                    )
+                )
+
+            source_regions = response_regions
+
+            existing_assets = question.get(
+                "assets",
+                [],
+            )
+
+            if isinstance(
+                existing_assets,
+                list,
+            ):
+                for asset in existing_assets:
+                    if not isinstance(
+                        asset,
+                        dict,
+                    ):
+                        continue
+
+                    if not bool(
+                        asset.get(
+                            "candidate_visible",
+                            True,
+                        )
+                    ):
+                        continue
+
+                    reference_page_number = asset.get(
+                        "source_page_number",
+                    )
+
+                    source_bbox = asset.get(
+                        "source_bbox",
+                    )
+
+                    if (
+                        not isinstance(
+                            reference_page_number,
+                            int,
+                        )
+                        or isinstance(
+                            reference_page_number,
+                            bool,
+                        )
+                        or reference_page_number < 1
+                        or reference_page_number > len(document)
+                        or not isinstance(
+                            source_bbox,
+                            dict,
+                        )
+                    ):
+                        continue
+
+                    coordinates: list[float] = []
+                    valid_coordinates = True
+
+                    for coordinate_name in (
+                        "x0",
+                        "y0",
+                        "x1",
+                        "y1",
+                    ):
+                        raw_coordinate = source_bbox.get(
+                            coordinate_name,
+                        )
+
+                        if (
+                            not isinstance(
+                                raw_coordinate,
+                                (int, float),
+                            )
+                            or isinstance(
+                                raw_coordinate,
+                                bool,
+                            )
+                        ):
+                            valid_coordinates = False
+                            break
+
+                        coordinates.append(
+                            float(
+                                raw_coordinate,
+                            )
+                        )
+
+                    if not valid_coordinates:
+                        continue
+
+                    reference_page = document[
+                        reference_page_number - 1
+                    ]
+
+                    reference_page_rect = reference_page.rect
+
+                    reference_rect = pymupdf.Rect(
+                        coordinates,
+                    )
+
+                    reference_rect = reference_rect & reference_page_rect
+
+                    if (
+                        reference_rect.width <= 0
+                        or reference_rect.height <= 0
+                    ):
+                        continue
+
+                    shared_reference_key = (
+                        f"visual:{reference_page_number}:"
+                        f"{reference_rect.x0:.1f}:"
+                        f"{reference_rect.y0:.1f}:"
+                        f"{reference_rect.x1:.1f}:"
+                        f"{reference_rect.y1:.1f}"
+                    )
+
+                    source_regions.append(
+                        _source_region_payload(
+                            kind="reference",
+                            page_number=reference_page_number,
+                            rect=reference_rect,
+                            page_rect=reference_page_rect,
+                            confidence="high",
+                            shared_reference_key=shared_reference_key,
+                        )
+                    )
+
+            question["source_regions"] = source_regions
+
+            generated_count += len(
+                source_regions,
+            )
+
+        if ambiguous_questions:
+            proposal.setdefault(
+                "warnings",
+                [],
+            ).append(
+                {
+                    "code": "question_source_region_ambiguous",
+                    "message": (
+                        "One or more question response regions could not be "
+                        "bounded reliably. Whole-page fallback should be used "
+                        "for those questions until their geometry is reviewed."
+                    ),
+                    "question_numbers": sorted(
+                        {
+                            question_number
+                            for question_number in ambiguous_questions
+                            if question_number
+                        }
+                    ),
+                }
+            )
+
+    finally:
+        document.close()
+
+    return generated_count
+
 def _attach_visual_assets_to_proposal(
     *,
     document_path: Path,
@@ -2923,6 +3483,14 @@ def _read_pdf(
             extraction_version=extraction_version,
         )
 
+    generated_source_region_count = _attach_source_regions_to_proposal(
+        document_path=document_path,
+        proposal=proposal,
+    )
+
+    source_metadata["generated_source_region_count"] = (
+        generated_source_region_count
+    )
     source_metadata["generated_visual_asset_count"] = generated_visual_asset_count
 
     proposed_interaction_config_count = 0
